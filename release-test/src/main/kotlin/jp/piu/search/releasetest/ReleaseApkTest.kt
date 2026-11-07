@@ -21,7 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * R8 を通した版（app の minified）を、アプリの外から試す（testing.md の「release の APK の確認」の 3〜5）。
+ * R8 を通した版（app の benchmarkRelease）を、アプリの外から試す（testing.md の「release の APK の確認」の 3〜5）。
  *
  * R8 で名前が変わると壊れる部品を、使う操作で確かめる。
  * - ブランド表（`BrandTable` からの相対の資源）: 「やふー」で Yahoo!テスト

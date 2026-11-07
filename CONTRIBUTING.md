@@ -79,7 +79,7 @@ pull request の前に、CI と同じ形の検査を 1 回で通す。
 `:release-test`・`:benchmark` を変えたら、続けて次も回す（CI の check はこれらを組み立てない。R8 がもう 1 回走って時間がかかり、壊れるのはテストのコードのコンパイルくらいのため）。上と 1 回にまとめると、Gradle のメモリが 9 GB を超えることがある（2026-11-03 に、9 GB の制限の下で止まった）。
 
 ```bash
-./gradlew --console=plain --no-build-cache :release-test:assembleMinified :benchmark:assembleMinified :benchmark:assembleNonMinified
+./gradlew --console=plain --no-build-cache :release-test:assembleBenchmarkRelease :benchmark:assembleBenchmarkRelease :benchmark:assembleNonMinifiedRelease
 ```
 
 `check` に入っているもの:
@@ -126,31 +126,31 @@ adb shell cmd package install-existing --user 10 <パッケージ名>
 
 ### R8 を通した版の計器テスト
 
-release でだけ起きる誤り（R8 がクラスの名前を変えて、同梱の資源が見つからなくなるなど）は、debug の計器テストでは見つからない。app の `minified`（release と同じく R8 を通し、debug の鍵で署名した版）を端末に入れ、`:release-test` がアプリの外から（UiAutomator と shell で）試す。
+release でだけ起きる誤り（R8 がクラスの名前を変えて、同梱の資源が見つからなくなるなど）は、debug の計器テストでは見つからない。app の `benchmarkRelease` を端末に入れ、`:release-test` がアプリの外から（UiAutomator と shell で）試す。`benchmarkRelease` は Baseline Profile の Gradle プラグイン（下）が release から作る build type で、release と同じく R8 を通し、debug の鍵で署名する。
 
 ```bash
-./gradlew :test-apps:installTestApps :release-test:connectedMinifiedAndroidTest
+./gradlew :release-test:connectedBenchmarkReleaseAndroidTest
 ```
 
 確かめること: ローマ字・ブランド表の読み（「やふー」）・漢字の検索語（Kuromoji）・ジャンルで結果が出る、止めて開き直すと保存した索引から差分で同期し、起動の記録が残る、アシスタントとタイルから同じ画面が開く。テストのコードは R8 にかけない。
 
 ### 起動の速さと Baseline Profile
 
-起動の速さは `:benchmark`（Macrobenchmark）で測る。エミュレータの値に頼り、1 回に数分かかるので、`check` には入れない。相手は app の `minified`。
+起動の速さは `:benchmark`（Macrobenchmark）で測る。エミュレータの値に頼り、1 回に数分かかるので、`check` には入れない。相手は app の `benchmarkRelease`（R8 を通した版）。
 
 ```bash
-./gradlew :benchmark:connectedMinifiedAndroidTest
+./gradlew :benchmark:connectedBenchmarkReleaseAndroidTest
 ```
 
-結果は `benchmark/build/outputs/connected_android_test_additional_output/minified/connected/<端末>/jp.piu.search.benchmark-benchmarkData.json`。起動の状態（`COLD`: プロセスなし、`WARM`: プロセスあり・画面なし）とコンパイルの状態（`None`: 先にコンパイルしない、`BaselineProfile`: APK の Baseline Profile でコンパイルする）の組ごとに 15 回測り、`timeToInitialDisplayMs`（最初の描画まで）と `timeToFullDisplayMs`（検索窓に焦点が来て打てるまで。アプリの `reportFullyDrawn`）の中央値・最小・最大と各回の値が入る。エミュレータの値はぶれるので、比べるのは同じ端末の前後だけにする。
+結果は `benchmark/build/outputs/connected_android_test_additional_output/benchmarkRelease/connected/<端末>/jp.piu.search.benchmark-benchmarkData.json`。起動の状態（`COLD`: プロセスなし、`WARM`: プロセスあり・画面なし）とコンパイルの状態（`None`: 先にコンパイルしない、`BaselineProfile`: APK の Baseline Profile でコンパイルする）の組ごとに 15 回測り、`timeToInitialDisplayMs`（最初の描画まで）と `timeToFullDisplayMs`（検索窓に焦点が来て打てるまで。アプリの `reportFullyDrawn`）の中央値・最小・最大と各回の値が入る。エミュレータの値はぶれるので、比べるのは同じ端末の前後だけにする。
 
-Baseline Profile（起動に使うコードを先にコンパイルしておく規則）は、生成したものを `app/src/main/baselineProfiles/baseline-prof.txt` に置いてリポジトリに入れる。ビルドのたびには生成しない（生成はエミュレータに頼り、同じソースから同じ APK を作る再現可能なビルドにならないため）。画面や起動の流れを大きく変えたら、API 33 以上のエミュレータで生成し直す。
+Baseline Profile（起動に使うコードを先にコンパイルしておく規則）は、公式の Baseline Profile Gradle プラグイン（`androidx.baselineprofile`。[公式の文書](https://developer.android.com/topic/performance/baselineprofiles/create-baselineprofile)）で作る。生成したものは `app/src/release/generated/baselineProfiles/baseline-prof.txt` に置いてリポジトリに入れ、release の APK の `assets/dexopt/baseline.prof` に入る。ビルドのたびには生成しない（`automaticGenerationDuringBuild = false`。生成はエミュレータに頼り、同じソースから同じ APK を作る再現可能なビルドにならないため）。画面や起動の流れを大きく変えたら、API 33 以上のエミュレータか実機をつないで生成し直す。
 
 ```bash
-./gradlew :test-apps:installTestApps :benchmark:connectedNonMinifiedAndroidTest :benchmark:copyBaselineProfile
+./gradlew :app:generateBaselineProfile
 ```
 
-生成は app の `nonMinified`（R8 を通さない版）で回す。R8 で名前が変わる前の名前で規則を書き、release のビルドで R8 が名前を合わせる。
+生成は app の `nonMinifiedRelease`（R8 を通さない版）で回す。R8 で名前が変わる前の名前で規則を書き、release のビルドで R8 が名前を合わせる。テスト用のアプリは生成の前に入る（生成の流れが検索の結果を待つため）。
 
 ## コードの書き方
 

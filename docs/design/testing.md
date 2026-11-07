@@ -91,7 +91,7 @@ Gradle のキャッシュには `gradle/actions/setup-gradle` の `basic`（MIT�
 
 R8（配布用の APK を小さくし、クラスの名前を変える処理）は、資源やリフレクションで探すクラスを取りこぼすことがある。M2-04 では、`BrandTable` の名前が変わって同梱の `brands.tsv` が見つからず、release でだけ索引を作れない不具合を見つけた。計器テスト（debug）では見つからない。
 
-M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件）が下の手順 3〜5 を自動で確かめる。app の `minified`（release と同じく R8 を通し、debug の鍵で署名した build type）を端末に入れ、UiAutomator と shell でアプリの外から操作する。テストのコードは R8 にかけず、アプリのクラスにも触れない。手順 1 の mapping を見ることは、名前が変わると壊れる部品（ブランド表・Kuromoji の辞書・Room の `_Impl`・マニフェストの入口）を使う操作のテストで代えた（`brand-table.pro` の keepnames を外すと落ちることを確かめた）。既存の app の計器テストを R8 の側で回す形は採らなかった（テストのコードも R8 にかかり、アプリの内部に触るのでテストのための keep の規則が要り、Compose のテストの部品を配布物と違う形で入れることになるため）。
+M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件）が下の手順 3〜5 を自動で確かめる。app の `benchmarkRelease`（Baseline Profile のプラグインが release から作る build type。release と同じく R8 を通し、debug の鍵で署名する）を端末に入れ、UiAutomator と shell でアプリの外から操作する。テストのコードは R8 にかけず、アプリのクラスにも触れない。手順 1 の mapping を見ることは、名前が変わると壊れる部品（ブランド表・Kuromoji の辞書・Room の `_Impl`・マニフェストの入口）を使う操作のテストで代えた（`brand-table.pro` の keepnames を外すと落ちることを確かめた）。既存の app の計器テストを R8 の側で回す形は採らなかった（テストのコードも R8 にかかり、アプリの内部に触るのでテストのための keep の規則が要り、Compose のテストの部品を配布物と違う形で入れることになるため）。
 
 手で確かめるときは、次の手順で行う。
 
@@ -103,7 +103,7 @@ M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件�
 
 ## 起動の速さ（M5-03）
 
-`:benchmark`（Macrobenchmark）で、app の `minified` の起動を測る。冷えた状態（プロセスなし）と温まった状態（プロセスを残し、画面を作り直す）、コンパイルの状態（`None`: 先にコンパイルしない・`BaselineProfile`）の組ごとに 15 回。指標は最初の描画（`timeToInitialDisplayMs`）と、検索窓に焦点が来て打てるまで（`timeToFullDisplayMs`。アプリが `ReportDrawnWhen` で `reportFullyDrawn` を出す）。手順は CONTRIBUTING の「起動の速さと Baseline Profile」。
+`:benchmark`（Macrobenchmark）で、app の `benchmarkRelease`（R8 を通した版）の起動を測る。冷えた状態（プロセスなし）と温まった状態（プロセスを残し、画面を作り直す）、コンパイルの状態（`None`: 先にコンパイルしない・`BaselineProfile`）の組ごとに 15 回。指標は最初の描画（`timeToInitialDisplayMs`）と、検索窓に焦点が来て打てるまで（`timeToFullDisplayMs`。アプリが `ReportDrawnWhen` で `reportFullyDrawn` を出す）。手順は CONTRIBUTING の「起動の速さと Baseline Profile」。
 
 2026-11-03 のエミュレータの値（中央値、ms。Baseline Profile にアプリの分を加えた後）:
 
@@ -116,6 +116,6 @@ M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件�
 
 ## 公開前の検査（M7）
 
-- 再現可能なビルド: 同じソースから 2 回ビルドして、APK が同じになること（F-Droid の推奨）。APK の Baseline Profile（`assets/dexopt/baseline.prof`）も含めて確かめる。プロファイルの元はリポジトリに入れてあり、ビルドのたびには生成しない
+- 再現可能なビルド: 同じソースから 2 回ビルドして、APK が同じになること（F-Droid の推奨）。APK の Baseline Profile（`assets/dexopt/baseline.prof`）も含めて確かめる。プロファイルの元（`app/src/release/generated/baselineProfiles/`）はリポジトリに入れてあり、ビルドのたびには生成しない
 - 端末の言語を英語・中国語にしても壊れないこと
 - ライセンスの表示（Kuromoji の Apache-2.0、IPADIC のライセンス、流用した辞書）がアプリ内と NOTICE にあること

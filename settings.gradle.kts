@@ -44,7 +44,7 @@ include(
     ":core:search",
     ":data",
     ":app",
-    // R8 を通した版（app の minified）を外から試す計器テスト（APK に入らない）
+    // R8 を通した版（app の benchmarkRelease）を外から試す計器テスト（APK に入らない）
     ":release-test",
     // 起動の速さの計測と Baseline Profile の生成（APK に入らない。check に入れない）
     ":benchmark",

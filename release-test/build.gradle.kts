@@ -2,7 +2,7 @@
 
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-// R8 を通した版（app の minified）を端末に入れ、アプリの外から試す計器テスト（testing.md の「release の APK の確認」）。
+// R8 を通した版（app の benchmarkRelease）を端末に入れ、アプリの外から試す計器テスト（testing.md の「release の APK の確認」）。
 // テストのコードは R8 にかからず、アプリのクラスにも触れない（UiAutomator と shell で操作する）。
 // 名前を残すべきクラスを R8 が変えたときに、debug の計器テストでは見えない誤りとして落ちる
 plugins {
@@ -22,8 +22,9 @@ android {
     }
 
     buildTypes {
-        // app の minified を相手にする。テストの APK は R8 にかけない
-        create("minified") {
+        // app の benchmarkRelease を相手にする。Baseline Profile のプラグインが release から作る build type で、
+        // release と同じく R8 を通し、debug の鍵で署名する（ほかに違うのは profileable なことだけ）。テストの APK は R8 にかけない
+        create("benchmarkRelease") {
             isDebuggable = true
             // debug 以外の build type には既定の署名がない。署名がないとテストの APK が入らない
             signingConfig = signingConfigs.getByName("debug")
@@ -49,8 +50,8 @@ android {
 }
 
 androidComponents {
-    // 相手は minified だけ。debug の版は app の計器テストが試す
-    beforeVariants { it.enable = it.buildType == "minified" }
+    // 相手は benchmarkRelease だけ。debug の版は app の計器テストが試す
+    beforeVariants { it.enable = it.buildType == "benchmarkRelease" }
 }
 
 kotlin {
@@ -68,7 +69,7 @@ dependencies {
 }
 
 // テスト用のアプリ（test-apps/）を先に入れる。app の計器テストと同じく、本物の PackageManager を相手に索引を確かめる
-tasks.named { it == "connectedMinifiedAndroidTest" }.configureEach {
+tasks.named { it == "connectedBenchmarkReleaseAndroidTest" }.configureEach {
     dependsOn(":test-apps:installTestApps")
     // app の計器テストも本体（jp.piu.search）を入れて消すので、同時に回さない
     mustRunAfter(":app:connectedDebugAndroidTest")

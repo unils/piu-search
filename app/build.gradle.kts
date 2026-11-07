@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import app.cash.licensee.UnusedAction
-import com.android.build.api.variant.HostTestBuilder
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -12,11 +11,10 @@ plugins {
     id("piu.connected-test-checks")
     alias(libs.plugins.licensee)
     alias(libs.plugins.roborazzi)
+    // release から benchmarkRelease（R8 を通し、debug の鍵で署名する）と nonMinifiedRelease（R8 を通さない）の
+    // build type を作り、:benchmark が生成した Baseline Profile を取り込む
+    alias(libs.plugins.androidx.baselineprofile)
 }
-
-// R8 を通し、debug の鍵で署名した build type と、R8 を通さない Baseline Profile の生成用の build type
-val minifiedBuildType = "minified"
-val nonMinifiedBuildType = "nonMinified"
 
 // APK に入る依存（debug と release の runtimeClasspath。core:* と data の依存も含む）のライセンスを確かめる。
 // 一覧は build/reports/licensee/<variant>/artifacts.json。許すのは、このアプリ（Apache-2.0）と一緒に配れる緩いライセンス
@@ -60,9 +58,6 @@ abstract class CopyLegalTexts : DefaultTask() {
 }
 
 androidComponents {
-    // 端末に入れて試すための build type なので、JVM の単体テスト（Robolectric とスクリーンショット）は debug と release だけで回す
-    beforeVariants(selector().withBuildType(minifiedBuildType)) { it.hostTests[HostTestBuilder.UNIT_TEST_TYPE]?.enable = false }
-    beforeVariants(selector().withBuildType(nonMinifiedBuildType)) { it.hostTests[HostTestBuilder.UNIT_TEST_TYPE]?.enable = false }
     onVariants { variant ->
         val task =
             tasks.register<CopyLegalTexts>("copy${variant.name.replaceFirstChar(Char::uppercase)}LegalTexts") {
@@ -94,23 +89,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-        // release と同じく R8 を通し、debug の鍵で署名した版。端末に入れて、release でだけ起きる誤り（M2-04）を
-        // :release-test の計器テストで拾い、:benchmark で起動の速さを測る。署名のほかは release と同じにする。
-        // release の鍵はビルドの設定に入れない（リポジトリの外に置く）
-        create(minifiedBuildType) {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            // data などのライブラリは debug と release しか持たない
-            matchingFallbacks += "release"
-        }
-        // Baseline Profile の生成（:benchmark）に使う、R8 を通さない版。R8 で名前が変わると、集めた規則が元のコードに当たらないため
-        create(nonMinifiedBuildType) {
-            initWith(getByName("release"))
-            isMinifyEnabled = false
-            isShrinkResources = false
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += "release"
+            // release の鍵はビルドの設定に入れない（リポジトリの外に置き、組み立てた後に署名する）。
+            // そのため Baseline Profile のプラグインが作る benchmarkRelease・nonMinifiedRelease は debug の鍵で署名される
         }
     }
 
@@ -150,6 +130,14 @@ android {
         checkDependencies = true
         lintConfig = rootProject.file("lint.xml")
     }
+}
+
+// 生成は手で回す（./gradlew :app:generateBaselineProfile。API 33 以上の端末かエミュレータが要る）。
+// 生成はエミュレータに頼り、ビルドのたびに回すと同じソースから同じ APK を作れない（再現可能なビルド。decisions.md の 2026-11-03）。
+// 生成したものは src/release/generated/baselineProfiles/ に置いてリポジトリに入れ、release と benchmarkRelease が読む
+baselineProfile {
+    automaticGenerationDuringBuild = false
+    saveInSrc = true
 }
 
 // スクリーンショットの正解の画像はリポジトリに入れ、変わったら差分を見て更新する（testing.md）。
@@ -193,6 +181,8 @@ dependencies {
     androidTestImplementation(libs.androidx.test.espresso.core)
     // Robolectric の上で Compose のテスト用の空の Activity を起動するため
     debugImplementation(libs.compose.ui.test.manifest)
+    // Baseline Profile を生成するモジュール
+    baselineProfile(project(":benchmark"))
 }
 
 // 計器テストの前に、テスト用のアプリ（test-apps/）を端末に入れる。本物の PackageManager を相手に索引を確かめるため
