@@ -44,7 +44,7 @@ androidx-test-espresso = "3.7.0"
 roborazzi = "1.77.0"
 # R8 を通した版の計器テスト（:release-test）と起動の計測（:benchmark）。アプリの外から画面を操作する。
 # 2026-11-02 に Google Maven で最新の安定版を確かめた。どちらも Apache-2.0。テストの APK にだけ入る
-androidx-test-uiautomator = "2.4.0"
+androidx-test-uiautomator = "2.4.1"
 # Baseline Profile の Gradle プラグイン（androidx.baselineprofile）も同じ版で出る。1.5.0 が最新の安定版（2026-11-08 に Google Maven で確かめた）
 androidx-benchmark = "1.5.0"
 
