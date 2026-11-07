@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Android Lint の設定。警告は errors として扱う（各モジュールの warningsAsErrors）。抑える警告は理由を添えてここに書く -->
+<lint>
+    <!--
+        新しい版があるかの検査。配布元に問い合わせるので、新しい版が出た日に、コードを変えていなくても check が落ちる。
+        版は意図して選び（例: Android のモジュールの JUnit 4）、更新の通知は Dependabot（M0-02）に任せる
+    -->
+    <issue id="NewerVersionAvailable" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+</lint>

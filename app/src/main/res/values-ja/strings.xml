@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">Piu アプリ検索</string>
+    <string name="search_hint">アプリを検索</string>
+    <string name="clear_query">検索語を消す</string>
+    <string name="no_match">見つかりません</string>
+    <string name="suggestions_recent">最近使ったアプリ</string>
+    <string name="suggestions_frequent">よく使うアプリ</string>
+    <string name="suggestions_none">名前・読み・ジャンルで探せます</string>
+    <string name="all_apps">すべてのアプリ</string>
+    <string name="all_apps_empty">アプリがありません</string>
+    <string name="section_index">頭文字の索引</string>
+    <string name="section_jump">「%1$s」へ移動</string>
+    <string name="profile_personal">個人用</string>
+    <string name="profile_work">仕事用</string>
+    <string name="work_paused">仕事用アプリは一時停止中です。開くと、再開するか尋ねられます</string>
+    <plurals name="work_matches">
+        <item quantity="other">仕事用に %d 件</item>
+    </plurals>
+    <string name="launch_failed">%1$s を開けませんでした</string>
+
+    <string name="row_menu">メニューを開く</string>
+    <string name="menu_app_info">アプリ情報</string>
+    <string name="menu_suppress">この語では出さない</string>
+    <string name="menu_forget_learning">この語での学習を消す</string>
+    <string name="app_info_failed">%1$s のアプリ情報を開けませんでした</string>
+
+    <string name="tile_label">アプリ検索</string>
+    <string name="tile_already_added">タイルはクイック設定に追加済みです</string>
+    <string name="settings_open_failed">設定を開けませんでした</string>
+    <string name="onboarding_title">すばやく呼び出す</string>
+    <string name="onboarding_assistant">設定の「デジタル アシスタント アプリ」でこのアプリを選ぶと、端末によっては、画面の下の隅からのスワイプや電源ボタンの長押しで開けます。</string>
+    <string name="onboarding_assistant_button">アシスタントの設定を開く</string>
+    <string name="onboarding_tile">クイック設定にタイルを追加すると、どの画面からでも開けます。</string>
+    <string name="onboarding_tile_manual">どの画面からでも開くには、クイック設定を下ろして編集（鉛筆の印）を押し、タイル「アプリ検索」を追加します。</string>
+    <string name="onboarding_tile_button">タイルを追加</string>
+    <string name="onboarding_close">閉じる</string>
+
+    <string name="reason_genre">ジャンル: %1$s</string>
+    <string name="reason_reading">読み: %1$s</string>
+    <string name="reason_romaji">ローマ字: %1$s</string>
+    <string name="reason_localized_name">別名: %1$s</string>
+    <string name="reason_package_name">パッケージ名: %1$s</string>
+    <string name="reason_publisher">提供元: %1$s</string>
+    <string name="reason_learned">学習: %1$s</string>
+
+    <string name="rescue_learned">「%1$s」で %2$s を出すようにしました</string>
+    <string name="rescue_undo">取り消す</string>
+
+    <string name="genre_maps">地図</string>
+    <string name="genre_email">メール</string>
+    <string name="genre_phone">電話</string>
+    <string name="genre_messaging">メッセージ</string>
+    <string name="genre_camera">カメラ</string>
+    <string name="genre_photos">写真</string>
+    <string name="genre_video">動画</string>
+    <string name="genre_music">音楽</string>
+    <string name="genre_browser">ブラウザ</string>
+    <string name="genre_calendar">カレンダー</string>
+    <string name="genre_contacts">連絡先</string>
+    <string name="genre_calculator">電卓</string>
+    <string name="genre_clock">時計</string>
+    <string name="genre_files">ファイル</string>
+    <string name="genre_weather">天気</string>
+    <string name="genre_translate">翻訳</string>
+    <string name="genre_store">ストア</string>
+    <string name="genre_pdf">PDF</string>
+    <string name="genre_game">ゲーム</string>
+    <string name="genre_news">ニュース</string>
+    <string name="genre_social">SNS</string>
+
+    <string name="menu_manage_learning">学習の一覧</string>
+    <string name="learned_title">学習の一覧</string>
+    <string name="learned_intro">開いたアプリから覚えた、検索語とアプリの組です。誤っている組は消してください。</string>
+    <string name="learned_empty">まだ何も覚えていません。検索で出なかったアプリを「すべてのアプリ」などから開くと、ここに覚えます。</string>
+    <string name="learned_query">「%1$s」</string>
+    <plurals name="learned_count">
+        <item quantity="other">%d 回</item>
+    </plurals>
+    <string name="learned_last_used">最後に使った日 %1$s</string>
+    <string name="learned_rescued">検索で出なかったので覚えた</string>
+    <string name="learned_suppressed">この語では出さない</string>
+    <string name="learned_not_installed">入っていないアプリ</string>
+    <string name="list_separator">・</string>
+    <string name="learned_delete">「%1$s」と %2$s の組を消す</string>
+    <string name="learned_export">書き出す</string>
+    <string name="learned_import">読み込む</string>
+    <string name="learned_clear">すべて消す</string>
+    <string name="learned_clear_title">学習をすべて消しますか</string>
+    <plurals name="learned_clear_message">
+        <item quantity="other">「この語では出さない」の印を含め、%d 件の組を消します。元に戻せません。先に書き出しておけば、読み込んで戻せます。</item>
+    </plurals>
+    <string name="learned_clear_confirm">消す</string>
+    <string name="learned_clear_cancel">やめる</string>
+    <plurals name="learned_exported">
+        <item quantity="other">%d 件を書き出しました</item>
+    </plurals>
+    <string name="learned_export_failed">ファイルに書けませんでした</string>
+    <plurals name="learned_imported">
+        <item quantity="other">%d 件を読み込み、今の学習と合わせました</item>
+    </plurals>
+    <string name="learned_import_unreadable">ファイルを読めませんでした。学習は変えていません</string>
+    <string name="learned_import_too_large">学習の書き出しにしては大きすぎるファイルです。学習は変えていません</string>
+    <string name="learned_import_invalid">学習の書き出しのファイルではないか、壊れています。学習は変えていません</string>
+    <string name="learned_import_newer">新しい版のアプリで書き出したファイルです。アプリを更新してから読み込んでください。学習は変えていません</string>
+    <string name="learned_open_failed">ファイルを選ぶアプリがありません</string>
+
+    <string name="settings_title">設定</string>
+    <string name="settings_search_bar">検索窓の位置</string>
+    <string name="settings_search_bar_bottom">下（片手で届きやすい）</string>
+    <string name="settings_search_bar_top">上</string>
+    <string name="settings_reasons">検索の結果</string>
+    <string name="settings_show_reasons">出た理由を表示する</string>
+    <string name="settings_show_reasons_detail">名前で一致しなかったアプリの下に、「読み: …」「ジャンル: …」などを小さく出します</string>
+    <string name="settings_work">仕事用プロファイルのアプリ</string>
+    <string name="settings_work_note">仕事用プロファイルがある端末でだけ効きます</string>
+    <string name="settings_work_switch">個人用と切り替えて検索する</string>
+    <string name="settings_work_mixed">個人用と混ぜて検索する</string>
+    <string name="settings_work_hidden">出さない</string>
+    <string name="settings_learning">学習</string>
+    <string name="settings_learning_detail">覚えた検索語の確認・削除・書き出し・読み込み</string>
+    <string name="settings_entry">呼び出しの設定</string>
+    <string name="settings_onboarding_again_detail">初回の案内を、検索の画面にもう一度出せます。</string>
+    <string name="settings_onboarding_again">案内をもう一度見る</string>
+    <string name="settings_about">このアプリについて</string>
+    <string name="settings_version">版</string>
+    <string name="settings_source">ソースコード</string>
+    <string name="settings_source_failed">リンクを開くアプリがありません</string>
+    <string name="settings_licenses_detail">このアプリと、含まれるオープンソースのソフトウェアのライセンス</string>
+
+    <string name="licenses_title">ライセンス</string>
+    <string name="licenses_intro">このアプリは Apache License 2.0 で配布するオープンソースのソフトウェアです。ほかに、次のオープンソースのソフトウェアを含みます。</string>
+    <string name="licenses_app">このアプリのライセンス</string>
+    <string name="licenses_app_detail">Apache License 2.0（全文）</string>
+    <string name="licenses_full_text">%1$s の全文</string>
+    <plurals name="licenses_libraries">
+        <item quantity="other">ライブラリ（%d 個）</item>
+    </plurals>
+    <string name="licenses_notice">注意書き（NOTICE）</string>
+    <string name="licenses_notice_intro">形態素解析器 Kuromoji と、その辞書 IPADIC の注意書き（奈良先端科学技術大学院大学と ICOT）を含みます。</string>
+</resources>

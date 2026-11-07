@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# detekt の設定。公開 API に KDoc がないことの検出（testing.md の「静的な検査」）だけに使う。
+# 既定の設定は積まない（buildUponDefaultConfig = false）。ここで有効にした規則だけが動く。
+# 書式は ktlint、Android 特有の誤りは Android Lint が見るので、重なる規則は足さない。
+
+# 統計と複雑さの集計は使わない。CI の記録に見つけた誤りだけを出す
+processors:
+  active: false
+
+console-reports:
+  active: true
+  exclude:
+    - 'ProjectStatisticsReport'
+    - 'ComplexityReport'
+    - 'NotificationReport'
+    - 'IssuesReport'
+    - 'FileBasedIssuesReport'
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: true
+  UndocumentedPublicFunction:
+    active: true
+  UndocumentedPublicProperty:
+    active: true

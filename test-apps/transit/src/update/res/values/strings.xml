@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 更新の試験用の版（versionCode 2）の名前。更新で名前が変わったことが索引に届くかを確かめる -->
+<resources>
+    <string name="app_name">乗換案内テスト2</string>
+</resources>

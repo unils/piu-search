@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+name: 要望
+description: 新しい機能や、今の動きを変える提案
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        権限や通信を足す提案は、通らないことがあります。このアプリはネットに接続せず、端末のすべてのアプリを見る権限も持たない方針です（[CONTRIBUTING.md](https://github.com/unils/piu-search/blob/main/CONTRIBUTING.md#権限通信依存)）。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 困っていること
+      description: どんな場面で、何がやりにくいか
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: こうなるとよい
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: ほかに考えた方法（あれば）

@@ -1,0 +1,444 @@
+# SPDX-License-Identifier: Apache-2.0
+# 英字のブランド名の読みの表（docs/design/matching.md の「英字のブランド名の読み」）。
+# 列はタブ区切りで 3 つ: 綴り（TextNormalizer.strict を通した英字）・読み（ひらがなと「ー」。複数は , 区切り。先頭が最も一般的な読み）・メモ。
+# 綴りはアプリ名の中の英字の語 1 つ。空白や記号で分かれる名前は語ごとに書く（Uber Eats → uber と eats）。
+# 大文字だけの語は 1 字ずつ読む規則があるので、その読みで足りる語（NHK・JCB など）は書かない。足りない語（JAL・AWA・OPPO）は書く。
+# 綴りと一般的な読みは事実として自前で書いた。他のアプリの辞書から写していない。読みに自信がない語はメモに「要確認」と書く。
+# 検査は tools:dict（./gradlew :tools:dict:checkBrandTable）。
+#
+# 検索・ポータル・ブラウザ
+yahoo	やふー	
+google	ぐーぐる	
+goo	ぐー	
+bing	びんぐ	
+duckduckgo	だっくだっくごー	
+ecosia	えこしあ	
+baidu	ばいどぅ	
+chrome	くろーむ	
+firefox	ふぁいあふぉっくす	
+brave	ぶれいぶ	
+vivaldi	びばるでぃ,ゔぃゔぁるでぃ	
+opera	おぺら	
+edge	えっじ	
+safari	さふぁり	
+browser	ぶらうざ,ぶらうざー	一般語
+search	さーち	一般語
+# SNS・連絡
+line	らいん	
+x	えっくす,ついったー	旧 Twitter
+twitter	ついったー	
+instagram	いんすたぐらむ,いんすた	
+facebook	ふぇいすぶっく	
+messenger	めっせんじゃー	
+whatsapp	わっつあっぷ	
+telegram	てれぐらむ	
+signal	しぐなる	
+threads	すれっず	
+tiktok	てぃっくとっく	
+bluesky	ぶるーすかい	
+mastodon	ますとどん	
+misskey	みすきー	
+pinterest	ぴんたれすと	
+reddit	れでぃっと	
+linkedin	りんくといん	
+snapchat	すなっぷちゃっと	
+skype	すかいぷ	
+discord	でぃすこーど	
+kakaotalk	かかおとーく	
+wechat	うぃーちゃっと	
+element	えれめんと	
+molly	もりー	
+tinder	てぃんだー	
+pairs	ぺあーず	
+tapple	たっぷる	
+omiai	おみあい	
+with	うぃず	一般語。アプリ名にもある
+# 仕事・事務
+zoom	ずーむ	
+slack	すらっく	
+teams	ちーむず	
+webex	うぇぶえっくす	
+meet	みーと	
+chat	ちゃっと	一般語
+chatwork	ちゃっとわーく	
+works	わーくす	LINE WORKS
+kintone	きんとーん	
+garoon	がるーん	
+cybozu	さいぼうず	
+salesforce	せーるすふぉーす	
+smarthr	すまーとえいちあーる	
+jobcan	じょぶかん	
+freee	ふりー	
+microsoft	まいくろそふと	
+office	おふぃす	
+outlook	あうとるっく	
+word	わーど	
+excel	えくせる	
+powerpoint	ぱわーぽいんと	
+onedrive	わんどらいぶ	
+onenote	わんのーと	
+copilot	こぱいろっと	
+gmail	じーめーる	
+mail	めーる	一般語
+icloud	あいくらうど	
+dropbox	どろっぷぼっくす	
+box	ぼっくす	
+evernote	えばーのーと	
+notion	のーしょん	
+obsidian	おぶしでぃあん	
+joplin	じょぷりん	
+trello	とれろ	
+asana	あさな	
+github	ぎっとはぶ	
+gitlab	ぎっとらぶ	
+adobe	あどび	
+acrobat	あくろばっと	
+photoshop	ふぉとしょっぷ	
+lightroom	らいとるーむ	
+canva	きゃんば	
+# AI・学習・辞書
+chatgpt	ちゃっとじーぴーてぃー	
+openai	おーぷんえーあい	
+claude	くろーど	
+gemini	じぇみに	
+perplexity	ぱーぷれきしてぃ	
+deepl	でぃーぷえる,でぃーぷる	「でぃーぷる」とも呼ばれる
+duolingo	でゅおりんご	
+anki	あんき	
+quizlet	くいずれっと	
+studyplus	すたでぃぷらす	
+weblio	うぇぶりお	
+dictionary	でぃくしょなりー	一般語
+translate	とらんすれーと	Google 翻訳の英語名
+# Google と端末の標準アプリの英語名
+android	あんどろいど	
+pixel	ぴくせる	
+gboard	じーぼーど	
+maps	まっぷ,まっぷす	
+map	まっぷ	
+photos	ふぉと,ふぉとず	
+photo	ふぉと	
+drive	どらいぶ	
+play	ぷれい	
+store	すとあ	
+docs	どっく,どっくす	
+sheets	しーと,しーつ	
+slides	すらいど,すらいず	
+keep	きーぷ	
+lens	れんず	
+assistant	あしすたんと	
+wallet	うぉれっと	
+news	にゅーす	
+podcasts	ぽっどきゃすと,ぽっどきゃすつ	
+podcast	ぽっどきゃすと	
+books	ぶっく,ぶっくす	
+home	ほーむ	
+nest	ねすと	
+fitbit	ふぃっとびっと	
+fit	ふぃっと	
+health	へるす	
+earth	あーす	
+waze	うぇいず	
+calendar	かれんだー	
+clock	くろっく	
+camera	かめら	
+gallery	ぎゃらりー	
+files	ふぁいる,ふぁいるず	
+contacts	こんたくと,こんたくつ	
+phone	ふぉん,ふぉーん	
+messages	めっせーじ,めっせーじず	
+messaging	めっせーじんぐ	
+settings	せってぃんぐ,せってぃんぐす	
+calculator	かりきゅれーたー	
+recorder	れこーだー	
+notes	のーと,のーつ	
+note	のーと	note（ノート株式会社）も
+memo	めも	
+tasks	たすく,たすくす	
+todo	とぅーどぅー	
+reminder	りまいんだー	
+alarm	あらーむ	
+timer	たいまー	
+voice	ぼいす	
+radio	らじお	
+flashlight	ふらっしゅらいと	
+torch	とーち	
+scanner	すきゃなー	
+scan	すきゃん	
+reader	りーだー	
+viewer	びゅーあー	
+pdf	ぴーでぃーえふ	大文字の PDF は 1 字ずつの読みと同じ。Pdf と書く名前のため
+code	こーど	
+weather	うぇざー	
+music	みゅーじっく	
+video	びでお	
+tv	てぃーびー,てぃーぶい,てれび	
+apple	あっぷる	
+apps	あっぷす	GrapheneOS のアプリストア
+info	いんふぉ	
+# GrapheneOS・F-Droid の周辺
+grapheneos	ぐらふぇんおーえす	
+vanadium	ばなじうむ	GrapheneOS のブラウザ
+auditor	おーでぃたー	GrapheneOS の検証アプリ
+droid	どろいど	F-Droid は F と Droid に分かれる
+aurora	おーろら	
+newpipe	にゅーぱいぷ	
+fairemail	ふぇあめーる	
+thunderbird	さんだーばーど	
+ntfy	のてぃふぁい	要確認。開発元は notify と読むとしている
+round	らうんど	
+sync	しんく	
+syncthing	しんくしんぐ	
+termux	たーむっくす	
+bitwarden	びっとうぉーでん	
+authenticator	おーせんてぃけーたー	
+aegis	いーじす	
+proton	ぷろとん	
+nordvpn	のーどぶいぴーえぬ	
+organic	おーがにっく	Organic Maps
+# 動画・音楽・本・写真
+youtube	ゆーちゅーぶ	
+netflix	ねっとふりっくす	
+prime	ぷらいむ	
+disney	でぃずにー	
+plus	ぷらす	
+hulu	ふーる	
+next	ねくすと	U-NEXT は U と NEXT に分かれる
+abema	あべま	
+tver	てぃーばー	
+dazn	だぞーん	
+niconico	にこにこ	
+twitch	ついっち	
+showroom	しょーるーむ	
+pococha	ぽこちゃ	
+spotify	すぽてぃふぁい	
+awa	あわ	大文字の AWA を 1 字ずつ読まないため
+soundcloud	さうんどくらうど	
+shazam	しゃざむ	
+radiko	らじこ	
+tunein	ちゅーんいん	
+audible	おーでぃぶる	
+kindle	きんどる	
+kobo	こぼ	
+honto	ほんと	
+bookwalker	ぶっくうぉーかー	
+piccoma	ぴっこま	
+manga	まんが	
+comic	こみっく	
+webtoon	うぇぶとぅーん	
+jump	じゃんぷ	
+pixiv	ぴくしぶ	
+capcut	きゃっぷかっと	
+snapseed	すなっぷしーど	
+snow	すのー	
+picsart	ぴくすあーと	
+# ニュース・天気
+smartnews	すまーとにゅーす	
+gunosy	ぐのしー	
+newspicks	にゅーずぴっくす	
+nikkei	にっけい	
+asahi	あさひ	
+yomiuri	よみうり	
+mainichi	まいにち	
+sankei	さんけい	
+weathernews	うぇざーにゅーす	
+windy	うぃんでぃ	
+# 買い物・フリマ・店
+amazon	あまぞん	
+rakuten	らくてん	
+mercari	めるかり	
+shopping	しょっぴんぐ	一般語
+zozotown	ぞぞたうん	
+zozo	ぞぞ	
+uniqlo	ゆにくろ	
+muji	むじ	
+ikea	いけあ	
+shein	しーいん	
+temu	てむ	
+aliexpress	ありえくすぷれす	
+qoo10	きゅーてん	
+lohaco	ろはこ	
+askul	あすくる	
+minne	みんね	
+creema	くりーま	
+booth	ぶーす	
+base	べいす,べーす	大文字の BASE を 1 字ずつ読まないため
+stores	すとあーず	
+costco	こすとこ	
+lawson	ろーそん	
+familymart	ふぁみりーまーと	
+aeon	いおん	
+matsukiyo	まつきよ	
+welcia	うえるしあ	
+coke	こーく	Coke ON
+on	おん	一般語。大文字の ON を 1 字ずつ読まないため
+# 決済・金融
+paypay	ぺいぺい	
+pay	ぺい	一般語。大文字の PAY を 1 字ずつ読まないため
+merpay	めるぺい	
+famipay	ふぁみぺい	
+paypal	ぺいぱる	
+paidy	ぺいでぃー	
+kyash	きゃっしゅ	
+revolut	れぼりゅーと	
+wise	わいず	
+visa	びざ	
+mastercard	ますたーかーど	
+vpass	ぶいぱす	
+epos	えぽす	
+saison	せぞん	
+orico	おりこ	
+waon	わおん	
+nanaco	ななこ	
+edy	えでぃ	
+quicpay	くいっくぺい	
+d	でぃー	dポイント・d払い
+zaim	ざいむ	
+# 交通・旅行・食事
+suica	すいか	
+pasmo	ぱすも	
+icoca	いこか	
+manaca	まなか	
+toica	といか	
+sugoca	すごか	
+nimoca	にもか	
+kitaca	きたか	
+navitime	なびたいむ	
+jorudan	じょるだん	
+ekispert	えきすぱーと	
+jr	じぇいあーる,じぇーあーる	
+jal	じゃる	大文字の JAL を 1 字ずつ読まないため
+smart	すまーと	
+uber	うーばー	
+eats	いーつ	
+go	ごー	タクシーの GO。大文字の GO を 1 字ずつ読まないため
+didi	でぃでぃ	
+ride	らいど	
+grab	ぐらぶ	
+lyft	りふと	
+bolt	ぼると	
+wolt	うぉると,うると	日本の広告では「ウォルト」
+menu	めにゅー	
+airbnb	えあびーあんどびー	
+booking	ぶっきんぐ	
+expedia	えくすぺでぃあ	
+agoda	あごだ	
+trivago	とりばご	
+jalan	じゃらん	
+travel	とらべる	
+japan	じゃぱん	
+post	ぽすと	
+fedex	ふぇでっくす	
+yamap	やまっぷ	
+strava	すとらば	
+hotpepper	ほっとぺっぱー	
+hot	ほっと	
+pepper	ぺっぱー	
+gourmet	ぐるめ	
+beauty	びゅーてぃー	
+cookpad	くっくぱっど	
+delish	でりっしゅ	
+kitchen	きっちん	
+retty	れってぃ	
+starbucks	すたーばっくす	
+mcdonalds	まくどなるど,まっく	McDonald's
+# 通信・携帯
+docomo	どこも	
+au	えーゆー	
+softbank	そふとばんく	
+mobile	もばいる	
+ahamo	あはも	
+povo	ぽぼ	
+linemo	らいんも	
+mineo	まいねお	
+iijmio	あいあいじぇいみお,あいあいじぇーみお	
+nuro	にゅーろ	
+biglobe	びっぐろーぶ	
+wi	わい	Wi-Fi は Wi と Fi に分かれる
+fi	ふぁい	
+bluetooth	ぶるーとぅーす	
+# 仕事探し・住まい
+indeed	いんでぃーど	
+bizreach	びずりーち	
+doda	でゅーだ	
+mynavi	まいなび	
+rikunabi	りくなび	
+wantedly	うぉんてっどりー	
+recruit	りくるーと	
+suumo	すーも	
+homes	ほーむず	
+# ゲーム
+nintendo	にんてんどー	
+switch	すいっち	
+playstation	ぷれいすてーしょん	
+steam	すちーむ	
+xbox	えっくすぼっくす	
+epic	えぴっく	
+pokemon	ぽけもん	
+pokémon	ぽけもん	
+minecraft	まいんくらふと	
+roblox	ろぶろっくす	
+fortnite	ふぉーとないと	
+apex	えーぺっくす	
+clash	くらっしゅ	
+royale	ろわいやる	
+candy	きゃんでぃー	
+crush	くらっしゅ	
+puzzle	ぱずる	
+dragons	どらごんず	
+quest	くえすと	
+# 機器・メーカー
+sony	そにー	
+panasonic	ぱなそにっく	
+sharp	しゃーぷ	
+toyota	とよた	
+honda	ほんだ	
+nissan	にっさん	
+mazda	まつだ	
+subaru	すばる	
+tesla	てすら	
+samsung	さむすん	
+galaxy	ぎゃらくしー	
+xiaomi	しゃおみ	
+huawei	ふぁーうぇい	
+oppo	おっぽ	大文字の OPPO を 1 字ずつ読まないため
+asus	えいすーす	
+lenovo	れのぼ	
+motorola	もとろーら	
+nothing	なっしんぐ	
+fairphone	ふぇあふぉん	
+nokia	のきあ	
+garmin	がーみん	
+tanita	たにた	
+omron	おむろん	
+alexa	あれくさ	
+echo	えこー	
+switchbot	すいっちぼっと	
+philips	ふぃりっぷす	
+hue	ひゅー	
+nature	ねいちゃー	
+remo	りも	
+ifttt	いふと	
+# 入力
+atok	えいとっく	大文字の ATOK を 1 字ずつ読まないため
+simeji	しめじ	
+mozc	もずく	
+swiftkey	すいふときー	
+# ブログ・技術
+hatena	はてな	
+ameba	あめば	
+qiita	きーた	
+zenn	ぜん	
+connpass	こんぱす	
+fanbox	ふぁんぼっくす	
+# 評価セットの外れから足した語（M1-06b）
+nerv	ねるふ	特務機関NERV防災
+breezy	ぶりーじー	Breezy Weather
+antennapod	あんてなぽっど	
+fossify	ふぉっしふぁい	
+now	なう	7NOW。1 字ずつ読む規則では えぬおーだぶりゅー になる
+fujifilm	ふじふいるむ,ふじふぃるむ	大文字だけの語。社名の表記は「富士フイルム」
+my	まい	一般語。My docomo
+ispeed	あいすぴーど	楽天証券
+ponta	ぽんた	
+kids	きっず	一般語。YouTube Kids

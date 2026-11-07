@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+     漢字の名前の読みを確かめる。OS の情報からはジャンルが出ない（乗換は学習で埋める）
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- データを持たないので、バックアップを切るだけで足り、Android 12 からの細かい規則（dataExtractionRules）は要らない -->
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/test_app_icon"
+        android:label="@string/app_name"
+        tools:ignore="DataExtractionRules">
+        <activity
+            android:name="jp.piu.search.testapp.common.TestActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

@@ -1,0 +1,7 @@
+Piu Search is an app search for Android, built for Japanese. It finds installed apps by their Japanese readings, so "のりかえ", "乗り換え" and "norikae" all find the same transit app.
+
+It also finds apps by genre (e.g. "ちず" for map apps) and by developer, and learns from what you open. It is not a home screen replacement; open it from the digital assistant gesture or a Quick Settings tile.
+
+Piu Search has no internet permission and does not collect any data. Everything runs on the device. No Google Play services required.
+
+The app and its description are mainly in Japanese.

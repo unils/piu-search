@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# 照合の改善の材料。評価セット（core/search/src/test/resources/eval/）に足せる形で集める
+name: 検索で見つからない
+description: ある語で探したのに、目当てのアプリが出ない・下の方に出る
+labels: ["matching"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        照合を直す手がかりになります。入っているアプリの一覧そのものは貼らないでください（目当てのアプリだけで足ります）。
+
+  - type: input
+    id: query
+    attributes:
+      label: 打った語
+      placeholder: "例: ちず"
+    validations:
+      required: true
+
+  - type: input
+    id: app-name
+    attributes:
+      label: 出てほしかったアプリの名前
+      description: ホーム画面に出る名前のまま
+      placeholder: "例: Yahoo!マップ"
+    validations:
+      required: true
+
+  - type: input
+    id: package
+    attributes:
+      label: そのアプリのパッケージ名（分かれば）
+      description: Google Play や F-Droid のページの URL の `id=` の後ろ、または端末の設定のアプリ情報
+      placeholder: "例: jp.co.yahoo.android.apps.map"
+
+  - type: textarea
+    id: result
+    attributes:
+      label: 実際の結果
+      description: 出なかったのか、何位に出たのか。上に出たアプリがあれば、その名前
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: アプリの版
+      description: 設定の画面の「このアプリについて」にある「版」
+    validations:
+      required: true

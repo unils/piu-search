@@ -1,0 +1,104 @@
+# 版の一覧。2026-10-27 に Maven Central・Google Maven・Gradle Plugin Portal で最新の安定版を確かめた。
+[versions]
+agp = "9.4.1"
+kotlin = "2.4.21"
+# KSP 2.3 系は Kotlin の版から切り離されている（KSP2）。Room のコード生成に使う。2.3.12（2026-09-09）が最新
+ksp = "2.3.12"
+spotless = "8.10.4"
+ktlint = "1.8.0"
+kover = "0.9.11"
+# 公開 API の KDoc の検査にだけ使う。2.0 は安定版がまだない。1.23.8（最新の安定版）は Kotlin 2.0.21 で作られ、
+# Gradle のデーモンが JDK 25 だと版の文字列を読めずに落ちる。2.0.0-alpha.6 は Kotlin 2.4.10・AGP 9.3・Gradle 9.6 で作られている
+detekt = "2.0.0-alpha.6"
+licensee = "1.14.1"
+
+# JDK。コンパイルとテストに使う toolchain の版と、出力するバイトコードの版
+jdkToolchain = "21"
+jvmTarget = "17"
+
+# Android
+minSdk = "26"
+compileSdk = "37"
+targetSdk = "37"
+
+androidx-activity = "1.13.0"
+androidx-core = "1.19.1"
+androidx-lifecycle = "2.11.0"
+compose-bom = "2026.09.00"
+# 2.8.5（2026-09-09）が 2.x の最新。3.0（androidx.room3）は KMP 向けで、すべての操作が coroutine になる。
+# 索引は裏のスレッドでまとめて読み書きするだけなので 2.x を使う（2026-10-28 に Google Maven と公式の更新履歴で確かめた）
+room = "2.8.5"
+# 形態素解析器。0.9.0（2015-09）が最新で、更新はない（docs/research/reading-sources.md）
+kuromoji = "0.9.0"
+
+# テスト
+# JUnit 6（Jupiter の API）。JVM のモジュールと build-logic で使う
+junit = "6.1.3"
+junit4 = "4.13.2"
+robolectric = "4.17"
+androidx-test-ext-junit = "1.3.0"
+androidx-test-runner = "1.7.0"
+androidx-test-espresso = "3.7.0"
+# 画面のスクリーンショットのテスト（Robolectric の上で描いて、正解の画像と比べる）。
+# 1.77.0（2026-10-22）が最新の安定版（2026-10-28 に Maven Central と GitHub の Releases で確かめた）。Apache-2.0。テストにだけ使う
+roborazzi = "1.77.0"
+# R8 を通した版の計器テスト（:release-test）と起動の計測（:benchmark）。アプリの外から画面を操作する。
+# 2026-11-02 に Google Maven で最新の安定版を確かめた。どちらも Apache-2.0。テストの APK にだけ入る
+androidx-test-uiautomator = "2.4.0"
+androidx-benchmark = "1.5.0"
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidx-lifecycle" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+kuromoji-ipadic = { module = "com.atilika.kuromoji:kuromoji-ipadic", version.ref = "kuromoji" }
+
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+junit4 = { module = "junit:junit", version.ref = "junit4" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-test-espresso" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+androidx-test-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "androidx-test-uiautomator" }
+androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "androidx-benchmark" }
+
+# build-logic のプラグインが使う、AGP の公開 API（Variant API）だけの部分
+android-gradle-api = { module = "com.android.tools.build:gradle-api", version.ref = "agp" }
+# build-logic が Kover の設定に使う。実行時は根のビルドが読み込んだものを使う
+kover-gradle-plugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", version.ref = "kover" }
+detekt-gradle-plugin = { module = "dev.detekt:detekt-gradle-plugin", version.ref = "detekt" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+# アプリの APK を外から試すテストの APK（:release-test・:benchmark）
+android-test = { id = "com.android.test", version.ref = "agp" }
+# JVM のモジュール（core:*）を Android Lint にかける。ビルドの依存には Android を足さない
+android-lint = { id = "com.android.lint", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+# core:* の網羅率
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+# 公開 API の KDoc
+detekt = { id = "dev.detekt", version.ref = "detekt" }
+# 依存のライセンスの一覧と検査
+licensee = { id = "app.cash.licensee", version.ref = "licensee" }
+# Room のスキーマを JSON に書き出す先の設定（data/schemas）
+room = { id = "androidx.room", version.ref = "room" }
+# スクリーンショットの記録（recordRoborazziDebug）と比較のタスク
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }

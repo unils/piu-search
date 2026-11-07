@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# 様式を選ぶ画面の設定（https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository）
+blank_issues_enabled: true
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/unils/piu-search/security/advisories/new
+    about: 公開の issue には書かず、こちらから非公開で知らせてください（SECURITY.md）

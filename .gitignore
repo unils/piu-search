@@ -1,0 +1,24 @@
+# Android / Gradle
+.gradle/
+build/
+# SDK の場所。PC ごとに違う
+local.properties
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+*.hprof
+
+# 出来上がったものと署名鍵。署名鍵はリポジトリの外に置く
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+
+# Claude Code: タスクごとの作業ディレクトリと、個人の設定
+.claude/worktrees/
+.claude/settings.local.json

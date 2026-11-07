@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 108dp の枠の中央 72dp（安全域）に収まる虫眼鏡 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M48,34a14,14 0,1 1,0 28a14,14 0,1 1,0 -28z"
+        android:strokeWidth="6"
+        android:strokeColor="#FFFFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M58,58L72,72"
+        android:strokeLineCap="round"
+        android:strokeWidth="7"
+        android:strokeColor="#FFFFFFFF" />
+</vector>

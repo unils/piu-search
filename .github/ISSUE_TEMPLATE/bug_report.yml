@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+# 形式は GitHub の issue forms（https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms）
+name: 不具合の報告
+description: 動かない・落ちる・表示が崩れるなど
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。同じ不具合の issue がないか、先に確かめてください。
+        探したアプリが出てこないときは「検索で見つからない」の様式を使ってください。
+
+  - type: input
+    id: version
+    attributes:
+      label: アプリの版
+      description: 設定の画面の「このアプリについて」にある「版」
+      placeholder: "例: 0.0.2 (2)"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 端末と Android の版
+      placeholder: "例: Galaxy A54 / Android 14（カスタム ROM なら、その名前と版も）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: 入れた経路
+      options:
+        - GitHub Releases
+        - IzzyOnDroid
+        - F-Droid
+        - ソースからビルドした
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 起こす手順
+      placeholder: |
+        1. クイック設定のタイルから開く
+        2. 「ちず」と打つ
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動き
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動き
+      description: 画面の写しがあれば貼ってください。入っているアプリの一覧が写っている場合は、出してよい範囲に切り取ってください
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ（あれば）
+      description: "`adb logcat` の出力など。落ちたときは `FATAL EXCEPTION` の前後"
+      render: text

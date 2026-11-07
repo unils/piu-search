@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 「すべてのアプリ」のボタンの印。3 × 3 の四角（Material の apps の形を自作した） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,4h4v4h-4z M10,4h4v4h-4z M16,4h4v4h-4z M4,10h4v4h-4z M10,10h4v4h-4z M16,10h4v4h-4z M4,16h4v4h-4z M10,16h4v4h-4z M16,16h4v4h-4z" />
+</vector>
