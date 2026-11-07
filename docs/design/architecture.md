@@ -47,7 +47,7 @@ Gradle（Android の標準のビルドツール）のモジュール（ビルド
 | `core:search` | JVM | 索引のモデル、検索キーの生成、照合と順位付け、ジャンルの語彙、学習の規則 | `core:text`、`core:reading` の interface |
 | `data` | Android ライブラリ | AppSource・GenreResolver・Room のデータベース・IndexSync・設定の保存 | `core:*` |
 | `app` | Android アプリ | 画面（Jetpack Compose。画面を Kotlin の関数で組み立てる Android 標準の UI のライブラリ）、呼び出しの入口（Activity・TileService）、部品の組み立て | `data`、`core:*` |
-| `release-test` | Android のテスト（`com.android.test`。配布物に入らない） | R8 を通した版（app の `minified`）を、アプリの外から UiAutomator と shell で試す計器テスト | `app`（試す相手） |
+| `release-test` | Android のテスト（`com.android.test`。配布物に入らない） | R8 を通した版（app の `benchmarkRelease`）を、アプリの外から UiAutomator と shell で試す計器テスト | `app`（試す相手） |
 | `benchmark` | Android のテスト（`com.android.test`。配布物に入らない） | 起動の速さの計測（Macrobenchmark）と Baseline Profile の生成 | `app`（試す相手） |
 | `test-apps:*` | Android アプリ（テスト専用） | 日本語の名前や `geo:` を持つ小さなアプリ。エミュレータに入れて索引とジャンルを確かめる | なし |
 | `tools:dict` | JVM（配布物に入らない） | ブランド表などの辞書の検査と変換 | `core:text` |

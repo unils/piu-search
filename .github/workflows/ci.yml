@@ -95,9 +95,9 @@ jobs:
           # Google の API を含まない素の像。GrapheneOS と同じく Google Play 開発者サービスのない環境で確かめる
           target: default
           arch: x86_64
-          # R8 を通した版（app の minified）の計器テストも回す。release でだけ起きる誤りを拾うため。
+          # R8 を通した版（app の benchmarkRelease）の計器テストも回す。release でだけ起きる誤りを拾うため。
           # 前後の検査（応答なしの窓・端末ごとの件数）は Gradle のタスクに掛かっている（build-logic の piu.connected-test-checks）
-          script: ./gradlew --console=plain connectedDebugAndroidTest :release-test:connectedMinifiedAndroidTest
+          script: ./gradlew --console=plain connectedDebugAndroidTest :release-test:connectedBenchmarkReleaseAndroidTest
 
       - name: Upload reports
         if: failure()
