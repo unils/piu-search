@@ -1,0 +1,563 @@
+# 評価セットの検索語（M1-06a、2026-10-28 作成）
+#
+# 正解は「人がその語で探したら、このアプリが出てほしい」で決めた。照合の実装の挙動には合わせていない。
+# 検索語は人が実際に打つ形にした: 変換前のひらがな、途中まで、ローマ字（ヘボン式・訓令式・IME の途中の「のりk」）、
+# 英字の小文字、変換後の漢字、送り仮名の違い。大文字は打たない前提。
+# 「#」で始まる行と空行は読み飛ばす。最初の行が列の名前。列はタブで区切る。行末の空の列は省いてよい。
+#
+# 列:
+#   検索語   打つ文字列
+#   正解     出てほしいアプリ。apps.tsv の表示名。複数は「|」
+#   判定     any = 正解のどれか 1 つが出ればよい（順位は最も上の正解で測る）
+#            all = 正解がすべて出る必要がある（順位は最も下の正解で測る）。「やふー」で Yahoo 系が全部出る（要件 T2）の類
+#   分類     表記ゆれ・送り仮名・ローマ字・英字のブランド・略語・ジャンル・漢字の検索語・途中まで・短い語・学習
+#            短い語 = 一般語（go・pay・with・d・plus・on）。正解にないアプリが上に来ないかを見る（順位の指標がそのまま効く）
+#            ジャンル =ジャンルの語で引く。OS の情報（apps.tsv のジャンルの列）か、名前に含まれるジャンルの語で出せる想定
+#            学習 = 名前の読み・ブランド表・ジャンルでは出せず、学習（docs/design/learning.md）で埋める想定。
+#                   旧名・愛称・名前に出ない用途（乗換・銀行・決済のように OS の情報に出ないジャンル）
+#   メモ     出典（設計の文書の例など）と、判断の理由
+#            「既知の弱点: 理由」で始まるメモは既知の弱点の印（M1-06b）。指標には外れとして数えるが、合格の目安からは外す。
+#            全体の 5% まで。学習の分類と、全問正解の例（やふー・送り仮名）には付けない
+# 同じ検索語を 2 行に書くのは、名前で出せる正解と学習で埋める正解を分けるときだけ（分類が違う）。
+検索語	正解	判定	分類	メモ
+# ---- 設計の文書に出てくる例 ----
+やふー	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	英字のブランド	要件 T2。名前に Yahoo! を持つものすべて。防災速報は名前から Yahoo! が消えたので入れない
+やふ	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	途中まで	learning.md の例（「やふ」→「やふー」）
+yahoo	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	英字のブランド
+yafu	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	ローマ字	matching.md の例（yafu の標準形は yahu）
+ヤフー	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	表記ゆれ	カタカナに変換して確定した形
+のりかえ	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名	testing.md の全問正解の例。名前に「乗換」を持つもの
+乗り換え	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名	testing.md の全問正解の例
+乗換	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名	testing.md の全問正解の例
+乗換え	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名
+乗りかえ	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名	一部だけ変換した形
+乗り換え案内	Yahoo!乗換案内|ジョルダン乗換案内	all	送り仮名	reading-sources.md の試しの語。乗換NAVITIME は「案内」を持たない
+のりかえあんない	Yahoo!乗換案内|ジョルダン乗換案内	all	送り仮名
+norikae	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	送り仮名	testing.md の全問正解の例
+norikaeannai	Yahoo!乗換案内|ジョルダン乗換案内	all	ローマ字
+norikaeanai	Yahoo!乗換案内|ジョルダン乗換案内	all	ローマ字	matching.md の確かめる例（n を 1 つで打つ）
+のりか	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	途中まで	matching.md の段階 2 の例
+のりk	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME	all	途中まで	matching.md の例（IME の変換前に英字が残る）
+あんない	ジョルダン乗換案内|Yahoo!乗換案内	all	途中まで	matching.md の段階 3 の例（語の頭からの一致）
+hot	ホットペッパーグルメ	any	ローマ字	matching.md の例。読みのローマ字に前方一致
+hott	ホットペッパーグルメ	any	ローマ字	matching.md の例
+ほt	ホットペッパーグルメ	any	途中まで	matching.md の例（IME の途中）
+ほっt	ホットペッパーグルメ	any	途中まで	matching.md の例（促音の後の子音）
+hotpepper	ホットペッパーグルメ	any	英字のブランド	matching.md の例。パッケージ名の語
+hotpe	ホットペッパーグルメ	any	途中まで	matching.md の例
+pepper	ホットペッパーグルメ	any	英字のブランド	matching.md の例（段階 5。英語の綴りとカタカナの読みはローマ字で一致しない）
+nhk	NHKプラス|NHK ONE ニュース・防災	all	略語	matching.md の例
+んhk	NHKプラス|NHK ONE ニュース・防災	all	略語	matching.md の例（日本語入力のまま nhk と打つ）
+えぬえいちけー	NHKプラス|NHK ONE ニュース・防災	all	略語	matching.md の例（大文字の略語の 1 字ずつの読み）
+ちず	マップ|Yahoo!マップ|Organic Maps	all	ジャンル	既知の弱点: 地図のジャンルに 5 件（正解の 3 件と NAVITIME・Yahoo!カーナビ）が段階 4 で並び、段階の中は表示名の順になる。ジャンルの中で区別する手がかりがなく、起動の回数と学習（M4）で並べる想定。 matching.md・learning.md・要件 U2 の例。カーナビとナビのアプリは出てもよいが正解に数えない
+地図	マップ|Yahoo!マップ|Organic Maps	all	ジャンル	既知の弱点: 地図のジャンルに 5 件（正解の 3 件と NAVITIME・Yahoo!カーナビ）が段階 4 で並び、段階の中は表示名の順になる。ジャンルの中で区別する手がかりがなく、起動の回数と学習（M4）で並べる想定。 要件 U2 の例（「地図」で Google マップとヤフーマップの両方）
+まっぷ	マップ|Yahoo!マップ|Organic Maps	all	ジャンル	既知の弱点: 全国ラーメンマップ（読みの語の頭が厳密形で一致、段階 3）が、Organic Maps（英字の名前に、かなの検索語のローマ字が緩い形で一致、段階 3）より上に並ぶ。 matching.md の段階 3 の例（「まっぷ」→「Yahoo!マップ」）
+gmp	マップ	any	略語	既知の弱点: 端末の名前は「マップ」「Maps」で、Google はパッケージ名にしかない。段階 6 は名前のキーだけを相手にし、google は多くのアプリに共通する語として照合から外れる。 matching.md の段階 6 の例（「Google Maps」の頭文字・飛ばし一致）。端末の名前は「マップ」と「Maps」で、Google はパッケージ名にだけある
+shinkansen	新幹線時刻表	any	ローマ字	matching.md の確かめる例
+sinkansen	新幹線時刻表	any	ローマ字	matching.md の確かめる例（訓令式）
+shinnkannsenn	新幹線時刻表	any	ローマ字	matching.md の細則の例（n を重ねる IME の打ち方）
+tokyo	東京メトロmy!アプリ|東京都公式アプリ|東京都防災アプリ	all	ローマ字	matching.md の確かめる例
+toukyou	東京メトロmy!アプリ|東京都公式アプリ|東京都防災アプリ	all	ローマ字	matching.md の確かめる例
+ramen	全国ラーメンマップ	any	ローマ字	matching.md の確かめる例
+raamen	全国ラーメンマップ	any	ローマ字	matching.md の確かめる例
+fuji	富士山|FUJIFILM XApp	any	ローマ字	matching.md の確かめる例
+huzi	富士山	any	ローマ字	matching.md の確かめる例（訓令式）
+おかね	PayPay	any	学習	learning.md の例（救済で学ぶ）
+paypay	PayPay|PayPay銀行	all	英字のブランド	learning.md の例
+てんき	天気|Yahoo!天気|ウェザーニュース|tenki.jp|Breezy Weather	all	ジャンル	learning.md の例。天気のアプリすべて
+ぎんこう	三井住友銀行|三菱UFJ銀行|みずほ銀行|楽天銀行|ドコモSMTBネット銀行|PayPay銀行	all	ジャンル	matching.md の段階 5 の例。名前に「銀行」を持つもの。OS の情報には出ない
+ぎんこう	ゆうちょ通帳アプリ|りそなグループアプリ	all	学習	learning.md の例。名前に「銀行」を持たない銀行のアプリ
+# ---- 英字のブランド ----
+yah	Yahoo! JAPAN|Yahoo!天気|Yahoo!乗換案内|Yahoo!マップ|Yahoo!ニュース|Yahoo!ショッピング|Yahoo!オークション|Yahoo!カーナビ|Yahoo!フリマ	all	途中まで
+らくてん	楽天銀行|楽天ペイ|楽天カード|楽天ポイントクラブ|楽天市場|楽天ラクマ|楽天ぐるなび|楽天トラベル	all	英字のブランド	名前に「楽天」を持つもの（漢字だが、Rakuten の英字の読みと同じ扱いで引けてほしい）
+らくて	楽天銀行|楽天ペイ|楽天カード|楽天ポイントクラブ|楽天市場|楽天ラクマ|楽天ぐるなび|楽天トラベル	all	途中まで
+楽天	楽天銀行|楽天ペイ|楽天カード|楽天ポイントクラブ|楽天市場|楽天ラクマ|楽天ぐるなび|楽天トラベル	all	漢字の検索語
+rakuten	楽天銀行|楽天ペイ|楽天カード|楽天ポイントクラブ|楽天市場|楽天ラクマ|楽天ぐるなび|楽天トラベル	all	ローマ字
+らくてんしょうけん	iSPEED	any	学習	名前に楽天も証券も出ない
+らくてんこぼ	Kobo Books	any	学習	名前に楽天が出ない
+ぐーぐる	Google|Google ウォレット|Google Home|Google TV|Google レンズ|Google ニュース	all	英字のブランド	名前に Google を持つもの。マップ・フォトなどは名前に Google がない
+google	Google|Google ウォレット|Google Home|Google TV|Google レンズ|Google ニュース	all	英字のブランド
+ぐーぐるまっぷ	マップ	any	学習	端末の名前は「マップ」で、Google はパッケージ名にだけある
+ぐーぐるふぉと	フォト	any	学習	同上
+ぐーぐるかれんだー	カレンダー	any	学習	同上
+ぐーぐるほーむ	Google Home	any	英字のブランド
+ぐーぐるれんず	Google レンズ	any	英字のブランド
+れんず	Google レンズ	any	途中まで	語の頭からの一致
+あまぞん	Amazon ショッピング|Amazon Music	all	英字のブランド	Prime Video と Kindle は名前に Amazon がない（下の学習の行）
+amazon	Amazon ショッピング|Amazon Music	all	英字のブランド
+あまぞんぷらいむ	Prime Video	any	学習	名前に Amazon がない
+あまぷら	Prime Video	any	学習	愛称
+ぷらいむびでお	Prime Video	any	英字のブランド
+あま	Amazon ショッピング|Amazon Music	all	途中まで
+らいん	LINE|LINE MUSIC|LINEマンガ	all	英字のブランド
+line	LINE|LINE MUSIC|LINEマンガ	all	英字のブランド
+らいんみゅーじっく	LINE MUSIC	any	英字のブランド
+らいんまんが	LINEマンガ	any	英字のブランド
+ぺいぺい	PayPay|PayPay銀行	all	英字のブランド
+ぺいぺ	PayPay|PayPay銀行	all	途中まで
+ぺいぺいぎんこう	PayPay銀行	any	英字のブランド
+ついったー	X	any	英字のブランド	matching.md の例（x → えっくす・ついったー）
+twitter	X	any	英字のブランド	パッケージ名の語（com.twitter.android）
+えっくす	X	any	英字のブランド
+いんすたぐらむ	Instagram	any	英字のブランド
+いんすた	Instagram	any	途中まで
+instagram	Instagram	any	英字のブランド
+insta	Instagram	any	途中まで
+ふぇいすぶっく	Facebook	any	英字のブランド
+facebook	Facebook	any	英字のブランド
+めっせんじゃー	Messenger	any	英字のブランド
+すれっず	Threads	any	英字のブランド
+threads	Threads	any	英字のブランド
+てぃっくとっく	TikTok	any	英字のブランド
+tiktok	TikTok	any	英字のブランド
+でぃすこーど	Discord	any	英字のブランド
+discord	Discord	any	英字のブランド
+すらっく	Slack	any	英字のブランド
+slack	Slack	any	英字のブランド
+ずーむ	Zoom Workplace	any	英字のブランド
+zoom	Zoom Workplace	any	英字のブランド
+ちーむず	Teams	any	英字のブランド
+teams	Teams	any	英字のブランド
+ぶるーすかい	Bluesky	any	英字のブランド
+bluesky	Bluesky	any	英字のブランド
+しぐなる	Signal	any	英字のブランド
+signal	Signal	any	英字のブランド
+わっつあっぷ	WhatsApp	any	英字のブランド
+ねっとふりっくす	Netflix	any	英字のブランド
+ねとふり	Netflix	any	学習	愛称
+netflix	Netflix	any	英字のブランド
+ゆーちゅーぶ	YouTube|YouTube Music|YouTube Kids	all	英字のブランド
+youtube	YouTube|YouTube Music|YouTube Kids	all	英字のブランド
+ゆーちゅ	YouTube|YouTube Music|YouTube Kids	all	途中まで
+ようつべ	YouTube	any	学習	愛称
+ゆーちゅーぶみゅーじっく	YouTube Music	any	英字のブランド
+すぽてぃふぁい	Spotify	any	英字のブランド
+spotify	Spotify	any	英字のブランド
+すぽ	Spotify	any	途中まで
+あっぷるみゅーじっく	Apple Music	any	英字のブランド
+あまぞんみゅーじっく	Amazon Music	any	英字のブランド
+でぃずにー	Disney+	any	英字のブランド
+disney	Disney+	any	英字のブランド
+ふーるー	Hulu	any	英字のブランド
+hulu	Hulu	any	英字のブランド
+あべま	ABEMA	any	英字のブランド
+abema	ABEMA	any	英字のブランド
+ゆーねくすと	U-NEXT	any	英字のブランド
+unext	U-NEXT	any	英字のブランド	「-」を打たない
+てぃーばー	TVer	any	英字のブランド
+tver	TVer	any	英字のブランド
+らじこ	radiko	any	英字のブランド
+radiko	radiko	any	英字のブランド
+うーばー	Uber|Uber Eats	all	英字のブランド
+uber	Uber|Uber Eats	all	英字のブランド
+うーばーいーつ	Uber Eats	any	英字のブランド
+うーばーいー	Uber Eats	any	途中まで
+うぉると	Wolt	any	英字のブランド
+じーめーる	Gmail	any	英字のブランド
+gmail	Gmail	any	英字のブランド
+くろーむ	Chrome	any	英字のブランド
+chrome	Chrome	any	英字のブランド
+じぇみに	Gemini	any	英字のブランド
+gemini	Gemini	any	英字のブランド
+きんどる	Kindle	any	英字のブランド
+kindle	Kindle	any	英字のブランド
+こぼ	Kobo Books	any	英字のブランド
+のーしょん	Notion	any	英字のブランド
+notion	Notion	any	英字のブランド
+でゅおりんご	Duolingo	any	英字のブランド
+でぃーぷる	DeepL	any	英字のブランド
+deepl	DeepL	any	英字のブランド
+ぞぞたうん	ZOZOTOWN	any	英字のブランド
+ぞぞ	ZOZOTOWN	any	途中まで
+zozo	ZOZOTOWN	any	途中まで
+しーいん	SHEIN	any	英字のブランド
+shein	SHEIN	any	英字のブランド
+uniqlo	ユニクロ	any	英字のブランド	英語名とパッケージ名の語
+なびたいむ	NAVITIME|乗換NAVITIME	all	英字のブランド
+navitime	NAVITIME|乗換NAVITIME	all	英字のブランド
+すいか	モバイルSuica	any	英字のブランド
+suica	モバイルSuica	any	英字のブランド
+ぱすも	モバイルPASMO	any	英字のブランド
+いこか	モバイルICOCA	any	英字のブランド
+ねるふ	NERV防災	any	英字のブランド
+nerv	NERV防災	any	英字のブランド
+えーゆーぺい	au PAY	any	英字のブランド
+aupay	au PAY	any	英字のブランド	空白を打たない
+でぃーばらい	d払い	any	英字のブランド	小文字の d の読み
+ぶいぱす	Vpass	any	英字のブランド
+vpass	Vpass	any	英字のブランド
+ぶいぽいんと	Vポイント	any	英字のブランド
+ぽんた	Ponta	any	英字のブランド
+あいすぴーど	iSPEED	any	英字のブランド
+ispeed	iSPEED	any	英字のブランド
+まいどこも	My docomo	any	英字のブランド
+どこも	My docomo|ドコモSMTBネット銀行	any	英字のブランド	My docomo の綴りの読みと、ドコモSMTBネット銀行のカタカナ
+ぽけもん	Pokémon GO	any	英字のブランド	アクセント付きの é を含む名前
+pokemon	Pokémon GO	any	英字のブランド	é を e と打つ
+ぽけもんごー	Pokémon GO	any	英字のブランド
+ばなじうむ	Vanadium	any	英字のブランド	GrapheneOS の標準のブラウザ
+vanadium	Vanadium	any	英字のブランド
+おーでぃたー	Auditor	any	英字のブランド
+auditor	Auditor	any	英字のブランド
+ふぇあめーる	FairEmail	any	英字のブランド
+fairemail	FairEmail	any	英字のブランド
+おーがにっくまっぷす	Organic Maps	any	英字のブランド
+organic	Organic Maps	any	英字のブランド
+にゅーぱいぷ	NewPipe	any	英字のブランド
+newpipe	NewPipe	any	英字のブランド
+いーじす	Aegis	any	英字のブランド
+aegis	Aegis	any	英字のブランド
+らうんどしんく	Round Sync	any	英字のブランド
+roundsync	Round Sync	any	英字のブランド	空白を打たない
+ntfy	ntfy	any	英字のブランド
+ぶりーじー	Breezy Weather	any	英字のブランド
+あんてなぽっど	AntennaPod	any	英字のブランド
+ふぉっしふぁい	Fossify Gallery	any	英字のブランド
+wallet	Google ウォレット|みずほWallet	all	英字のブランド	英語名 Google Wallet と、名前の Wallet
+うぉれっと	Google ウォレット|みずほWallet	all	英字のブランド
+せぶんなう	7NOW	any	英字のブランド	既知の弱点: 数字の 7 に読みを付けない（数字の読みは設計にない）。「なう」は語の頭から当たる。 数字の 7 の読み
+7now	7NOW	any	英字のブランド
+ふじふいるむ	FUJIFILM XApp	any	英字のブランド
+# ---- 大文字の語で、1 字ずつ読むと誤り、ブランド表の読みが正しいもの ----
+じゃる	JAL	any	英字のブランド	1 字ずつ読むと「じぇーえーえる」で、人はそう打たない
+jal	JAL	any	略語
+ごー	GO	any	英字のブランド	タクシーの GO。1 字ずつ読むと「じーおー」
+go	GO	any	短い語	一般語。Google・Pokémon GO が GO より上に来ないかを見る
+ごーたくしー	GO	any	学習	名前は「GO」だけで、タクシーは Play の題名にしかない
+えーゆー	au PAY|au Wi-Fiアクセス	all	英字のブランド	au を 1 字ずつ読むと同じになるが、小文字なので略語の規則は効かない
+au	au PAY|au Wi-Fiアクセス	all	短い語
+# ---- 記号で分かれる名前 ----
+わいふぁい	Japan Wi-Fi auto-connect|au Wi-Fiアクセス	all	英字のブランド	Wi-Fi は Wi と Fi に分かれる
+wifi	Japan Wi-Fi auto-connect|au Wi-Fiアクセス	all	英字のブランド	「-」を打たない
+えふどろいど	F-Droid	any	英字のブランド	F と Droid に分かれる。F は 1 字の大文字
+fdroid	F-Droid	any	英字のブランド	「-」を打たない
+どろいど	F-Droid	any	途中まで	語の頭からの一致
+ubereats	Uber Eats	any	英字のブランド	空白を打たない
+いーつ	Uber Eats	any	途中まで	語の頭からの一致
+でぃずにーぷらす	Disney+	any	学習	「+」は記号として除かれるので、名前の読みに「ぷらす」が出ない想定
+じゃんぷぷらす	少年ジャンプ+	any	学習	同上
+しょうねんじゃんぷ	少年ジャンプ+	any	表記ゆれ
+せぶんいれぶん	セブン-イレブン	any	表記ゆれ	「-」を打たない
+いれぶん	セブン-イレブン	any	途中まで	語の頭からの一致
+# ---- 短い一般語（正解にないアプリが上に来ないかを見る） ----
+うぃず	with	any	短い語	一般語の with。ブランド表の with を持つ名前がほかにあれば、それより上に出てほしい
+with	with	any	短い語
+ぺい	PayPay|PayPay銀行|楽天ペイ|au PAY|ファミペイ	all	短い語	名前に pay・ペイを持つもの。d払いは名前にペイがない
+pay	PayPay|PayPay銀行|au PAY	all	短い語	既知の弱点: パッケージ名の語（d払いの payment・Yahoo!フリマの paypayfleamarket・楽天ペイの pay）の前方一致（段階 2）が、名前の語の頭で当たる au PAY（段階 3）より上に並ぶ。 英字の pay を名前に持つもの
+ぷらす	NHKプラス	any	短い語	一般語。Disney+・少年ジャンプ+ は記号なので数えない
+でぃー	d払い|dアニメストア|dポイントクラブ	all	短い語	既知の弱点: DeepL の読み でぃーぷえる も前方一致（段階 2）で、同じ段階・同じ重みの中は表示名の順なので d払い が 4 位になる。 1 字の d の読み。DeepL・Disney+ が上に来ないかを見る
+おん	NHK ONE ニュース・防災	any	短い語	一般語の on。おんがく（音楽）の結果を邪魔しないかは「おんがく」の行で見る
+おんがく	Spotify|YouTube Music|Amazon Music|LINE MUSIC|Apple Music|radiko|AntennaPod	any	ジャンル	on → おん の読みを持つアプリが上に来ないかも見る
+# ---- ジャンル（OS の情報で出せる想定） ----
+map	マップ|Yahoo!マップ|Organic Maps	all	ジャンル	既知の弱点: 全国ラーメンマップのパッケージ名の語 map（rarmen_map）が段階 2 に当たり、名前の語の頭で当たる Organic Maps（段階 3）より上に並ぶ。
+maps	マップ|Organic Maps	all	ジャンル	英語名と名前に Maps を持つもの
+まp	マップ|Yahoo!マップ|Organic Maps	all	途中まで	IME の途中（map を日本語入力のまま打つ）
+chizu	マップ|Yahoo!マップ|Organic Maps	all	ローマ字	既知の弱点: 地図のジャンルに 5 件（正解の 3 件と NAVITIME・Yahoo!カーナビ）が段階 4 で並び、段階の中は表示名の順になる。ジャンルの中で区別する手がかりがなく、起動の回数と学習（M4）で並べる想定。
+tizu	マップ|Yahoo!マップ|Organic Maps	all	ローマ字	既知の弱点: 地図のジャンルに 5 件（正解の 3 件と NAVITIME・Yahoo!カーナビ）が段階 4 で並び、段階の中は表示名の順になる。ジャンルの中で区別する手がかりがなく、起動の回数と学習（M4）で並べる想定。 訓令式
+なび	NAVITIME|乗換NAVITIME|Yahoo!カーナビ	all	ジャンル	既知の弱点: 楽天ぐるなび（読みの語の頭、段階 3）が Yahoo!カーナビ（ジャンル、段階 4）より上に並び、ジャンルの中でも Organic Maps が表示名の順で先に来る。 ジャンルの語「なび」と、名前の読み
+めーる	Gmail|FairEmail|Outlook	all	ジャンル	既知の弱点: メルカリが、かなの検索語のローマ字（meru）の緩い形の前方一致で段階 2 に入り、ジャンル（段階 4）の正解より上に並ぶ。
+mail	Gmail|FairEmail|Outlook	all	ジャンル
+めーr	Gmail|FairEmail|Outlook	all	途中まで	既知の弱点: メルカリが、ローマ字（mer）の前方一致で段階 2 に入り、ジャンル（段階 4）の正解より上に並ぶ。 IME の途中
+でんわ	電話	any	ジャンル
+電話	電話	any	漢字の検索語
+denwa	電話	any	ローマ字
+めっせーじ	メッセージ	any	ジャンル
+sms	メッセージ	any	略語	ジャンルの語
+かめら	カメラ|Camera	all	ジャンル	Pixel と GrapheneOS のカメラ
+camera	カメラ|Camera	all	ジャンル
+kamera	カメラ|Camera	all	ローマ字
+しゃしん	フォト|Fossify Gallery	all	ジャンル
+写真	フォト|Fossify Gallery	all	漢字の検索語
+syasin	フォト|Fossify Gallery	all	ローマ字	訓令式
+shashin	フォト|Fossify Gallery	all	ローマ字
+ぎゃらりー	Fossify Gallery|フォト	all	ジャンル
+photo	フォト|Fossify Gallery	all	ジャンル	英語名 Photos と、ジャンルの語
+ふぉと	フォト|Fossify Gallery	all	ジャンル
+どうが	YouTube|ニコニコ動画|Netflix|Prime Video|TVer|ABEMA|U-NEXT|Hulu|dアニメストア|Disney+|NewPipe|NHKプラス	any	ジャンル	動画のアプリのどれか
+動画	YouTube|ニコニコ動画|Netflix|Prime Video|TVer|ABEMA|U-NEXT|Hulu|dアニメストア|Disney+|NewPipe|NHKプラス	any	漢字の検索語
+video	YouTube|ニコニコ動画|Netflix|Prime Video|TVer|ABEMA|U-NEXT|Hulu|dアニメストア|Disney+|NewPipe|NHKプラス	any	ジャンル
+音楽	Spotify|YouTube Music|Amazon Music|LINE MUSIC|Apple Music|radiko|AntennaPod	any	漢字の検索語
+music	YouTube Music|Amazon Music|LINE MUSIC|Apple Music	all	ジャンル	名前に Music を持つもの
+ongaku	Spotify|YouTube Music|Amazon Music|LINE MUSIC|Apple Music|radiko|AntennaPod	any	ローマ字
+ぶらうざ	Chrome|Vanadium	all	ジャンル
+ぶらうざー	Chrome|Vanadium	all	表記ゆれ	長音の有無
+browser	Chrome|Vanadium	all	ジャンル
+かれんだー	カレンダー|Outlook	all	ジャンル
+予定	カレンダー|Outlook	all	漢字の検索語	ジャンルの語
+calendar	カレンダー|Outlook	all	ジャンル
+karenda	カレンダー	any	ローマ字	長音を打たない
+れんらくさき	連絡帳	any	ジャンル	名前は「連絡帳」で、ジャンルの語は「連絡先」
+連絡先	連絡帳	any	漢字の検索語
+れんらく	連絡帳	any	途中まで
+contacts	連絡帳	any	ジャンル	英語名
+でんたく	電卓	any	ジャンル
+電卓	電卓	any	漢字の検索語
+計算	電卓	any	漢字の検索語	ジャンルの語
+けいさん	電卓	any	ジャンル
+dentaku	電卓	any	ローマ字
+calculator	電卓	any	ジャンル
+とけい	時計	any	ジャンル
+時計	時計	any	漢字の検索語
+あらーむ	時計	any	ジャンル
+tokei	時計	any	ローマ字
+clock	時計	any	ジャンル
+ふぁいる	Files	any	ジャンル
+files	Files	any	ジャンル
+天気	天気|Yahoo!天気|ウェザーニュース|tenki.jp|Breezy Weather	all	漢字の検索語
+tenki	天気|Yahoo!天気|ウェザーニュース|tenki.jp|Breezy Weather	all	ローマ字
+てんk	天気|Yahoo!天気|ウェザーニュース|tenki.jp|Breezy Weather	all	途中まで	IME の途中
+weather	天気|Yahoo!天気|ウェザーニュース|tenki.jp|Breezy Weather	all	ジャンル
+うぇざーにゅーす	ウェザーニュース	any	表記ゆれ
+うえざーにゅーす	ウェザーニュース	any	表記ゆれ	小さい「ぇ」を普通の「え」で打つ
+ほんやく	翻訳|DeepL	all	ジャンル
+翻訳	翻訳|DeepL	all	漢字の検索語
+honyaku	翻訳|DeepL	all	ローマ字
+translate	翻訳|DeepL	all	ジャンル
+すとあ	Play ストア|App Store|F-Droid	all	ジャンル	既知の弱点: dアニメストアの名前の語の頭（段階 3）がジャンル（段階 4）の正解より上に並ぶ。
+store	Play ストア|App Store|F-Droid	all	ジャンル
+ぷれいすとあ	Play ストア	any	英字のブランド
+pdf	PDF Viewer	any	略語	ジャンルの語でもある
+げーむ	Pokémon GO|モンスト|パズドラ|ウマ娘|ドラクエウォーク	any	ジャンル
+game	Pokémon GO|モンスト|パズドラ|ウマ娘|ドラクエウォーク	any	ジャンル
+にゅーす	Google ニュース|Yahoo!ニュース|スマートニュース|グノシー|日経電子版|NHK ONE ニュース・防災|Yahoo! JAPAN	any	ジャンル
+news	Google ニュース|Yahoo!ニュース|スマートニュース|グノシー|日経電子版|NHK ONE ニュース・防災|Yahoo! JAPAN	any	ジャンル
+えすえぬえす	LINE|X|Instagram|Facebook|Threads|TikTok|Discord|Bluesky	any	ジャンル
+sns	LINE|X|Instagram|Facebook|Threads|TikTok|Discord|Bluesky	any	略語	ジャンルの語
+せってい	設定	any	表記ゆれ
+設定	設定	any	漢字の検索語
+settei	設定	any	ローマ字
+# ---- 名前に含まれるジャンルの語（OS の情報には出ない） ----
+銀行	三井住友銀行|三菱UFJ銀行|みずほ銀行|楽天銀行|ドコモSMTBネット銀行|PayPay銀行	all	漢字の検索語
+ginkou	三井住友銀行|三菱UFJ銀行|みずほ銀行|楽天銀行|ドコモSMTBネット銀行|PayPay銀行	all	ローマ字
+ginko	三井住友銀行|三菱UFJ銀行|みずほ銀行|楽天銀行|ドコモSMTBネット銀行|PayPay銀行	all	ローマ字	「う」を打たない
+ぎんk	三井住友銀行|三菱UFJ銀行|みずほ銀行|楽天銀行|ドコモSMTBネット銀行|PayPay銀行	all	途中まで	IME の途中
+ぐるめ	ホットペッパーグルメ	any	ジャンル	食べログなどは学習で足す
+gurume	ホットペッパーグルメ	any	ローマ字
+ふりま	Yahoo!フリマ	any	ジャンル	メルカリ・ラクマは学習で足す
+ぽいんと	楽天ポイントクラブ|dポイントクラブ|Vポイント	all	ジャンル	Ponta は学習
+まんが	LINEマンガ	any	ジャンル	少年ジャンプ+・ピッコマは学習
+あにめ	dアニメストア	any	ジャンル
+ぼうさい	防災速報|NERV防災|東京都防災アプリ|NHK ONE ニュース・防災	all	ジャンル
+防災	防災速報|NERV防災|東京都防災アプリ|NHK ONE ニュース・防災	all	漢字の検索語
+しょうけん	SBI証券	any	ジャンル	iSPEED は学習
+証券	SBI証券	any	漢字の検索語
+ゆうびん	郵便局	any	途中まで
+郵便	郵便局	any	漢字の検索語
+じこくひょう	新幹線時刻表	any	ジャンル
+時刻表	新幹線時刻表	any	漢字の検索語
+すし	スシロー|くら寿司	all	ジャンル	スシローは読みの前方一致、くら寿司は語の頭からの一致
+寿司	くら寿司|スシロー	all	漢字の検索語
+しんかんせん	新幹線時刻表	any	ジャンル	EXアプリ・えきねっとは学習（下の行）
+新幹線	新幹線時刻表	any	漢字の検索語
+しんかんs	新幹線時刻表	any	途中まで	IME の途中
+にんしょう	ゆうちょ認証アプリ|Aegis	any	ジャンル	Aegis は学習。ゆうちょ認証アプリが名前で出ればよい
+きゃっしゅれす	PayPay|楽天ペイ|d払い|au PAY|ファミペイ	any	学習
+# ---- 日本のアプリの名前（読み・表記ゆれ・途中まで） ----
+じょるだん	ジョルダン乗換案内	any	表記ゆれ
+じょる	ジョルダン乗換案内	any	途中まで
+ジョルダン	ジョルダン乗換案内	any	表記ゆれ	カタカナに変換して確定した形
+jorudan	ジョルダン乗換案内	any	ローマ字
+のりかえなびたいむ	乗換NAVITIME	any	英字のブランド
+えきすぱあと	駅すぱあと	any	表記ゆれ
+えきすぱーと	駅すぱあと	any	表記ゆれ	名前は「あと」だが、人は長音で打つことがある
+えきすぱ	駅すぱあと	any	途中まで
+えきねっと	えきねっと	any	表記ゆれ
+じぇいあーる	JR東日本アプリ	any	略語	ブランド表の jr
+jr	JR東日本アプリ	any	略語
+じぇいあーるひがしにほん	JR東日本アプリ	any	略語
+ひがしにほん	JR東日本アプリ	any	途中まで	語の頭からの一致。東日本は「ひがしにっぽん」とも読む
+めとろ	東京メトロmy!アプリ	any	途中まで	語の頭からの一致
+とうきょうめとろ	東京メトロmy!アプリ	any	表記ゆれ
+とうきょう	東京メトロmy!アプリ|東京都公式アプリ|東京都防災アプリ	all	途中まで
+東京	東京メトロmy!アプリ|東京都公式アプリ|東京都防災アプリ	all	漢字の検索語
+とうky	東京メトロmy!アプリ|東京都公式アプリ|東京都防災アプリ	all	途中まで	IME の途中
+えくす	EXアプリ	any	英字のブランド	EX の読み。X は「えっくす」とも読む
+えーえぬえー	ANA	any	略語
+あな	ANA	any	略語	人は「あな」と読む
+ana	ANA	any	略語
+みついすみとも	三井住友銀行	any	表記ゆれ	Vpass は学習
+三井住友	三井住友銀行	any	漢字の検索語
+みつい	三井住友銀行	any	途中まで
+mitsui	三井住友銀行	any	ローマ字
+mitui	三井住友銀行	any	ローマ字	訓令式
+smbc	三井住友銀行|Vpass	any	略語	パッケージ名の語
+みつびし	三菱UFJ銀行	any	表記ゆれ
+三菱	三菱UFJ銀行	any	漢字の検索語
+ゆーえふじぇー	三菱UFJ銀行	any	略語
+ufj	三菱UFJ銀行	any	略語
+mufg	三菱UFJ銀行	any	略語	パッケージ名の語
+みずほ	みずほ銀行|みずほWallet	all	表記ゆれ
+mizuho	みずほ銀行|みずほWallet	all	ローマ字
+ゆうちょ	ゆうちょ通帳アプリ|ゆうちょ認証アプリ	all	表記ゆれ
+ゆうち	ゆうちょ通帳アプリ|ゆうちょ認証アプリ	all	途中まで
+yuucho	ゆうちょ通帳アプリ|ゆうちょ認証アプリ	all	ローマ字
+yucho	ゆうちょ通帳アプリ|ゆうちょ認証アプリ	all	ローマ字	長音を打たない
+yuutyo	ゆうちょ通帳アプリ|ゆうちょ認証アプリ	all	ローマ字	訓令式
+つうちょう	ゆうちょ通帳アプリ	any	表記ゆれ	reading-sources.md の誤りの例（通帳をかよいちょうと読む）
+通帳	ゆうちょ通帳アプリ	any	漢字の検索語
+ゆうちょぎんこう	ゆうちょ通帳アプリ	any	学習	名前に銀行がない
+らくてんぎんこう	楽天銀行	any	英字のブランド
+りそな	りそなグループアプリ	any	表記ゆれ
+risona	りそなグループアプリ	any	ローマ字
+すみしん	ドコモSMTBネット銀行	any	学習	旧名（住信SBIネット銀行）
+すみしんえすびーあい	ドコモSMTBネット銀行	any	学習	旧名
+えすびーあい	SBI証券	any	略語
+sbi	SBI証券	any	略語
+かーど	楽天カード	any	ジャンル	Vpass は学習
+らくてんかーど	楽天カード	any	英字のブランド
+みついすみともかーど	Vpass	any	学習
+まねーふぉわーど	マネーフォワード ME	any	表記ゆれ
+まねふぉ	マネーフォワード ME	any	表記ゆれ	略称。長音を除いた緩い形の前方一致
+moneyforward	マネーフォワード ME	any	英字のブランド
+かけいぼ	マネーフォワード ME	any	学習
+らくてんぺい	楽天ペイ	any	英字のブランド
+ふぁみぺい	ファミペイ	any	表記ゆれ
+ふぁみま	ファミペイ	any	学習	名前は「ファミペイ」
+ろーそん	ローソン	any	表記ゆれ
+せぶん	セブン-イレブン|7NOW	any	途中まで
+こんびに	ローソン|セブン-イレブン|ファミペイ	any	学習
+らくてんいちば	楽天市場	any	英字のブランド
+楽天いちば	楽天市場	any	漢字の検索語	一部だけ変換した形
+いちば	楽天市場	any	途中まで	語の頭からの一致
+めるかり	メルカリ	any	表記ゆれ
+メルカリ	メルカリ	any	表記ゆれ	カタカナに変換して確定した形
+めるか	メルカリ	any	途中まで
+merukari	メルカリ	any	ローマ字
+mercari	メルカリ	any	英字のブランド	パッケージ名の語（com.kouzoh.mercari）
+らくま	楽天ラクマ	any	表記ゆれ
+にとり	ニトリ	any	表記ゆれ
+じもてぃー	ジモティー	any	表記ゆれ
+じもてぃ	ジモティー	any	途中まで
+ゆにくろ	ユニクロ	any	表記ゆれ
+やふおく	Yahoo!オークション	any	学習	旧名（ヤフオク!）
+おーくしょん	Yahoo!オークション	any	途中まで
+ぺいぺいふりま	Yahoo!フリマ	any	学習	旧名（PayPayフリマ）
+かいもの	Amazon ショッピング|楽天市場|Yahoo!ショッピング	any	学習
+しょっぴんぐ	Amazon ショッピング|Yahoo!ショッピング	all	ジャンル	名前の語
+つうはん	Amazon ショッピング|楽天市場|Yahoo!ショッピング|ZOZOTOWN	any	学習
+ふく	ZOZOTOWN|ユニクロ|SHEIN	any	学習
+かぐ	ニトリ	any	学習
+ほっとぺっぱー	ホットペッパーグルメ	any	表記ゆれ
+ほっとぺっぱーぐるめ	ホットペッパーグルメ	any	表記ゆれ
+ほっと	ホットペッパーグルメ	any	途中まで
+ホットペッパー	ホットペッパーグルメ	any	表記ゆれ	カタカナに変換して確定した形
+たべろぐ	食べログ	any	表記ゆれ
+食べログ	食べログ	any	漢字の検索語
+たべ	食べログ	any	途中まで
+taberogu	食べログ	any	ローマ字
+tabelog	食べログ	any	英字のブランド	パッケージ名の語（com.kakaku.tabelog）
+ぐるなび	楽天ぐるなび	any	表記ゆれ
+でまえかん	出前館	any	表記ゆれ
+でまえ	出前館	any	途中まで
+出前	出前館	any	漢字の検索語
+demae	出前館	any	ローマ字
+でりばりー	Uber Eats|出前館|Wolt|7NOW	any	学習
+まくどなるど	マクドナルド	any	表記ゆれ
+まくど	マクドナルド	any	途中まで	関西の略称でもある
+まっく	マクドナルド	any	学習	愛称
+すたーばっくす	スターバックス	any	表記ゆれ
+すたば	スターバックス	any	学習	愛称
+くっくぱっど	クックパッド	any	表記ゆれ
+れしぴ	クックパッド	any	学習
+すしろー	スシロー	any	表記ゆれ
+くらずし	くら寿司	any	表記ゆれ
+らーめん	全国ラーメンマップ	any	表記ゆれ	matching.md の緩い形の例
+らめん	全国ラーメンマップ	any	表記ゆれ	matching.md の緩い形の例（長音を打たない）
+ラーメン	全国ラーメンマップ	any	表記ゆれ
+まいなあぷり	マイナアプリ	any	表記ゆれ
+まいな	マイナアプリ	any	途中まで
+まいなぽーたる	マイナアプリ	any	学習	旧名
+まいなんばー	マイナアプリ|JPKI利用者ソフト	any	学習
+jpki	JPKI利用者ソフト	any	略語
+すまーとにゅーす	スマートニュース	any	表記ゆれ
+smartnews	スマートニュース	any	英字のブランド	英語名
+すまにゅー	スマートニュース	any	学習	略称
+ぐのしー	グノシー	any	表記ゆれ
+にっけい	日経電子版	any	表記ゆれ
+日経	日経電子版	any	漢字の検索語
+しんぶん	日経電子版	any	学習
+やまと	ヤマト運輸	any	表記ゆれ
+くろねこ	ヤマト運輸	any	学習	愛称（クロネコヤマト）
+さがわ	佐川急便	any	表記ゆれ
+佐川	佐川急便	any	漢字の検索語
+sagawa	佐川急便	any	ローマ字
+ゆうびんきょく	郵便局	any	表記ゆれ
+にもつ	ヤマト運輸|佐川急便|郵便局	any	学習
+さいはいたつ	ヤマト運輸|佐川急便|郵便局	any	学習
+じゃんぷ	少年ジャンプ+	any	途中まで	語の頭からの一致
+少年ジャンプ	少年ジャンプ+	any	漢字の検索語
+ぴっこま	ピッコマ	any	表記ゆれ
+らいんまん	LINEマンガ	any	途中まで
+じゃらん	じゃらん	any	表記ゆれ
+らくてんとらべる	楽天トラベル	any	英字のブランド
+ほてる	じゃらん|楽天トラベル	any	学習
+りょこう	じゃらん|楽天トラベル	any	学習
+ひこうき	JAL|ANA	any	学習
+たくしー	GO|Uber	any	学習
+でんしゃ	Yahoo!乗換案内|ジョルダン乗換案内|乗換NAVITIME|駅すぱあと|JR東日本アプリ	any	学習
+きっぷ	えきねっと|EXアプリ	any	学習
+しんかんせんよやく	EXアプリ|えきねっと	any	学習
+ちかてつ	東京メトロmy!アプリ	any	学習
+じしん	防災速報|NERV防災	any	学習
+もばいるすいか	モバイルSuica	any	英字のブランド
+もばいる	モバイルSuica|モバイルPASMO|モバイルICOCA	all	途中まで
+でんしまねー	モバイルSuica|モバイルPASMO|モバイルICOCA|みずほWallet	any	学習
+けっさい	PayPay|楽天ペイ|d払い|au PAY|ファミペイ	any	学習
+しはらい	PayPay|楽天ペイ|d払い|au PAY|ファミペイ	any	学習	d払いは「払い」を名前に持つが、読みは「ばらい」
+はらい	d払い	any	途中まで	連濁で「ばらい」と読むので、読みでは出ない。名前の漢字との一致も見る
+ふりこみ	三井住友銀行|三菱UFJ銀行|みずほ銀行|ゆうちょ通帳アプリ|楽天銀行|PayPay銀行	any	学習
+かぶ	iSPEED|SBI証券	any	学習
+てぃーぽいんと	Vポイント	any	学習	旧名（Tポイント）
+ぽんたかーど	Ponta	any	英字のブランド	既知の弱点: 名前（Ponta）にない語「カード」を含み、どのキーにも前方一致しない。学習で埋める。
+dあに	dアニメストア	any	途中まで	IME で d を英字のまま打つ
+あにめすとあ	dアニメストア	any	途中まで
+にこにこ	ニコニコ動画	any	表記ゆれ
+にこどう	ニコニコ動画	any	学習	略称
+てれび	TVer|ABEMA	any	学習
+らじお	radiko	any	学習
+らじ	radiko	any	途中まで
+ぽっどきゃすと	AntennaPod	any	学習
+nhkぷらす	NHKプラス	any	略語	英字とかなの混ざった形
+えぬえいちけーぷらす	NHKプラス	any	略語
+にゅーすぼうさい	NHK ONE ニュース・防災	any	途中まで	語の頭からの一致
+もんすと	モンスト	any	表記ゆれ
+もんすたーすとらいく	モンスト	any	学習	正式の名前
+monsuto	モンスト	any	ローマ字
+ぱずどら	パズドラ	any	表記ゆれ
+ぱず	パズドラ	any	途中まで
+pazudora	パズドラ	any	ローマ字
+うまむすめ	ウマ娘	any	表記ゆれ
+うま	ウマ娘	any	途中まで
+umamusume	ウマ娘	any	ローマ字
+どらくえ	ドラクエウォーク	any	途中まで
+どらくえうぉーく	ドラクエウォーク	any	表記ゆれ
+どらごんくえすと	ドラクエウォーク	any	学習	正式の名前
+dorakue	ドラクエウォーク	any	ローマ字
+ぽけごー	Pokémon GO	any	学習	愛称
+ぽけ	Pokémon GO	any	途中まで
+# ---- Pixel・GrapheneOS の標準アプリ ----
+めっせ	メッセージ|Messenger	all	途中まで
+ふぁいるず	Files	any	英字のブランド
+どらいぶ	ドライブ	any	表記ゆれ
+drive	ドライブ	any	英字のブランド	英語名
+きーぷ	Keep メモ	any	英字のブランド
+めも	Keep メモ	any	途中まで	語の頭からの一致。Notion は学習
+どきゅめんと	ドキュメント	any	表記ゆれ
+すぷれっどしーと	スプレッドシート	any	表記ゆれ
+すぷれ	スプレッドシート	any	途中まで
+れこーだー	レコーダー	any	表記ゆれ
+ろくおん	レコーダー	any	学習
+みーと	Meet	any	英字のブランド
+meet	Meet	any	英字のブランド
+ぐーぐるうぉれっと	Google ウォレット	any	英字のブランド
+おさいふ	Google ウォレット	any	学習
+けんさく	Google	any	学習
+あしすたんと	Gemini	any	学習
+ぐーぐるてぃーびー	Google TV	any	略語	TV を 1 字ずつ読む
+ゆーちゅーぶきっず	YouTube Kids	any	英字のブランド
+ぴーでぃーえふ	PDF Viewer	any	略語
+あぷり	App Store|F-Droid|Play ストア	any	学習	一般語。アプリの店を探す想定だが、「アプリ」を名前に持つアプリが多く当たる
+いんふぉ	Info	any	英字のブランド
+つうち	ntfy	any	学習
+ばっくあっぷ	Round Sync	any	学習
+せきゅりてぃ	Auditor	any	学習

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+     LAUNCHER の Activity を 2 つ持つアプリ。ホーム画面と同じく、Activity ごとに 1 件として出るはず。
+     2 つ目は自分の表示名を持ち、1 つ目はアプリの表示名を受け継ぐ
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- データを持たないので、バックアップを切るだけで足り、Android 12 からの細かい規則（dataExtractionRules）は要らない -->
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/test_app_icon"
+        android:label="@string/app_name"
+        tools:ignore="DataExtractionRules">
+        <activity
+            android:name="jp.piu.search.testapp.common.TestActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="jp.piu.search.testapp.common.SecondTestActivity"
+            android:exported="true"
+            android:label="@string/second_activity_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

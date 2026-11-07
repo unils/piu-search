@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 計測の APK。権限は持たない（端末の操作は shell の権限で行う） -->
+<manifest />

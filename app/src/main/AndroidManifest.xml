@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- INTERNET と QUERY_ALL_PACKAGES は持たない。check の checkXxxManifestPermissions で確かめる -->
+
+    <!--
+        他のアプリを見るための <queries>（起動できるアプリとジャンルの判定）は、使う部品のある data のマニフェストに書き、
+        合成でここに入る
+    -->
+
+    <!--
+        自動バックアップ（クラウド）から外し、端末間の転送だけを許す。
+        中身は「どの語でどのアプリを開いたか」で、外部のサーバーに送らない方針のため
+    -->
+    <application
+        android:name=".PiuApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PiuSearch"
+        tools:targetApi="37">
+
+        <!--
+            excludeFromRecents: 検索の道具を履歴画面に並べない。
+            singleTask: アイコン・アシスタント・タイルのどれから何度呼んでも、画面を 1 つにまとめる。
+            入口ごとに intent の action が違う（MAIN・ASSIST・タイルは action なし）ので、standard と singleTop では、
+            画面が残っているときに 2 つ目が積まれる。既にあれば onNewIntent で受け、空の検索語に戻す。
+            adjustResize: キーボードの高さを insets で受け取り、検索窓を上げるため
+        -->
+        <activity
+            android:name=".SearchActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- デジタルアシスタントの候補になる条件（AOSP の AssistantRoleBehavior） -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            学習の一覧。検索の画面の長押しのメニューと、設定画面から開く。ほかのアプリからは開かせない。
+            検索の画面のタスクに積むので、履歴画面には出ない
+        -->
+        <activity
+            android:name=".LearnedListActivity"
+            android:exported="false"
+            android:label="@string/learned_title" />
+
+        <!--
+            設定画面。検索窓の中の歯車から開くほか、OS の「アプリ情報」の画面が歯車（アプリ内の設定）を出せるよう、
+            ACTION_APPLICATION_PREFERENCES を受ける（AOSP の Settings は、この action を自分のパッケージで解決できるときだけ歯車を出す）。
+            OS の設定から開くために exported にする。設定を変えるだけで、ほかのアプリに渡すデータはない
+        -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="@string/settings_title">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- ライセンスの画面。設定画面から開く -->
+        <activity
+            android:name=".LicensesActivity"
+            android:exported="false"
+            android:label="@string/licenses_title" />
+
+        <!--
+            クイック設定のタイル（ui.md の「呼び出し」）。BIND_QUICK_SETTINGS_TILE はこのアプリの権限ではなく、
+            結び付けられる相手を OS（SystemUI）に限る印。TileService はこれと QS_TILE の intent-filter を求める
+        -->
+        <service
+            android:name=".SearchTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

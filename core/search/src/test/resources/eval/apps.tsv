@@ -1,0 +1,212 @@
+# 評価セットのアプリ（M1-06a、2026-10-28 作成）
+#
+# 端末 1 台の索引を模す。日本で多く使われるアプリ、Pixel（素の Android）と GrapheneOS の標準アプリ、F-Droid のアプリ。
+# 「#」で始まる行と空行は読み飛ばす。最初の行が列の名前。列はタブで区切る。
+#
+# 列:
+#   表示名       端末のアプリ一覧に出る名前（日本語の端末）。queries.tsv の正解はこの名前で引くので、重複させない
+#   英語名       英語の端末での名前。表示名と同じか、わからなければ空
+#   パッケージ名 実在のもの
+#   ジャンル     OS の情報（intent filter・カテゴリ）から判定されると想定するジャンルの id。複数は「|」。なければ空
+#   確かめ方     パッケージ名を確かめた手段。play = Play ストアの頁（hl=ja&gl=JP）が 200 を返し、題名がそのアプリ。
+#                f-droid = f-droid.org の頁。source = 公開されたソース（GitHub・AOSP）の applicationId か package。
+#                docs = Android Developers の文書。要確認 = 確かめていない。いずれも 2026-10-28
+#   メモ         表示名やジャンルの根拠、改名など
+#
+# 表示名について: Play ストアの題名から宣伝の文句を除いた形を基本にした。端末のラベルは題名と違うことがあり
+# （Google のアプリは「Google」を付けないなど）、実機で確かめていないものは「表示名は推測」と書いた。
+#
+# ジャンルの id（docs/design/matching.md の「intent filter とカテゴリによるジャンル」の表の順）:
+#   maps 地図 / email メール / phone 電話 / messaging メッセージ / camera カメラ / photos 写真 / video 動画 /
+#   music 音楽 / browser ブラウザ / calendar カレンダー / contacts 連絡先 / calculator 電卓 / clock 時計 /
+#   files ファイル / weather 天気 / translate 翻訳 / store ストア / pdf PDF / game ゲーム / news ニュース / social SNS
+# ジャンルの列は、どのアプリについても実機で宣言を確かめていない推測。根拠をメモに「ジャンル推測:」で書いた。
+# 乗換・銀行・決済・買い物・食事などは OS の情報に出ないジャンルなので、ここには書かない（学習で埋める想定）。
+表示名	英語名	パッケージ名	ジャンル	確かめ方	メモ
+電話	Phone	com.google.android.dialer	phone	play	Pixel の標準。Play の題名は「Google の電話アプリ」。表示名は推測。ジャンル推測: tel: を受ける
+連絡帳	Contacts	com.google.android.contacts	contacts	play	Pixel の標準。Play の題名は「Google コンタクト」。表示名は推測。ジャンル推測: CATEGORY_APP_CONTACTS
+メッセージ	Messages	com.google.android.apps.messaging	messaging	play	Pixel の標準。Play の題名は「Google メッセージ」。表示名は推測。ジャンル推測: smsto: を受ける
+カメラ	Camera	com.google.android.GoogleCamera	camera	play	Pixel の標準。Play の題名は「Pixel カメラ」。表示名は推測。ジャンル推測: IMAGE_CAPTURE を受ける
+フォト	Photos	com.google.android.apps.photos	photos|video	play	Pixel の標準。Play の題名は「Google フォト」。表示名は推測。ジャンル推測: image/* と video/* を開ける
+Gmail		com.google.android.gm	email	play	ジャンル推測: mailto: を受ける
+Chrome		com.android.chrome	browser	play	Play の題名は「Google Chrome」。表示名は推測。ジャンル推測: https: を開ける
+マップ	Maps	com.google.android.apps.maps	maps	play	Play の題名は「Google マップ」。表示名は推測。ジャンル推測: geo: を受ける
+カレンダー	Calendar	com.google.android.calendar	calendar	play	Play の題名は「Google カレンダー」。表示名は推測。ジャンル推測: CATEGORY_APP_CALENDAR
+時計	Clock	com.google.android.deskclock	clock	play	ジャンル推測: SET_ALARM を受ける
+電卓	Calculator	com.google.android.calculator	calculator	play	ジャンル推測: CATEGORY_APP_CALCULATOR
+Files		com.google.android.apps.nbu.files	files	play	Play の題名は「Files by Google」。表示名は推測。ジャンル推測: CATEGORY_APP_FILES
+ドライブ	Drive	com.google.android.apps.docs	pdf	play	Play の題名は「Google ドライブ」。表示名は推測。ジャンル推測: application/pdf を開ける
+YouTube		com.google.android.youtube	video	play	ジャンル推測: category=VIDEO
+YouTube Music		com.google.android.apps.youtube.music	music	play	ジャンル推測: category=AUDIO
+YouTube Kids		com.google.android.apps.youtube.kids	video	play	ジャンル推測: category=VIDEO
+Google		com.google.android.googlequicksearchbox		play
+Gemini		com.google.android.apps.bard		play	Play の題名は「Google Gemini」。表示名は推測
+Play ストア	Play Store	com.android.vending	store	docs	「Google Play へのリンク」の文書に com.android.vending。Play の頁はない。ジャンル推測: market://details を受ける
+Google ウォレット	Google Wallet	com.google.android.apps.walletnfcrel		play	表示名は推測（「ウォレット」かもしれない）
+翻訳	Translate	com.google.android.apps.translate	translate	play	Play の題名は「Google 翻訳」。表示名は推測。ジャンル推測: ACTION_TRANSLATE を受ける
+Keep メモ	Keep Notes	com.google.android.keep		play	Play の題名は「Google Keep - メモとリスト」。表示名は推測
+Google Home		com.google.android.apps.chromecast.app		play
+Google TV		com.google.android.videos	video	play	ジャンル推測: category=VIDEO
+レコーダー	Recorder	com.google.android.apps.recorder		play	Pixel の標準
+Meet		com.google.android.apps.tachyon		play	Play の題名は「Google Meet」。表示名は推測
+Google レンズ	Google Lens	com.google.ar.lens		play
+天気	Weather	com.google.android.apps.weather	weather	play	Pixel の天気。Play の題名は「天気」。ジャンル推測: CATEGORY_APP_WEATHER
+Google ニュース	Google News	com.google.android.apps.magazines	news	play	ジャンル推測: category=NEWS
+ドキュメント	Docs	com.google.android.apps.docs.editors.docs		play	Play の題名は「Google ドキュメント」。表示名は推測
+スプレッドシート	Sheets	com.google.android.apps.docs.editors.sheets		play	Play の題名は「Google スプレッドシート」。表示名は推測
+設定	Settings	com.android.settings		source	AOSP の packages/apps/Settings の AndroidManifest.xml。Play の頁はない
+Vanadium		app.vanadium.browser	browser	source	GrapheneOS の標準。GrapheneOS/Vanadium の args.gn の chrome_public_manifest_package。ジャンル推測: https: を開ける
+Auditor		app.attestation.auditor		source	GrapheneOS の標準。GrapheneOS/Auditor の app/build.gradle.kts と app_name
+PDF Viewer		app.grapheneos.pdfviewer	pdf	source	GrapheneOS の標準。GrapheneOS/PdfViewer の app/build.gradle.kts と app_name。ジャンル推測: application/pdf を開ける
+Camera		app.grapheneos.camera	camera	source	GrapheneOS の標準。GrapheneOS/Camera の app/build.gradle.kts（app_name は Camera）。日本語のラベルがあるかは未確認。ジャンル推測: IMAGE_CAPTURE を受ける
+App Store		app.grapheneos.apps	store	source	GrapheneOS の標準。GrapheneOS/AppStore の app/build.gradle.kts と app_name。ジャンル推測: CATEGORY_APP_MARKET
+Info		app.grapheneos.info		source	GrapheneOS の標準。GrapheneOS/Info の app/build.gradle.kts と app_name
+FairEmail		eu.faircode.email	email	f-droid	ジャンル推測: mailto: を受ける
+Round Sync		de.felixnuesse.extract		f-droid
+ntfy		io.heckel.ntfy		f-droid
+Organic Maps		app.organicmaps	maps	f-droid	ジャンル推測: geo: を受ける
+NewPipe		org.schabi.newpipe	video	f-droid	ジャンル推測: video/* を開ける
+Aegis		com.beemdevelopment.aegis		f-droid	F-Droid の題名は「Aegis Authenticator」。表示名は推測
+Breezy Weather		org.breezyweather	weather	f-droid	ジャンル推測: CATEGORY_APP_WEATHER
+Fossify Gallery		org.fossify.gallery	photos|video	f-droid	表示名は推測（「Gallery」かもしれない）。ジャンル推測: image/* と video/* を開ける
+AntennaPod		de.danoeh.antennapod	music	f-droid	ジャンル推測: audio/* を開ける
+Signal		org.thoughtcrime.securesms		play
+Yahoo! JAPAN		jp.co.yahoo.android.yjtop	news	play	ジャンル推測: category=NEWS
+Yahoo!天気		jp.co.yahoo.android.weather.type1	weather	play	ジャンル推測: CATEGORY_APP_WEATHER（API 33 からの定数なので宣言していないかもしれない）
+Yahoo!乗換案内		jp.co.yahoo.android.apps.transit		play
+Yahoo!マップ		jp.co.yahoo.android.apps.map	maps	play	ジャンル推測: geo: を受ける
+Yahoo!ニュース		jp.co.yahoo.android.news	news	play	ジャンル推測: category=NEWS
+Yahoo!ショッピング		jp.co.yahoo.android.yshopping		play
+Yahoo!オークション		jp.co.yahoo.android.yauction		play	旧ヤフオク!
+Yahoo!カーナビ		jp.co.yahoo.android.apps.navi	maps	play	ジャンル推測: geo: を受ける
+Yahoo!フリマ		jp.co.yahoo.android.paypayfleamarket		play	旧PayPayフリマ
+防災速報		jp.co.yahoo.android.emg		play	旧Yahoo!防災速報。Play の題名から Yahoo! が消えている
+ジョルダン乗換案内		jp.co.jorudan.nrkj		play	Play の題名は「乗換案内」。端末のラベルは「乗換案内」かもしれない。表示名は推測
+乗換NAVITIME		com.navitime.local.nttransfer		play	Play の題名は「乗換ナビタイム」。表示名は推測
+NAVITIME		com.navitime.local.navitime	maps	play	ジャンル推測: geo: を受ける
+駅すぱあと		jp.co.val.expert.android.aio		play
+JR東日本アプリ		jp.co.jreast		play
+えきねっと		com.net.eki.app		play	Play の題名は「えきねっとチケットレスアプリ」。表示名は推測
+モバイルSuica		com.mobilesuica.msb.android		play
+モバイルPASMO		com.mobilepasmo.android		play
+モバイルICOCA		jp.co.westjr.android.icocaapp		play
+EXアプリ		jp.co.jr_central.exreserve		play	JR東海の新幹線の予約
+新幹線時刻表		jp.co.jr_central.timetable		play	Play の題名は「JR東海　東海道・山陽新幹線時刻表」。表示名は推測
+東京メトロmy!アプリ		com.tokyometro		play
+GO		com.dena.automotive.taxibell		play	タクシーの配車。Play の題名は「GO タクシーが呼べるアプリ」
+Uber		com.ubercab		play
+JAL		jp.co.jal.dom		play
+ANA		jp.co.ana.android.tabidachi		play
+ウェザーニュース		wni.WeathernewsTouch.jp	weather	play	ジャンル推測: CATEGORY_APP_WEATHER
+tenki.jp		jwa.or.jp.tenkijp3	weather	play	ジャンル推測: CATEGORY_APP_WEATHER
+NERV防災		app.nerv		play	Play の題名は「特務機関NERV防災」。表示名は推測
+東京都公式アプリ		jp.lg.tokyo.metro.app		play
+東京都防災アプリ		jp.tokyo.metro.tokyotobousaiapp		play
+三井住友銀行		jp.co.smbc.direct		play	Play の題名は「三井住友銀行アプリ」。表示名は推測
+三菱UFJ銀行		jp.mufg.bk.applisp.app		play	Play の題名は全角の「三菱ＵＦＪ銀行」
+みずほ銀行		jp.co.mizuhobank.banking		play	Play の題名は「みずほ銀行アプリ」。表示名は推測
+みずほWallet		jp.co.mizuhobank.mizuhoapp		play	電子マネー
+ゆうちょ通帳アプリ		jp.japanpost.jp_bank.bankbookapp		play
+ゆうちょ認証アプリ		jp.japanpost.jp_bank.FIDOapp		play
+楽天銀行		jp.co.rakuten_bank.rakutenbank		play
+ドコモSMTBネット銀行		jp.co.netbk		play	旧住信SBIネット銀行（Play の題名に「旧 住信SBI」）。表示名は推測
+PayPay銀行		jp.co.japannetbank.smtapp.balance		play
+りそなグループアプリ		jp.co.resona_gr.ss.SmartApp		play
+PayPay		jp.ne.paypay.android.app		play
+楽天ペイ		jp.co.rakuten.pay		play
+d払い		com.nttdocomo.keitai.payment		play
+au PAY		jp.auone.wallet		play
+ファミペイ		jp.co.family.familymart_app		play	Play の題名は「ファミマのアプリ「ファミペイ」」。表示名は推測
+楽天カード		jp.co.rakuten.kc.rakutencardapp.android		play
+Vpass		com.smbc_card.vpass		play	三井住友カード。Play の題名は「三井住友カード Vpassアプリ」。表示名は推測
+マネーフォワード ME		com.moneyforward.android.app		play	家計簿
+iSPEED		jp.co.rakuten_sec.ispeed		play	楽天証券の株のアプリ
+SBI証券		jp.co.sbisec.hyperkabu2		play	Play の題名は「SBI証券 株 アプリ」。表示名は推測
+楽天ポイントクラブ		jp.co.rakuten.pointclub.android		play
+dポイントクラブ		com.nttdocomo.android.dpoint		play
+Ponta		jp.ponta.myponta		play	表示名は推測
+Vポイント		jp.co.ccc.Tsite		play	Play の題名は「Vポイントアプリ」。旧Tポイント。表示名は推測
+Amazon ショッピング	Amazon Shopping	com.amazon.mShop.android.shopping		play	表示名は推測
+楽天市場		jp.co.rakuten.android		play
+メルカリ		com.kouzoh.mercari		play
+楽天ラクマ		jp.co.fablic.fril		play
+ZOZOTOWN		jp.zozo.android.town		play
+ユニクロ	UNIQLO	com.uniqlo.ja.catalogue		play	Play の題名は「UNIQLOアプリ - ユニクロアプリ」。表示名は推測
+ニトリ		jp.co.nitori		play	Play の題名は「ニトリアプリ」。表示名は推測
+ジモティー		jp.jmty.app2		play
+SHEIN		com.zzkko		play
+ローソン		jp.co.lawson.android		play
+セブン-イレブン		jp.co.sej.app		play	Play の題名は「セブン-イレブンアプリ」。表示名は推測
+7NOW		jp.co.sej.sevennow.app		play	セブン-イレブンの宅配
+LINE		jp.naver.line.android	social	play	ジャンル推測: category=SOCIAL
+X		com.twitter.android	social	play	旧Twitter。ジャンル推測: category=SOCIAL
+Instagram		com.instagram.android	social	play	ジャンル推測: category=SOCIAL
+Facebook		com.facebook.katana	social	play	ジャンル推測: category=SOCIAL
+Threads		com.instagram.barcelona	social	play	ジャンル推測: category=SOCIAL
+TikTok		com.ss.android.ugc.trill	social|video	play	日本の版のパッケージ。ジャンル推測: category=SOCIAL か VIDEO
+Discord		com.discord	social	play	ジャンル推測: category=SOCIAL
+Bluesky		xyz.blueskyweb.app	social	play	ジャンル推測: category=SOCIAL
+Slack		com.Slack		play
+Zoom Workplace		us.zoom.videomeetings		play	旧Zoom。表示名は推測
+Teams		com.microsoft.teams		play	Play の題名は「Microsoft Teams」。表示名は推測
+WhatsApp		com.whatsapp		play
+Messenger		com.facebook.orca		play	Facebook の Messenger
+Netflix		com.netflix.mediaclient	video	play	ジャンル推測: category=VIDEO
+Prime Video		com.amazon.avod.thirdpartyclient	video	play	Amazon。ジャンル推測: category=VIDEO
+TVer		jp.hamitv.hamiand1	video	play	ジャンル推測: category=VIDEO
+ABEMA		tv.abema	video	play	ジャンル推測: category=VIDEO
+U-NEXT		jp.unext.mediaplayer	video	play	ジャンル推測: category=VIDEO
+Hulu		jp.happyon.android	video	play	ジャンル推測: category=VIDEO
+ニコニコ動画		jp.nicovideo.android	video	play	ジャンル推測: category=VIDEO
+dアニメストア		com.nttdocomo.android.danimeapp	video	play	ジャンル推測: category=VIDEO
+Disney+		com.disney.disneyplus	video	play	ジャンル推測: category=VIDEO
+Spotify		com.spotify.music	music	play	ジャンル推測: category=AUDIO
+Amazon Music		com.amazon.mp3	music	play	ジャンル推測: category=AUDIO
+LINE MUSIC		jp.linecorp.linemusic.android	music	play	ジャンル推測: category=AUDIO
+Apple Music		com.apple.android.music	music	play	ジャンル推測: category=AUDIO
+radiko		jp.radiko.Player	music	play	ラジオ。ジャンル推測: category=AUDIO
+NHKプラス		nhk.app.tep	video	play	2025 年に NHK ONE に改名した（Play の題名は「NHK ONE（NHKプラス）」）。matching.md の例に合わせて旧名にした。ジャンル推測: category=VIDEO
+NHK ONE ニュース・防災		nhk.app.nwa	news	play	旧NHK ニュース・防災。ジャンル推測: category=NEWS
+ホットペッパーグルメ		jp.co.recruit.mtl.android.hotpepper		play	Play の題名は「飲食店予約ホットペッパーグルメ」。表示名は推測
+食べログ		com.kakaku.tabelog		play
+楽天ぐるなび		jp.co.gnavi.activity		play	旧ぐるなび
+Uber Eats		com.ubercab.eats		play
+出前館		com.demaecan.androidapp		play
+Wolt		com.wolt.android		play
+マクドナルド		jp.co.mcdonalds.android		play
+スターバックス		com.starbucks.jp		play	Play の題名は「スターバックス ジャパン公式モバイルアプリ」。表示名は推測
+クックパッド		com.cookpad.android.activities		play
+スシロー		jp.co.akindo_sushiro.sushiroapp		play
+くら寿司		jp.co.kura_corpo		play
+全国ラーメンマップ		com.olivesystem.rarmen_map		play
+マイナアプリ		jp.go.cas.mpa		play	旧マイナポータル（Play の題名は「マイナアプリ（旧マイナポータルアプリ）」）
+JPKI利用者ソフト		jp.go.jpki.mobile.utility		play	マイナンバーカードの電子証明書
+スマートニュース	SmartNews	jp.gocro.smartnews.android	news	play	ジャンル推測: category=NEWS
+グノシー	Gunosy	com.gunosy.android	news	play	ジャンル推測: category=NEWS
+日経電子版		com.nikkei.newspaper	news	play	Play の題名は「日本経済新聞 電子版」。表示名は推測。ジャンル推測: category=NEWS
+ヤマト運輸		jp.co.kuronekoyamato.KuronekoyamatoOfficialApp		play	クロネコヤマト。Play の題名は「ヤマト運輸公式アプリ」。表示名は推測
+佐川急便		jp.co.sagawa.SagawaOfficialApp		play	Play の題名は「佐川急便公式アプリ」。表示名は推測
+郵便局		jp.jppost.pfapp		play	日本郵便。Play の題名は「郵便局公式アプリ」。表示名は推測
+Kindle		com.amazon.kindle		play	Play の題名は「Amazon Kindle」。表示名は推測
+Kobo Books		com.kobobooks.android		play	楽天Kobo
+少年ジャンプ+		com.access_company.android.sh_jumpplus		play	Play の題名は全角の「少年ジャンプ＋」
+LINEマンガ		jp.naver.linemanga.android		play
+ピッコマ		jp.kakao.piccoma		play
+じゃらん		net.jalan.android		play
+楽天トラベル		jp.co.rakuten.travel.andro		play
+富士山		com.yamareco.fuji		play	富士登山の地図。Play の題名は「富士山 - 富士登山に役立つ地図アプリ」。表示名は推測
+FUJIFILM XApp		com.fujifilm.xapp		play
+Pokémon GO		com.nianticlabs.pokemongo	game	play	ジャンル推測: category=GAME
+モンスト		jp.co.mixi.monsterstrike	game	play	Play の題名は「モンスターストライク」。表示名は推測。ジャンル推測: category=GAME
+パズドラ		jp.gungho.pad	game	play	Play の題名は「パズル＆ドラゴンズ」。表示名は推測。ジャンル推測: category=GAME
+ウマ娘		jp.co.cygames.umamusume	game	play	Play の題名は「ウマ娘 プリティーダービー」。表示名は推測。ジャンル推測: category=GAME
+ドラクエウォーク		com.square_enix.android_googleplay.dqwalkj	game	play	Play の題名は「ドラゴンクエストウォーク」。表示名は推測。ジャンル推測: category=GAME
+DeepL		com.deepl.mobiletranslator	translate	play	Play の題名は「DeepL翻訳」。表示名は推測。ジャンル推測: ACTION_TRANSLATE を受ける
+My docomo		com.nttdocomo.android.mydocomo		play
+Outlook		com.microsoft.office.outlook	email|calendar	play	Play の題名は「Microsoft Outlook」。表示名は推測。ジャンル推測: mailto: を受ける、カレンダーを持つ
+Notion		notion.id		play
+Duolingo		com.duolingo		play
+F-Droid		org.fdroid.fdroid	store	f-droid	F と Droid に分かれる名前。ジャンル推測: CATEGORY_APP_MARKET
+Japan Wi-Fi auto-connect		com.nttbp.jw2		play	Wi と Fi に分かれる名前。Play の題名は「Japan Wi-Fi auto-connect 自動接続」。表示名は推測
+au Wi-Fiアクセス		jp.ne.wi2.auwifiaccess		play	Play の題名は「au Wi-Fiアクセス-WiFi接続・ポイ活もできるアプリ」。表示名は推測
+with		is.with		play	マッチングのアプリ。名前が一般語の with だけ。Play の題名は「マッチングアプリ with(ウィズ)」。表示名は推測

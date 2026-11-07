@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- 灰色。本体のアイコンの色と見分けるため -->
+    <color name="test_app_background">#FF757575</color>
+</resources>

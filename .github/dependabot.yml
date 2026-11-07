@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# 依存の更新の pull request を作る。新しい版の有無を Lint で見ない代わり（docs/design/testing.md の「静的な検査」）
+
+version: 2
+updates:
+  # gradle/libs.versions.toml と settings.gradle.kts（build-logic も同じ版の一覧を使う）
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Kotlin と、その版に縛られる部品は一緒に上げないとビルドが通らない
+      kotlin:
+        patterns:
+          - org.jetbrains.kotlin*
+          - com.google.devtools.ksp*
+      androidx:
+        patterns:
+          - androidx.*
+      agp:
+        patterns:
+          - com.android.*
+
+  # .github/workflows の Action（SHA で固定したものも、版のコメントと一緒に上げる）
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'

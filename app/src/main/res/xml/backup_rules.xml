@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+    Android 8.x。requireFlags がないので、クラウドと端末間の転送を区別できない。
+    クラウドに送らないことを優先し、すべて外す
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="device_root" path="." />
+</full-backup-content>

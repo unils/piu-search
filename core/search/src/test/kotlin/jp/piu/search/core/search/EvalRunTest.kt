@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package jp.piu.search.core.search
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.io.File
+
+/**
+ * 評価セットを照合にかけ、報告を `build/reports/eval/` に書き、合格の目安（[EvalReport]）を確かめる。
+ *
+ * 報告は `eval.md`（指標と外れた検索語）と `results.tsv`（検索語ごとの順位）。
+ * 前回の `results.tsv` を `-PevalBaseline=<パス>` で渡すと、差を `eval.md` に足す（`clean` で消えるので、比べる側が控えておく）。
+ */
+class EvalRunTest {
+    @Test
+    fun `評価セットが合格の目安を満たす`() {
+        val apps = EvalSet.apps(EvalSet.parse(EvalSet.resource("apps.tsv")))
+        val queries = EvalSet.queries(EvalSet.parse(EvalSet.resource("queries.tsv")))
+        val runner = EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji)
+        val report = EvalReport(runner.run(queries))
+        // 学習の効き目: 学習の分類の行（正解）は変えず、その行から作った記録を重ねて全体を測り直す
+        val memory = runner.learnFrom(queries.filter { it.category == EvalSet.LEARNING_CATEGORY })
+        val learned = EvalReport(EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji, learning = memory).run(queries))
+
+        val dir = File(System.getProperty(REPORT_DIR_PROPERTY) ?: "build/reports/eval").apply { mkdirs() }
+        val baseline = System.getProperty(BASELINE_PROPERTY)?.let(::File)?.takeIf { it.isFile }
+        val sections = listOfNotNull(learned.learnedSection(report), baseline?.let { report.diffAgainst(it.readText()) })
+        File(dir, "eval.md").writeText(report.markdown(sections.joinToString("\n")))
+        File(dir, "results.tsv").writeText(report.tsv())
+        File(dir, "results-learned.tsv").writeText(learned.tsv())
+        println(
+            "評価セット: 3 位以内（学習を除く）${EvalReport.percent(report.scoredTop3Rate)}、" +
+                "学習の分類 ${EvalReport.percent(report.learningTop3Rate)} → 学習の後 ${EvalReport.percent(learned.learningTop3Rate)}。" +
+                "報告 ${dir.absolutePath}/eval.md",
+        )
+
+        assertEquals(emptyList<String>(), report.failures(), "評価セットが合格の目安に届かない。${dir.absolutePath}/eval.md を見る")
+        assertEquals(emptyList<String>(), learned.learnedFailures(report), "学習の目安に届かない。${dir.absolutePath}/eval.md を見る")
+    }
+
+    @Test
+    fun `報告の分類の並びが評価セットの分類をすべて持つ`() {
+        assertEquals(EvalSet.CATEGORIES, EvalReport.CATEGORY_ORDER.toSet())
+    }
+
+    // 以下は指標の数え方を小さな例で固定する
+    @Test
+    fun `any は最も上の正解の順位で測る`() {
+        val o = outcome(Judge.ANY, 4, 2)
+        assertEquals(2, o.effectiveRank)
+        assertTrue(o.isTop3)
+        assertFalse(o.isTop1)
+        assertEquals(0.5, o.reciprocalRank)
+    }
+
+    @Test
+    fun `all は正解がすべて max(3, 正解の数) 位以内で 3 位以内`() {
+        // 正解 4 件が 1〜4 位: 隙間がないので 1 位正解
+        val packed = outcome(Judge.ALL, 1, 2, 3, 4)
+        assertEquals(1, packed.effectiveRank)
+        assertTrue(packed.isTop1)
+        assertTrue(packed.isTop3)
+        // 正解 2 件が 1 位と 3 位: max(3, 2) = 3 位以内に入るが、隙間がある
+        val gap = outcome(Judge.ALL, 1, 3)
+        assertEquals(2, gap.effectiveRank)
+        assertTrue(gap.isTop3)
+        assertFalse(gap.isTop1)
+        // 正解 2 件の片方が 4 位: 3 位以内に入らない
+        assertFalse(outcome(Judge.ALL, 1, 4).isTop3)
+        // 1 件でも出なければ外れ
+        val missing = outcome(Judge.ALL, 1, null)
+        assertEquals(null, missing.effectiveRank)
+        assertFalse(missing.isTop3)
+        assertEquals(0.0, missing.reciprocalRank)
+    }
+
+    @Test
+    fun `合格の判定は学習を除き、既知の弱点は外れに数え、全問正解の例は印があっても外さない`() {
+        // 学習を除く 20 件のうち 19 件が正解: 95.0% で合格。学習の外れは分母に入らない
+        val outcomes =
+            listOf(
+                outcome(Judge.ANY, null, category = EvalSet.LEARNING_CATEGORY),
+                outcome(Judge.ANY, null, weakness = "理由"),
+            ) + List(19) { outcome(Judge.ANY, 1) }
+        val passed = EvalReport(outcomes)
+        assertEquals(0.95, passed.scoredTop3Rate)
+        assertEquals(emptyList<String>(), passed.failures())
+
+        // 既知の弱点を分母から外せば 18/18 で合格になる組。外れに数えるので 18/19 で落ちる
+        val weakCounted = EvalReport(outcomes.drop(1).dropLast(1) + outcome(Judge.ANY, null, category = EvalSet.LEARNING_CATEGORY))
+        assertEquals(18.0 / 19, weakCounted.scoredTop3Rate)
+        assertTrue(weakCounted.failures().any { "3 位以内の正解率" in it }, weakCounted.failures().toString())
+
+        val required = EvalReport(outcomes + outcome(Judge.ALL, null, category = EvalReport.REQUIRED_CATEGORY, weakness = "理由"))
+        assertTrue(required.failures().any { "全問正解の例" in it }, required.failures().toString())
+
+        val tooManyWeak = EvalReport(List(3) { outcome(Judge.ANY, null, weakness = "理由") } + List(17) { outcome(Judge.ANY, 1) })
+        assertTrue(tooManyWeak.failures().any { "既知の弱点が 3 件" in it }, tooManyWeak.failures().toString())
+    }
+
+    @Test
+    fun `学習の目安は学習の分類の 3 位以内と、教えた検索語を除く分類ごとの指標で見る`() {
+        val learning = { rank: Int?, q: String -> outcome(Judge.ANY, rank, category = EvalSet.LEARNING_CATEGORY, query = q) }
+        val before = EvalReport(listOf(learning(null, "a"), outcome(Judge.ANY, 1, query = "b"), outcome(Judge.ANY, 1, query = "c")))
+        // 学習の分類が 1/1、b は教えた検索語なので下がってもよい
+        val ok =
+            EvalReport(
+                listOf(learning(1, "a"), outcome(Judge.ANY, 2, query = "b", taught = true), outcome(Judge.ANY, 1, query = "c")),
+            )
+        assertEquals(emptyList<String>(), ok.learnedFailures(before))
+        assertTrue("比べなかった" in ok.learnedSection(before))
+        // c が下がった・学習の分類が届かない
+        val bad = EvalReport(listOf(learning(4, "a"), outcome(Judge.ANY, 1, query = "b"), outcome(Judge.ANY, 2, query = "c")))
+        val failures = bad.learnedFailures(before)
+        assertTrue(failures.any { "3 位以内が 0.0%" in it }, failures.toString())
+        assertTrue(failures.any { "「表記ゆれ」の指標が下がった" in it }, failures.toString())
+        assertTrue("c（表記ゆれ）: 1 → 2" in bad.learnedSection(before))
+    }
+
+    @Test
+    fun `前回との差で、入った・外れた・順位の変わった検索語を出す`() {
+        val before =
+            EvalReport(listOf(outcome(Judge.ANY, 5, query = "a"), outcome(Judge.ANY, 1, query = "b"), outcome(Judge.ANY, 2, query = "c")))
+        val after =
+            EvalReport(
+                listOf(outcome(Judge.ANY, 1, query = "a"), outcome(Judge.ANY, null, query = "b"), outcome(Judge.ANY, 3, query = "c")),
+            )
+        val diff = after.diffAgainst(before.tsv())
+        assertTrue("新たに 3 位以内に入った: 1 件\n  - a（表記ゆれ）: 5 → 1" in diff, diff)
+        assertTrue("新たに 3 位以内から外れた: 1 件\n  - b（表記ゆれ）: 1 → -" in diff, diff)
+        assertTrue("順位だけ変わった: 1 件\n  - c（表記ゆれ）: 2 → 3" in diff, diff)
+    }
+
+    private fun outcome(
+        judge: Judge,
+        vararg ranks: Int?,
+        category: String = "表記ゆれ",
+        weakness: String? = null,
+        query: String = "q",
+        taught: Boolean = false,
+    ): QueryOutcome =
+        QueryOutcome(
+            EvalQuery(query, ranks.indices.map { "app$it" }, judge, category, weakness),
+            ranks.toList(),
+            emptyList(),
+            taught,
+        )
+
+    private companion object {
+        const val REPORT_DIR_PROPERTY = "eval.reportDir"
+        const val BASELINE_PROPERTY = "eval.baseline"
+    }
+}

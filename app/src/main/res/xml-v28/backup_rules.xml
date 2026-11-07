@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+    Android 9〜11。requireFlags で、端末間の転送のときだけ含める（クラウドへのバックアップには含めない）。
+    Android 12 以降は data_extraction_rules.xml が使われる
+-->
+<full-backup-content>
+    <include domain="root" path="." requireFlags="deviceToDeviceTransfer" />
+    <include domain="device_root" path="." requireFlags="deviceToDeviceTransfer" />
+</full-backup-content>

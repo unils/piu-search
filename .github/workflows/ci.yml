@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+# CI。設計は docs/design/testing.md の「CI」。
+# 外部の Action はコミットの SHA で固定する（タグは付け替えられるため）。版はコメントに書き、更新は Dependabot に任せる。
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 同じブランチに続けて push したら、古い実行を止めて分数を節約する
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Gradle のデーモンを動かす JDK。toolchain（JDK 21）にも同じものが使われ、取得の手間が省ける
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # 依存と wrapper をキャッシュする。既定の Enhanced Caching は商用の部品なので、MIT の basic を使う
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+
+      # 手元の検査と同じ形（CONTRIBUTING.md の「検査のコマンド」）。計器テストの APK はコンパイルが通ることまで見る
+      - name: Check and assemble
+        run: >-
+          ./gradlew --console=plain --no-build-cache
+          check :app:assembleDebug :app:assembleRelease assembleAndroidTest
+
+      # Room はビルドのたびにスキーマの JSON を書き直す。表を変えて JSON をコミットし忘れたら、ここで落とす
+      - name: Check Room schemas are committed
+        run: git diff --exit-code -- data/schemas
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: check-reports
+          path: |
+            **/build/reports/
+            **/build/test-results/
+          retention-days: 14
+
+  instrumented:
+    name: instrumented (API ${{ matrix.api-level }})
+    # 無料の runner ではエミュレータの起動が時間切れになることがあり（2026-10-27）、分数にも上限がある。
+    # 計器テストは push の前に手元のエミュレータで回し、ここは手動のときだけ回す
+    if: github.event_name == 'workflow_dispatch'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # 最小 SDK と最新。37 の SDK の部品は android-37.0 の名前で配られている
+        api-level: ['26', '37.0']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+
+      # エミュレータの高速化（KVM）を一般のユーザーに開く。android-emulator-runner の README の手順
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instrumented tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          # Google の API を含まない素の像。GrapheneOS と同じく Google Play 開発者サービスのない環境で確かめる
+          target: default
+          arch: x86_64
+          # R8 を通した版（app の minified）の計器テストも回す。release でだけ起きる誤りを拾うため。
+          # 前後の検査（応答なしの窓・端末ごとの件数）は Gradle のタスクに掛かっている（build-logic の piu.connected-test-checks）
+          script: ./gradlew --console=plain connectedDebugAndroidTest :releasetest:connectedMinifiedAndroidTest
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: instrumented-reports-api-${{ matrix.api-level }}
+          path: |
+            */build/reports/androidTests/
+            */build/outputs/androidTest-results/
+          retention-days: 14

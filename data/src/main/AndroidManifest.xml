@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+    パッケージの可視性の制限（Android 11 以降）の下で、AppSource と GenreResolver が他のアプリを見るための宣言。
+    使う部品のあるこのモジュールに置き、app のマニフェストへは合成（manifest merger）で入る。
+    data の計器テストの APK にも入るので、テストが本体と同じ見え方になる。QUERY_ALL_PACKAGES は使わない。
+
+    書くのは起動できるアプリ（MAIN＋LAUNCHER）だけ。可視性はパッケージの単位なので、入口が見えるアプリは
+    ジャンルの判定の intent の問い合わせにも出る（architecture.md の「権限とマニフェスト」）。見える範囲を最小にするため、
+    ジャンルの intent は書かない（QueriesManifestTest が確かめる）
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+</manifest>

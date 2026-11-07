@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">Piu Search</string>
+    <string name="search_hint">Search apps</string>
+    <string name="clear_query">Clear search</string>
+    <string name="no_match">No apps found</string>
+    <string name="suggestions_recent">Recent</string>
+    <string name="suggestions_frequent">Frequently used</string>
+    <string name="suggestions_none">Search apps by name, reading, or genre</string>
+    <string name="all_apps">All apps</string>
+    <string name="all_apps_empty">No apps</string>
+    <!-- 頭文字の索引の TalkBack での名前と、見出しへ飛ぶ操作の名前 -->
+    <string name="section_index">Index</string>
+    <string name="section_jump">Jump to %1$s</string>
+    <string name="profile_personal">Personal</string>
+    <string name="profile_work">Work</string>
+    <string name="work_paused">Work apps are paused. Opening one asks you to turn them back on.</string>
+    <plurals name="work_matches">
+        <item quantity="one">%d match in Work</item>
+        <item quantity="other">%d matches in Work</item>
+    </plurals>
+    <string name="launch_failed">Couldn\'t open %1$s</string>
+
+    <!-- 長押しのメニュー（ui.md）。row_menu は TalkBack が読む長押しの操作の名前 -->
+    <string name="row_menu">Show options</string>
+    <string name="menu_app_info">App info</string>
+    <string name="menu_suppress">Don\'t show for this search</string>
+    <string name="menu_forget_learning">Forget what was learned for this search</string>
+    <string name="app_info_failed">Couldn\'t open app info for %1$s</string>
+
+    <!-- 呼び出しの入口（ui.md の「呼び出し」） -->
+    <string name="tile_label">App search</string>
+    <string name="tile_already_added">The tile is already in Quick Settings</string>
+    <string name="settings_open_failed">Couldn\'t open Settings</string>
+    <string name="onboarding_title">Open search faster</string>
+    <string name="onboarding_assistant">Choose this app as the digital assistant app in Settings. Then, depending on your phone, swiping up from a bottom corner or holding the power button opens it.</string>
+    <string name="onboarding_assistant_button">Open assistant settings</string>
+    <string name="onboarding_tile">Add the tile to Quick Settings to open search from any screen.</string>
+    <string name="onboarding_tile_manual">To open search from any screen, pull down Quick Settings, tap Edit (the pencil), and add the \"App search\" tile.</string>
+    <string name="onboarding_tile_button">Add tile</string>
+    <string name="onboarding_close">Close</string>
+
+    <!-- 出た理由（ui.md）。名前で一致しなかったときだけ、結果の名前の下に出す -->
+    <string name="reason_genre">Genre: %1$s</string>
+    <string name="reason_reading">Reading: %1$s</string>
+    <string name="reason_romaji">Romaji: %1$s</string>
+    <string name="reason_localized_name">Other name: %1$s</string>
+    <string name="reason_package_name">Package: %1$s</string>
+    <string name="reason_publisher">Developer: %1$s</string>
+    <string name="reason_learned">Learned: %1$s</string>
+
+    <!-- 救済の知らせ（ui.md の「すべてのアプリ」）。%1$s は学習した検索語、%2$s はアプリの名前 -->
+    <string name="rescue_learned">%2$s will now show up for \"%1$s\"</string>
+    <string name="rescue_undo">Undo</string>
+
+    <!-- ジャンルの名前。GenreVocabulary.DEFAULT の id ごと -->
+    <string name="genre_maps">Maps</string>
+    <string name="genre_email">Email</string>
+    <string name="genre_phone">Phone</string>
+    <string name="genre_messaging">Messaging</string>
+    <string name="genre_camera">Camera</string>
+    <string name="genre_photos">Photos</string>
+    <string name="genre_video">Video</string>
+    <string name="genre_music">Music</string>
+    <string name="genre_browser">Browser</string>
+    <string name="genre_calendar">Calendar</string>
+    <string name="genre_contacts">Contacts</string>
+    <string name="genre_calculator">Calculator</string>
+    <string name="genre_clock">Clock</string>
+    <string name="genre_files">Files</string>
+    <string name="genre_weather">Weather</string>
+    <string name="genre_translate">Translation</string>
+    <string name="genre_store">Store</string>
+    <string name="genre_pdf">PDF</string>
+    <string name="genre_game">Games</string>
+    <string name="genre_news">News</string>
+    <string name="genre_social">Social</string>
+
+    <!-- 学習の一覧（ui.md の設定画面の「学習」。M5 で設定画面に組み込む） -->
+    <string name="menu_manage_learning">Learned searches</string>
+    <string name="learned_title">Learned searches</string>
+    <string name="learned_intro">Searches this app learned from the apps you opened. Delete a pair that is wrong.</string>
+    <string name="learned_empty">Nothing learned yet. When you open an app that didn\'t come up for your search (for example from All apps), it is learned here.</string>
+    <string name="learned_query">“%1$s”</string>
+    <plurals name="learned_count">
+        <item quantity="one">Used once</item>
+        <item quantity="other">Used %d times</item>
+    </plurals>
+    <string name="learned_last_used">last %1$s</string>
+    <string name="learned_rescued">learned from search</string>
+    <string name="learned_suppressed">Not shown for this search</string>
+    <string name="learned_not_installed">Not installed</string>
+    <!-- 1 行に並べる短い項目の区切り。日本語は中黒、英語は前後に空白のある中点 -->
+    <string name="list_separator">" · "</string>
+    <string name="learned_delete">Delete “%1$s” for %2$s</string>
+    <string name="learned_export">Export</string>
+    <string name="learned_import">Import</string>
+    <string name="learned_clear">Delete all</string>
+    <string name="learned_clear_title">Delete everything learned?</string>
+    <plurals name="learned_clear_message">
+        <item quantity="one">This deletes %d learned pair, including searches marked \"Don\'t show\". It can\'t be undone. To keep a copy, export first; importing it brings it back.</item>
+        <item quantity="other">This deletes %d learned pairs, including searches marked \"Don\'t show\". It can\'t be undone. To keep a copy, export first; importing it brings them back.</item>
+    </plurals>
+    <string name="learned_clear_confirm">Delete</string>
+    <string name="learned_clear_cancel">Cancel</string>
+    <plurals name="learned_exported">
+        <item quantity="one">Exported %d pair</item>
+        <item quantity="other">Exported %d pairs</item>
+    </plurals>
+    <string name="learned_export_failed">Couldn\'t write the file</string>
+    <plurals name="learned_imported">
+        <item quantity="one">Imported %d pair and merged it with what was learned</item>
+        <item quantity="other">Imported %d pairs and merged them with what was learned</item>
+    </plurals>
+    <string name="learned_import_unreadable">Couldn\'t read the file. Nothing was changed.</string>
+    <string name="learned_import_too_large">The file is too large to be an export of this app. Nothing was changed.</string>
+    <string name="learned_import_invalid">This file isn\'t an export of learned searches, or it is damaged. Nothing was changed.</string>
+    <string name="learned_import_newer">This file was exported by a newer version of the app. Update the app and try again. Nothing was changed.</string>
+    <string name="learned_open_failed">No app to pick a file with</string>
+
+    <!-- 設定画面（ui.md の「設定画面」） -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_search_bar">Search bar position</string>
+    <string name="settings_search_bar_bottom">Bottom (easy to reach with one hand)</string>
+    <string name="settings_search_bar_top">Top</string>
+    <string name="settings_reasons">Search results</string>
+    <string name="settings_show_reasons">Show why an app came up</string>
+    <string name="settings_show_reasons_detail">Shows a small line such as \"Reading: …\" or \"Genre: …\" under apps that didn\'t match by name.</string>
+    <string name="settings_work">Work profile apps</string>
+    <string name="settings_work_note">Applies only when this device has a work profile.</string>
+    <string name="settings_work_switch">Switch between Personal and Work</string>
+    <string name="settings_work_mixed">Search together with personal apps</string>
+    <string name="settings_work_hidden">Don\'t show</string>
+    <string name="settings_learning">Learning</string>
+    <string name="settings_learning_detail">Review, delete, export, and import what was learned</string>
+    <string name="settings_entry">Ways to open search</string>
+    <string name="settings_onboarding_again_detail">The guide from the first launch can be shown again on the search screen.</string>
+    <string name="settings_onboarding_again">Show the guide again</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_version_value" translatable="false">%1$s (%2$d)</string>
+    <string name="settings_source">Source code</string>
+    <string name="settings_source_failed">No app to open the link</string>
+    <string name="settings_licenses_detail">Licenses of this app and the open source software it includes</string>
+
+    <!-- ライセンスの画面 -->
+    <string name="licenses_title">Licenses</string>
+    <string name="licenses_intro">This app is open source software under the Apache License 2.0. It also includes the open source software below.</string>
+    <string name="licenses_app">License of this app</string>
+    <string name="licenses_app_detail">Apache License 2.0 (full text)</string>
+    <string name="licenses_full_text">Full text of the %1$s</string>
+    <plurals name="licenses_libraries">
+        <item quantity="one">%d library</item>
+        <item quantity="other">%d libraries</item>
+    </plurals>
+    <string name="licenses_notice">Notices (NOTICE)</string>
+    <string name="licenses_notice_intro">Includes the notices for the Japanese analyzer Kuromoji and its dictionary IPADIC (NAIST and ICOT).</string>
+</resources>
