@@ -15,8 +15,9 @@ import org.junit.runner.RunWith
  * Baseline Profile（起動に使うコードを先にコンパイルしておく規則）を集める。
  *
  * 呼び出し → 検索窓に打つ → 結果が出る、を通す。漢字の検索語も打ち、読みを付ける Kuromoji の経路も含める
- * （索引の作り直しでも同じコードを使う）。テスト用のアプリ（test-apps/）を入れてから回す（結果が出るのを待つため）。
- * 結果は `:benchmark:copyBaselineProfile` で app に写し、リポジトリに入れる（CONTRIBUTING.md の「起動の速さ」）。
+ * （索引の作り直しでも同じコードを使う）。結果が出るのを待つので、テスト用のアプリ（test-apps/）が要る（生成の前に入る）。
+ * `./gradlew :app:generateBaselineProfile` で回す。結果は app の `src/release/generated/baselineProfiles/` に入り、
+ * リポジトリに入れる（CONTRIBUTING.md の「起動の速さ」）。
  */
 @RunWith(AndroidJUnit4::class)
 class BaselineProfileGenerator {

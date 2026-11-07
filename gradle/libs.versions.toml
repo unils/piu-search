@@ -45,6 +45,7 @@ roborazzi = "1.77.0"
 # R8 を通した版の計器テスト（:release-test）と起動の計測（:benchmark）。アプリの外から画面を操作する。
 # 2026-11-02 に Google Maven で最新の安定版を確かめた。どちらも Apache-2.0。テストの APK にだけ入る
 androidx-test-uiautomator = "2.4.0"
+# Baseline Profile の Gradle プラグイン（androidx.baselineprofile）も同じ版で出る。1.5.0 が最新の安定版（2026-11-08 に Google Maven で確かめた）
 androidx-benchmark = "1.5.0"
 
 [libraries]
@@ -102,3 +103,5 @@ licensee = { id = "app.cash.licensee", version.ref = "licensee" }
 room = { id = "androidx.room", version.ref = "room" }
 # スクリーンショットの記録（recordRoborazziDebug）と比較のタスク
 roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
+# Baseline Profile の生成（:benchmark）と取り込み（:app）。app に計測と生成の build type を足す
+androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidx-benchmark" }

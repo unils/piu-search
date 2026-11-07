@@ -5,10 +5,14 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 // 起動の速さの計測（Macrobenchmark）と Baseline Profile の生成。手で回す（check に入れない）。
 // どちらもエミュレータの値に頼り、1 回に数分かかるため。手順は CONTRIBUTING.md の「起動の速さ」
 //
-//   計測: ./gradlew :benchmark:connectedMinifiedAndroidTest        （app の minified。R8 を通した版）
-//   生成: ./gradlew :benchmark:connectedNonMinifiedAndroidTest :benchmark:copyBaselineProfile
+//   計測: ./gradlew :benchmark:connectedBenchmarkReleaseAndroidTest   （app の benchmarkRelease。R8 を通した版）
+//   生成: ./gradlew :app:generateBaselineProfile                      （app の nonMinifiedRelease。R8 を通さない版）
+//
+// build type（benchmarkRelease・nonMinifiedRelease）は Baseline Profile のプラグインが作り、
+// 回すテストも variant ごとに絞る（androidx.benchmark.enabledRules。計測は MacrobenchmarkRule、生成は BaselineProfileRule）
 plugins {
     alias(libs.plugins.android.test)
+    alias(libs.plugins.androidx.baselineprofile)
     id("piu.connected-test-checks")
 }
 
@@ -26,24 +30,7 @@ android {
         testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "EMULATOR"
     }
 
-    buildTypes {
-        // app の同じ名前の build type を相手にする。テストの APK は R8 にかけない。
-        // app を通して見える data などのライブラリは debug と release しか持たない
-        create("minified") {
-            isDebuggable = true
-            // debug 以外の build type には既定の署名がない。署名がないとテストの APK が入らない
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += "release"
-        }
-        create("nonMinified") {
-            isDebuggable = true
-            // debug 以外の build type には既定の署名がない。署名がないとテストの APK が入らない
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += "release"
-        }
-    }
-
-    // テストを自分のプロセスで動かす。計測のたびにアプリのプロセスを止めて起動し直すため
+    // テストを自分のプロセスで動かす。計測のたびにアプリのプロセスを止めて起動し直すため（プラグインも同じ値にする）
     experimentalProperties["android.experimental.self-instrumenting"] = true
 
     compileOptions {
@@ -59,20 +46,22 @@ android {
     }
 }
 
-androidComponents {
-    beforeVariants { it.enable = it.buildType == "minified" || it.buildType == "nonMinified" }
-    // 計測は R8 を通した版で、生成は R8 を通さない版で回す（生成した規則を元のコードの名前で書くため）
-    onVariants(selector().withBuildType("minified")) {
-        it.instrumentationRunnerArguments.put("class", "jp.piu.search.benchmark.StartupBenchmark")
-    }
-    onVariants(selector().withBuildType("nonMinified")) {
-        it.instrumentationRunnerArguments.put("class", "jp.piu.search.benchmark.BaselineProfileGenerator")
-    }
+baselineProfile {
+    // つないだ端末（エミュレータか実機）で生成する。Gradle Managed Device はシステムイメージの取得とエミュレータの起動を
+    // Gradle に任せることになり、メモリとディスクの使い方を手元で抑えにくい
+    useConnectedDevices = true
+    // プラグインの既定はエミュレータで計測を飛ばす。エミュレータで測ると決めた（M5-03）ので飛ばさない
+    skipBenchmarksOnEmulator = false
+}
+
+// 生成の流れは結果が出るのを待つので、テスト用のアプリ（test-apps/）を先に入れる
+tasks.named { it == "connectedNonMinifiedReleaseAndroidTest" }.configureEach {
+    dependsOn(":test-apps:installTestApps")
 }
 
 // 本体（jp.piu.search）を入れて消すほかの計器テストと、同時に回さない
 tasks.named { it.startsWith("connected") && it.endsWith("AndroidTest") }.configureEach {
-    mustRunAfter(":app:connectedDebugAndroidTest", ":release-test:connectedMinifiedAndroidTest")
+    mustRunAfter(":app:connectedDebugAndroidTest", ":release-test:connectedBenchmarkReleaseAndroidTest")
 }
 
 // variant ごとに回すテストを絞るので、ソースの @Test の数とは比べない。応答なしの窓の検査は掛ける
@@ -93,19 +82,4 @@ dependencies {
     implementation(libs.androidx.test.ext.junit)
     implementation(libs.androidx.test.uiautomator)
     implementation(libs.androidx.benchmark.macro.junit4)
-}
-
-// 生成した Baseline Profile を app に写す。リポジトリに入れ、ビルドのたびには生成しない
-// （生成はエミュレータに頼り、F-Droid の再現可能なビルドで同じ結果にならないため）
-tasks.register<Copy>("copyBaselineProfile") {
-    group = "benchmark"
-    description = "connectedNonMinifiedAndroidTest が集めた Baseline Profile を app/src/main/baselineProfiles/ に写す"
-    from(layout.buildDirectory.dir("outputs/connected_android_test_additional_output/nonMinified/connected")) {
-        include("**/BaselineProfileGenerator_generate-baseline-prof.txt")
-        eachFile { path = "baseline-prof.txt" }
-        includeEmptyDirs = false
-    }
-    into(rootProject.layout.projectDirectory.dir("app/src/main/baselineProfiles"))
-    // 写す先は app のソースで、app の組み立てが読む。同じ実行で続けて回すとき、組み立ての後に写す
-    mustRunAfter("connectedNonMinifiedAndroidTest")
 }
