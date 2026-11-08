@@ -134,10 +134,14 @@ android {
 
 // 生成は手で回す（./gradlew :app:generateBaselineProfile。API 33 以上の端末かエミュレータが要る）。
 // 生成はエミュレータに頼り、ビルドのたびに回すと同じソースから同じ APK を作れない（再現可能なビルド。decisions.md の 2026-11-03）。
-// 生成したものは src/release/generated/baselineProfiles/ に置いてリポジトリに入れ、release と benchmarkRelease が読む
+// 生成したもの（baseline-prof.txt と、起動用の startup-prof.txt）は src/release/generated/baselineProfiles/ に置いて
+// リポジトリに入れ、release と benchmarkRelease が読む
 baselineProfile {
     automaticGenerationDuringBuild = false
     saveInSrc = true
+    // R8 が startup-prof.txt のクラスを classes.dex にまとめる（DEX の並べ替え）。AGP 9.4 では既定で有効だが、
+    // 既定が変わっても release の APK の中身が黙って変わらないよう、公式の文書と Now in Android に合わせて明示する
+    dexLayoutOptimization = true
 }
 
 // スクリーンショットの正解の画像はリポジトリに入れ、変わったら差分を見て更新する（testing.md）。
