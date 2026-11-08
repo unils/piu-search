@@ -1,9 +1,11 @@
 # 版の一覧。2026-10-27 に Maven Central・Google Maven・Gradle Plugin Portal で最新の安定版を確かめた。
 [versions]
-agp = "9.4.1"
+agp = "9.5.1"
 kotlin = "2.4.21"
 # KSP 2.3 系は Kotlin の版から切り離されている（KSP2）。Room のコード生成に使う。2.3.12（2026-09-09）が最新
-ksp = "2.3.12"
+ksp = "2.3.13"
+spotless = "8.11.0"
+ksp = "2.3.13"
 spotless = "8.11.0"
 ktlint = "1.8.0"
 kover = "0.9.11"
@@ -44,7 +46,7 @@ androidx-test-espresso = "3.7.0"
 roborazzi = "1.77.0"
 # R8 を通した版の計器テスト（:release-test）と起動の計測（:benchmark）。アプリの外から画面を操作する。
 # 2026-11-02 に Google Maven で最新の安定版を確かめた。どちらも Apache-2.0。テストの APK にだけ入る
-androidx-test-uiautomator = "2.4.0"
+androidx-test-uiautomator = "2.4.1"
 # Baseline Profile の Gradle プラグイン（androidx.baselineprofile）も同じ版で出る。1.5.0 が最新の安定版（2026-11-08 に Google Maven で確かめた）
 androidx-benchmark = "1.5.0"
 
