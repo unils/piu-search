@@ -152,6 +152,13 @@ Baseline Profile（起動に使うコードを先にコンパイルしておく�
 
 生成は app の `nonMinifiedRelease`（R8 を通さない版）で回す。R8 で名前が変わる前の名前で規則を書き、release のビルドで R8 が名前を合わせる。テスト用のアプリは生成の前に入る（生成の流れが検索の結果を待つため）。
 
+生成では、呼び出してから検索窓に焦点が来るまでの流れを、起動用のプロファイル（startup profile）としても集める（`includeInStartupProfile = true`。[公式の文書](https://developer.android.com/topic/performance/baselineprofiles/dex-layout-optimizations)）。出力の `startup-prof.txt` も同じ場所に置いてリポジトリに入れる。release のビルドで、R8 がこのクラスを `classes.dex` にまとめる（DEX の並べ替え。`dexLayoutOptimization = true`）。効いているかは、AAB の R8 の記録で `classes.dex` が `"startup": true` になっていることで確かめられる。
+
+```bash
+./gradlew :app:bundleRelease
+unzip -p app/build/outputs/bundle/release/app-release.aab BUNDLE-METADATA/com.android.tools/r8.json | jq .dexFiles
+```
+
 ## コードの書き方
 
 このプロジェクトのコードの多くは AI（Claude）が書いている。書くのが人でも AI でも、同じ決まりに従う。決まりが文書にあると、出力がそろい、レビューと提案がしやすい。

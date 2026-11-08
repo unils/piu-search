@@ -114,8 +114,29 @@ M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件�
 
 目標の案（温まった状態で 300 ms 以内）は満たす。アプリの分の Baseline Profile を加えた前後の差は、回ごとのばらつき（四分位範囲 10〜60 ms）の中に収まった。効き目は M6 の実機で見る。API 26 で 2 つの指標が同じになるのは、焦点が最初の描画より前に来るためと見ている（未確認）。
 
+### 起動用のプロファイルと DEX の並べ替え
+
+Baseline Profile の生成（`BaselineProfileGenerator`）のうち、呼び出してから検索窓に焦点が来るまでの流れ（`startup`）を `includeInStartupProfile = true` で集め、起動用のプロファイル（`startup-prof.txt`）にも入れる。R8 はこれに載ったクラスを最初の DEX（`classes.dex`）にまとめる（DEX の並べ替え。app の `baselineProfile { dexLayoutOptimization = true }`）。起動のときに読む DEX の頁が減るので、公式の文書は Baseline Profile だけのときより起動が 15〜30% 速いことが多いとしている。
+
+- 入口（アイコン・アシスタント・タイル）はどれも `SearchActivity` を開き、そこからの流れは同じなので、アイコンからの起動だけを通す。検索語を打った後の照合は入れない（公式の文書は、起動用の流れを `classes.dex` に収まる範囲に絞るよう勧める）
+- 起動の流れには、画面の表示の後に裏のスレッドで辞書を読み込む Kuromoji（`warmUp`）の分も入る。それでも起動用のクラスは `classes.dex` に収まった
+- release の APK は、`classes.dex`（起動用。1.66 MB）と `classes2.dex`（残り。0.97 MB）の 2 つに分かれた。以前は `classes.dex` 1 つ（2.42 MB）。AAB の R8 の記録（`BUNDLE-METADATA/com.android.tools/r8.json`）で、`classes.dex` が `"startup": true` になることを確かめた
+
+2026-11-08 のエミュレータの値（中央値と四分位範囲、ms。前は Baseline Profile だけ、後は起動用のプロファイルと DEX の並べ替えを加えたもの。コンパイルの状態は `BaselineProfile`）:
+
+| 端末 | 状態 | 指標 | 前 | 後 |
+|---|---|---|---|---|
+| API 37 | 冷えた | 最初の描画 | 270（263〜274） | 267（261〜274） |
+| API 37 | 冷えた | 打てるまで | 303（296〜310） | 303（299〜319） |
+| API 37 | 温まった | 最初の描画 | 56（53〜61） | 55（53〜63） |
+| API 37 | 温まった | 打てるまで | 75（72〜83） | 74（72〜83） |
+| API 26 | 冷えた | 打てるまで | 406（393〜467） | 416（394〜445） |
+| API 26 | 温まった | 打てるまで | 119（106〜129） | 112（92〜115） |
+
+API 26 は 2 つの指標が同じ値なので、打てるまでだけを載せた。前後の差はどれも四分位範囲の中で、エミュレータでは効き目が見えなかった。エミュレータの DEX は手元のディスクのファイルのキャッシュに載っていて、頁を読む時間がほとんどかからないためと見ている（未確認）。効き目は実機で見る。
+
 ## 公開前の検査（M7）
 
-- 再現可能なビルド: 同じソースから 2 回ビルドして、APK が同じになること（F-Droid の推奨）。APK の Baseline Profile（`assets/dexopt/baseline.prof`）も含めて確かめる。プロファイルの元（`app/src/release/generated/baselineProfiles/`）はリポジトリに入れてあり、ビルドのたびには生成しない
+- 再現可能なビルド: 同じソースから 2 回ビルドして、APK が同じになること（F-Droid の推奨）。APK の Baseline Profile（`assets/dexopt/baseline.prof`）と、起動用のプロファイルで並べ替えた DEX も含めて確かめる。プロファイルの元（`app/src/release/generated/baselineProfiles/` の `baseline-prof.txt` と `startup-prof.txt`）はリポジトリに入れてあり、ビルドのたびには生成しない
 - 端末の言語を英語・中国語にしても壊れないこと
 - ライセンスの表示（Kuromoji の Apache-2.0、IPADIC のライセンス、流用した辞書）がアプリ内と NOTICE にあること
