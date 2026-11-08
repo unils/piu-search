@@ -23,7 +23,7 @@ Android の端末に入っているアプリを、日本語の読み・表記ゆ
 
 計器テスト（`connectedDebugAndroidTest` など）は端末かエミュレータが要る。手順は CONTRIBUTING.md の「検査のコマンド」。
 
-Baseline Profile は公式の Gradle プラグイン（`androidx.baselineprofile`）で作る。生成は `./gradlew :app:generateBaselineProfile`（API 33 以上の端末かエミュレータが要る）で、出力の `app/src/release/generated/baselineProfiles/` をコミットする。ビルドのたびには生成しない。R8 を通した版の試験と起動の計測は、プラグインが作る `benchmarkRelease` を相手にする（`:release-test:connectedBenchmarkReleaseAndroidTest`・`:benchmark:connectedBenchmarkReleaseAndroidTest`）。そのための build type を自前で足さない。
+Baseline Profile は公式の Gradle プラグイン（`androidx.baselineprofile`）で作る。生成は `./gradlew :app:generateBaselineProfile`（API 33 以上の端末かエミュレータが要る）で、出力の `app/src/release/generated/baselineProfiles/`（`baseline-prof.txt` と起動用の `startup-prof.txt`）をコミットする。ビルドのたびには生成しない。R8 を通した版の試験と起動の計測は、プラグインが作る `benchmarkRelease` を相手にする（`:release-test:connectedBenchmarkReleaseAndroidTest`・`:benchmark:connectedBenchmarkReleaseAndroidTest`）。そのための build type を自前で足さない。
 
 ## 決まり
 
