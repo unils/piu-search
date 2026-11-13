@@ -4,9 +4,11 @@ package jp.piu.search.data
 
 import android.content.Context
 import android.util.AtomicFile
+import android.util.Log
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 /**
@@ -48,20 +50,42 @@ internal class InstallationGuard(
 
     private fun installationId(): String =
         synchronized(InstallationGuard::class.java) {
-            val file = AtomicFile(File(context.noBackupFilesDir, "installation-id"))
-            if (file.baseFile.exists()) {
-                // 読めない印で処理を続けず、DB の公開を止める。次の起動で再試行できる。
-                return@synchronized file.openRead().bufferedReader().use { UUID.fromString(it.readText()).toString() }
-            }
             val token = UUID.randomUUID().toString()
-            val output = file.startWrite()
             try {
-                output.write(token.toByteArray(Charsets.UTF_8))
-                file.finishWrite(output)
-            } catch (e: Exception) {
-                file.failWrite(output)
-                throw e
+                val file = AtomicFile(File(context.noBackupFilesDir, "installation-id"))
+                readInstallationId(file)?.let { return@synchronized it }
+                // Android 9・10 の初回書き込みの中断では空の本体が残る。古い退避先も捨て、壊れた印へ戻らないようにする。
+                file.delete()
+                val output = file.startWrite()
+                try {
+                    output.write(token.toByteArray(Charsets.UTF_8))
+                    file.finishWrite(output)
+                } catch (e: Exception) {
+                    file.failWrite(output)
+                    throw e
+                }
+            } catch (e: IOException) {
+                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する", e)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する", e)
             }
+            // 保存できなくても新しい印で整理して DB を開く。次のオープンでも不一致となるため、古い索引や仕事用を信用しない。
             token
         }
+
+    private fun readInstallationId(file: AtomicFile): String? =
+        try {
+            // 本体がなくても、AtomicFile が前回の退避先から復元できる場合がある。
+            file.openRead().bufferedReader().use { UUID.fromString(it.readText()).toString() }
+        } catch (e: IOException) {
+            null
+        } catch (e: IllegalArgumentException) {
+            null
+        } catch (e: SecurityException) {
+            null
+        }
+
+    private companion object {
+        const val TAG = "PiuInstallationGuard"
+    }
 }
