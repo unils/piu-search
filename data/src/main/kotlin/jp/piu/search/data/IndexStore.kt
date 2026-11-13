@@ -126,6 +126,19 @@ public class IndexStore internal constructor(
         }
     }
 
+    /** 計算の間に版や同期の状態が変わったら書かない。照合と保存を同じトランザクションに入れるための境界。 */
+    internal fun writeIfCurrent(
+        expected: SyncState?,
+        write: () -> Unit,
+    ): Boolean =
+        database.runInTransaction<Boolean> {
+            val meta = dao.meta()
+            val matches = if (expected == null) meta == null else meta == expected.toMetaRow()
+            if (!matches) return@runInTransaction false
+            write()
+            true
+        }
+
     private fun insert(stored: StoredApp) {
         val id = stored.app.id
         val appId =

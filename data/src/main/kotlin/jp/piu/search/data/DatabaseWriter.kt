@@ -10,13 +10,16 @@ import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 
 /**
- * 索引・学習・起動の記録に共通の書き手。読み込み確認から保存後のメモリ反映までを 1 つの仕事として並べる。
- * [run] も同じ列を通すので、同期を直接呼ぶ場合にも別の書き込みが割り込まない。
+ * 索引・学習・起動の記録に共通の書き手。保存前の確認と保存・メモリ反映を 1 つの仕事として並べる。
+ * 索引の材料の読み取りとキーの生成は外で済ませ、[run] では保存の前提の確認と保存・反映だけを行う。
  */
 public class DatabaseWriter :
     Executor,
     Closeable {
     private val running = ThreadLocal<Boolean>()
+
+    /** 重い計算から書き手を占有しないよう、同期の入口で呼び出し元を確かめるための印。 */
+    internal val isCurrentThread: Boolean get() = running.get() == true
     private val executor =
         Executors.newSingleThreadExecutor { task ->
             Thread({

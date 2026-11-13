@@ -35,6 +35,9 @@ public class ProfileReconciler(
         return serial in existing
     }
 
+    /** 書き手の外の計算には変更されない写しを渡し、削除と計算の並行実行で集合を共有しない。 */
+    internal fun snapshot(): ProfileSnapshot = ProfileSnapshot(lastExisting?.toSet(), removed.toSet())
+
     /** 3 種の保存データを照合して、削除が確定した番号を返す。保存の失敗は呼び出し元に返して再試行させる。 */
     public fun reconcile(): Set<Long> {
         val existing = readExisting() ?: return emptySet()
@@ -62,6 +65,14 @@ public class ProfileReconciler(
     private companion object {
         const val TAG = "PiuProfiles"
     }
+}
+
+/** 計算の前提にした存在の一覧。保存前に最新の写しと比べ、変わっていれば計算をやり直す。 */
+internal data class ProfileSnapshot(
+    val existing: Set<Long>?,
+    val removed: Set<Long>,
+) {
+    fun isPresent(serial: Long): Boolean = serial !in removed && existing?.contains(serial) != false
 }
 
 /**

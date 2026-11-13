@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.LauncherApps
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.os.SystemClock
 import android.os.UserHandle
 import android.util.Log
@@ -17,9 +18,10 @@ import jp.piu.search.core.search.LatinWordReader
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.search.SearchKeyGenerator
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 /**
- * 索引の受け取り手。索引を差し替えるたびに、同期のスレッドから呼ばれる。
+ * 索引の受け取り手。索引を差し替えるたびに、保存後の共通の書き手から呼ばれる。
  */
 public fun interface IndexListener {
     /** 新しい索引 [index] に差し替えた。 */
@@ -74,7 +76,8 @@ public data class SyncReport(
  * 消えたパッケージは可視性の制限で返らないこともあるため。
  *
  * 形態素解析器の辞書は、作り直す入口があるときだけ読み込む（キーの生成が最初に使うとき）。
- * 同期は記録と共通の [DatabaseWriter] で順に行い、画面のスレッドを待たせない。[sync] も同じ書き手に並べて完了を待つ。
+ * 計算は記録と別のスレッドで行い、[DatabaseWriter] には保存の前提の確認と保存・反映だけを並べる。
+ * [sync] は呼んだスレッドで計算し、保存が済むまで待つので、画面のスレッドや書き手から呼ばない。
  */
 public class IndexSync internal constructor(
     private val store: IndexStore,
@@ -106,17 +109,28 @@ public class IndexSync internal constructor(
     )
 
     private val generator by lazy(generatorFactory)
-    private val lock = Any()
+
+    // 計算同士だけを直列にする。書き手はこのロックを取らず、計算中の記録や削除を待たせない
+    private val syncLock = Any()
+    private val executor by lazy {
+        Executors.newSingleThreadExecutor { task ->
+            Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                task.run()
+            }, "piu-index-sync")
+        }
+    }
     private val listeners = CopyOnWriteArrayList<IndexListener>()
 
     init {
         profiles?.addRemovalListener(::profilesRemoved)
     }
 
-    // lock の中でだけ読み書きする。apps は保存した索引と同じ中身
+    // 書き手の中でだけ読み書きする。計算には変更されない Snapshot を渡す
     private var loaded = false
     private var apps: List<StoredApp> = emptyList()
     private var state: SyncState? = null
+    private var revision = 0L
 
     /** 今のメモリ上の索引。保存した索引を読む前は空。 */
     @Volatile
@@ -139,39 +153,74 @@ public class IndexSync internal constructor(
     }
 
     /**
-     * 保存した索引をまだ読んでいなければ読み、端末と合わせる。終わるまで戻らないので、画面のスレッドから呼ばない。
+     * 保存した索引をまだ読んでいなければ読み、端末と合わせる。終わるまで戻らないので、画面のスレッドや書き手から呼ばない。
      *
      * @param packages 変更の番号に出なくても作り直すパッケージ（`LauncherApps.Callback` で知ったもの）
      */
-    public fun sync(packages: Set<String> = emptySet()): SyncReport =
-        writer.run {
-            synchronized(lock) {
-                val started = SystemClock.elapsedRealtime()
-                val removedProfiles = profiles?.reconcile().orEmpty()
-                loadLocked()
-                val bootCount = device.bootCount()
-                val locales = device.locales()
-                val previous = state
-                val plan =
-                    if (previous == null || previous.locales != locales) {
-                        rebuildAll(bootCount, locales)
-                    } else {
-                        reconcile(previous, bootCount, locales, packages)
-                    }
-                val analyzerMillis = warmUpIfNeeded(plan.rebuild)
-                val built = plan.rebuild?.let(::build).orEmpty()
-                apply(plan, built)
-                SyncReport(
-                    mode = plan.mode,
-                    rebuiltApps = built.size,
-                    removedPackages = plan.removedPackages.size,
-                    removedProfiles = removedProfiles.size,
-                    analyzerLoadMillis = analyzerMillis,
-                    totalMillis = SystemClock.elapsedRealtime() - started,
-                    indexSize = apps.size,
-                ).also { Log.i(TAG, "索引を同期した: $it") }
+    public fun sync(packages: Set<String> = emptySet()): SyncReport {
+        check(!writer.isCurrentThread) { "索引の計算は書き手の外から呼ぶ" }
+        return synchronized(syncLock) { syncSerial(packages) }
+    }
+
+    private fun syncSerial(packages: Set<String>): SyncReport {
+        val started = SystemClock.elapsedRealtime()
+        val removedProfiles = HashSet<Long>()
+        var analyzerMillis = 0L
+        while (true) {
+            val before =
+                writer.run {
+                    removedProfiles += profiles?.reconcile().orEmpty()
+                    val justLoaded = loadOnWriter()
+                    Snapshot(apps, state, revision, profiles?.snapshot(), justLoaded)
+                }
+            if (before.justLoaded) {
+                val restoredIndex = searchIndex(before.apps)
+                writer.run {
+                    // 読み戻した索引の組み立て中に削除された場合も、古い写しを戻さない
+                    if (revision == before.revision) publish(restoredIndex)
+                }
             }
+            val bootCount = device.bootCount()
+            val locales = device.locales()
+            val previous = before.state
+            val plan =
+                if (previous == null || previous.locales != locales) {
+                    rebuildAll(before, bootCount, locales)
+                } else {
+                    reconcile(before, previous, bootCount, locales, packages)
+                }
+            analyzerMillis += warmUpIfNeeded(plan.rebuild)
+            val built = plan.rebuild?.let(::build).orEmpty()
+            val next = nextApps(before.apps, plan, built)
+            val nextIndex = if (plan.rebuild != null || plan.replaceAll) searchIndex(next) else null
+            // 計算に使った端末の状態も古くなり得る。端末の読み取りは書き手の外でやり直す
+            if (device.bootCount() != bootCount || device.locales() != locales) continue
+            val report =
+                writer.run {
+                    removedProfiles += profiles?.reconcile().orEmpty()
+                    if (revision != before.revision || profiles?.snapshot() != before.profiles) return@run null
+                    if (!store.writeIfCurrent(before.state) { save(plan, built, next) }) {
+                        // 保存済みの版や状態が変わったので、古い計画を当てずに保存先から読み直す
+                        loaded = false
+                        return@run null
+                    }
+                    apps = next
+                    state = plan.state
+                    revision++
+                    if (nextIndex != null) publish(nextIndex)
+                    SyncReport(
+                        mode = plan.mode,
+                        rebuiltApps = built.size,
+                        removedPackages = plan.removedPackages.size,
+                        removedProfiles = removedProfiles.size,
+                        analyzerLoadMillis = analyzerMillis,
+                        totalMillis = SystemClock.elapsedRealtime() - started,
+                        indexSize = apps.size,
+                    ).also { Log.i(TAG, "索引を同期した: $it") }
+                }
+            if (report != null) return report
         }
+    }
 
     /**
      * 開いている間のアプリの変更を `LauncherApps.Callback` で受け、そのパッケージを作り直す。
@@ -230,11 +279,12 @@ public class IndexSync internal constructor(
 
     /** 頼んだ同期がすべて終わるまで待つ。テストで、データベースを閉じる前に使う。 */
     internal fun awaitIdle() {
+        executor.submit { synchronized(syncLock) {} }.get()
         writer.run {}
     }
 
     private fun submit(packages: Set<String>) {
-        writer.execute {
+        executor.execute {
             // 同期に失敗しても、今の索引のまま検索を続けられる。次に画面を開いたときにもう一度試す
             try {
                 sync(packages)
@@ -244,16 +294,18 @@ public class IndexSync internal constructor(
         }
     }
 
-    private fun loadLocked() {
-        if (loaded) return
+    private fun loadOnWriter(): Boolean {
+        if (loaded) return false
         val stored = store.load()
         apps = stored.apps
         state = stored.state
         loaded = true
-        publish()
+        revision++
+        return true
     }
 
     private fun rebuildAll(
+        snapshot: Snapshot,
         bootCount: Int?,
         locales: String,
     ): Plan {
@@ -262,18 +314,19 @@ public class IndexSync internal constructor(
         val before = device.profileSerials()
         val read = device.read(null)
         val readable = before intersect device.profileSerials()
-        val preserved = apps.filter { it.app.id.profileSerial !in readable && isPresent(it.app.id.profileSerial) }
+        val preserved = snapshot.apps.filter { it.app.id.profileSerial !in readable && snapshot.isPresent(it.app.id.profileSerial) }
         return Plan(
             SyncMode.FULL_REBUILD,
             // 読めなかった分も再開後に新しい言語で作り直せるよう、全件が揃うまで言語を進めない
-            SyncState(sequence, bootCount, if (preserved.isEmpty()) locales else state?.locales ?: locales),
-            read.filter { it.entry.id.profileSerial in readable && isPresent(it.entry.id.profileSerial) },
+            SyncState(sequence, bootCount, if (preserved.isEmpty()) locales else snapshot.state?.locales ?: locales),
+            read.filter { it.entry.id.profileSerial in readable && snapshot.isPresent(it.entry.id.profileSerial) },
             replaceAll = true,
             preserved = preserved,
         )
     }
 
     private fun reconcile(
+        snapshot: Snapshot,
         previous: SyncState,
         bootCount: Int?,
         locales: String,
@@ -288,11 +341,11 @@ public class IndexSync internal constructor(
         val readable = beforeProfiles intersect device.profileSerials()
         val listed =
             stamps
-                .filter { it.id.profileSerial in readable && isPresent(it.id.profileSerial) }
+                .filter { it.id.profileSerial in readable && snapshot.isPresent(it.id.profileSerial) }
                 .groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
         val stored =
-            apps
-                .filter { it.app.id.profileSerial in readable && isPresent(it.app.id.profileSerial) }
+            snapshot.apps
+                .filter { it.app.id.profileSerial in readable && snapshot.isPresent(it.app.id.profileSerial) }
                 .groupBy { PackageKey(it.app.id.profileSerial, it.app.id.packageName) }
 
         val dirty = HashSet<PackageKey>()
@@ -312,7 +365,11 @@ public class IndexSync internal constructor(
         if (dirty.isEmpty()) return Plan(mode, newState, null)
         val candidates = device.read(dirty.mapTo(HashSet()) { it.packageName })
         val completed = readable intersect device.profileSerials()
-        val read = candidates.filter { it.key in dirty && it.entry.id.profileSerial in completed && isPresent(it.entry.id.profileSerial) }
+        val read =
+            candidates.filter {
+                it.key in dirty && it.entry.id.profileSerial in completed &&
+                    snapshot.isPresent(it.entry.id.profileSerial)
+            }
         val present = read.mapTo(HashSet()) { it.key }
         return Plan(mode, newState, read, removedPackages = (dirty - present).filterTo(HashSet()) { it.profileSerial in completed })
     }
@@ -327,43 +384,56 @@ public class IndexSync internal constructor(
     private fun build(read: List<InstalledApp>): List<StoredApp> =
         read.map { StoredApp(IndexedApp(it.entry.id, it.entry.label, generator.generate(it.entry)), it.packageUpdatedAt) }
 
-    private fun apply(
+    private fun nextApps(
+        before: List<StoredApp>,
         plan: Plan,
         built: List<StoredApp>,
+    ): List<StoredApp> {
+        if (plan.replaceAll) return built + plan.preserved
+        if (plan.rebuild == null) return before
+        val replaced = built.mapTo(HashSet()) { it.key } + plan.removedPackages
+        return before.filter { it.key !in replaced } + built
+    }
+
+    private fun save(
+        plan: Plan,
+        built: List<StoredApp>,
+        next: List<StoredApp>,
     ) {
-        val changed = plan.rebuild != null
         if (plan.replaceAll) {
-            val next = built + plan.preserved
             store.replaceAll(next, plan.state)
-            apps = next
-        } else if (changed) {
+        } else if (plan.rebuild != null) {
             store.update(built, plan.removedPackages, state = plan.state)
-            val replaced = built.mapTo(HashSet()) { it.key } + plan.removedPackages
-            apps =
-                apps.filter { it.key !in replaced } + built
         } else if (plan.state != state) {
             // 入口は変わらず、番号だけが進んだ
             store.update(emptyList(), state = plan.state)
         }
-        state = plan.state
-        if (plan.replaceAll || changed) publish()
     }
-
-    private fun isPresent(serial: Long): Boolean = profiles?.isPresent(serial) != false
 
     private fun profilesRemoved(serials: Set<Long>) {
-        synchronized(lock) {
-            val next = apps.filter { it.app.id.profileSerial !in serials }
-            if (next.size == apps.size) return
-            apps = next
-            publish()
-        }
+        val next = apps.filter { it.app.id.profileSerial !in serials }
+        if (next.size == apps.size) return
+        apps = next
+        revision++
+        publish()
     }
 
-    private fun publish() {
-        val next = if (apps.isEmpty()) SearchIndex.EMPTY else SearchIndex(apps.map { it.app })
+    private fun searchIndex(apps: List<StoredApp>): SearchIndex =
+        if (apps.isEmpty()) SearchIndex.EMPTY else SearchIndex(apps.map { it.app })
+
+    private fun publish(next: SearchIndex = searchIndex(apps)) {
         index = next
         listeners.forEach { it.onIndexChanged(next) }
+    }
+
+    private data class Snapshot(
+        val apps: List<StoredApp>,
+        val state: SyncState?,
+        val revision: Long,
+        val profiles: ProfileSnapshot?,
+        val justLoaded: Boolean,
+    ) {
+        fun isPresent(serial: Long): Boolean = profiles?.isPresent(serial) != false
     }
 
     /**
