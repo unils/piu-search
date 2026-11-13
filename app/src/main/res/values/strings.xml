@@ -110,8 +110,8 @@
     </plurals>
     <string name="learned_export_failed">Couldn\'t write the file</string>
     <plurals name="learned_imported">
-        <item quantity="one">Imported %d pair and merged it with what was learned</item>
-        <item quantity="other">Imported %d pairs and merged them with what was learned</item>
+        <item quantity="one">Imported %1$d pair and merged it with what was learned. Skipped: %2$d.</item>
+        <item quantity="other">Imported %1$d pairs and merged them with what was learned. Skipped: %2$d.</item>
     </plurals>
     <string name="learned_import_unreadable">Couldn\'t read the file. Nothing was changed.</string>
     <string name="learned_import_too_large">The file is too large to be an export of this app. Nothing was changed.</string>

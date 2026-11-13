@@ -96,7 +96,7 @@ class RecreationTest {
             release.countDown()
             container.learning.awaitIdle()
 
-            compose.onNodeWithText("1 件を読み込み、今の学習と合わせました").assertExists()
+            compose.onNodeWithText("1 件を読み込み、今の学習と合わせました（読み込まなかった記録 0 件）").assertExists()
         }
         // 出し終える前に画面を閉じたので、箱には残る（次に開いたときに出す）
         assertEquals(BackupOutcome.Imported::class, container.backupOutcome.current?.let { it::class })

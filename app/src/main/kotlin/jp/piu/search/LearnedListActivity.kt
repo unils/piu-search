@@ -158,7 +158,12 @@ class LearnedListActivity : ComponentActivity() {
             is BackupOutcome.Imported -> {
                 when (val result = outcome.result) {
                     is BackupReadResult.Success -> {
-                        resources.getQuantityString(R.plurals.learned_imported, result.records.size, result.records.size)
+                        resources.getQuantityString(
+                            R.plurals.learned_imported,
+                            result.records.size,
+                            result.records.size,
+                            result.skippedCount,
+                        )
                     }
 
                     is BackupReadResult.Failure -> {

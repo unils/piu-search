@@ -98,7 +98,7 @@
     </plurals>
     <string name="learned_export_failed">ファイルに書けませんでした</string>
     <plurals name="learned_imported">
-        <item quantity="other">%d 件を読み込み、今の学習と合わせました</item>
+        <item quantity="other">%1$d 件を読み込み、今の学習と合わせました（読み込まなかった記録 %2$d 件）</item>
     </plurals>
     <string name="learned_import_unreadable">ファイルを読めませんでした。学習は変えていません</string>
     <string name="learned_import_too_large">学習の書き出しにしては大きすぎるファイルです。学習は変えていません</string>

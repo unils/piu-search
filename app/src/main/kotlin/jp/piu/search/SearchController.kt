@@ -168,11 +168,13 @@ enum class RowAction(
  * @property app 開くアプリ
  * @property route 開いた経路
  * @property query 開いたときに検索窓にあった検索語（打ったまま。正規化しない）
+ * @property learnedPair 行を出した学習のキーの組。起動の完了を待つ間に結果が変わっても、押した行の語を使う
  */
 data class OpenRequest(
     val app: AppId,
     val route: OpenRoute,
     val query: String,
+    val learnedPair: LearnedPair? = null,
 )
 
 /**
@@ -320,7 +322,8 @@ class SearchController(
      * [request] のアプリを開いた: セッションを終え、記録する組を返す（learning.md の R1・R2）。集めた出来事は捨てる。
      * 画面のスレッドから、アプリを開けたときだけ呼ぶ。
      */
-    fun finishSession(request: OpenRequest): LearningDecision = tracker.opened(clock(), request.app, request.route.learning, request.query)
+    fun finishSession(request: OpenRequest): LearningDecision =
+        tracker.opened(clock(), request.app, request.route.learning, request.query).copy(used = request.learnedPair)
 
     /** 何も開かずにセッションが終わった（画面を離れた）。集めた出来事を捨てる。画面に戻ったら [startSession] を呼ぶ。 */
     fun endSession() {
@@ -341,7 +344,8 @@ class SearchController(
                 is SearchContent.Suggestions -> OpenRoute.SUGGESTION
                 else -> OpenRoute.SEARCH_RESULT
             }
-        return OpenRequest(app, route, query)
+        val learned = (content as? SearchContent.Results)?.rows?.firstOrNull { it.app == app }?.let(::learnedPairOf)
+        return OpenRequest(app, route, query, learnedPair = learned)
     }
 
     /** 検索語を [raw] にする。すべてのアプリを出していたら、検索の結果に戻る（ui.md）。画面のスレッドから呼ぶ。 */

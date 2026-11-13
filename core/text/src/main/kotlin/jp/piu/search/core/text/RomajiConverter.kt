@@ -42,29 +42,62 @@ public object RomajiConverter {
         val partial = mode == RomajiMode.PREFIX
         var i = 0
         while (i < input.length) {
-            val ch = input[i]
-            i =
-                when {
-                    ch == SOKUON -> {
-                        out.sokuon = true
-                        i + 1
-                    }
-
-                    ch == PROLONGED_SOUND_MARK -> {
-                        i + 1
-                    }
-
-                    ch in 'a'..'z' -> {
-                        latin(input, i, partial, out)
-                    }
-
-                    else -> {
-                        kana(input, i, out)
-                    }
-                }
+            i = advance(input, i, partial, out)
         }
         return NormalizedText(out.toString())
     }
+
+    /**
+     * [text] の頭から 1 字ずつ（コードポイント）伸ばした語を、完結したローマ字にした長さの列。
+     *
+     * 全体を毎回変換すると二乗の手間になるため、先読みの最大 2 字を残して確定した出力と促音の状態を引き継ぐ。
+     * 各接頭辞で変換し直す末尾は 2 字以下なので、全体の手間は語の長さに比例する。
+     */
+    public fun prefixLengths(text: NormalizedText): IntArray {
+        val input = stripLatinDiacritics(text.value)
+        val lengths = IntArray(input.codePointCount(0, input.length))
+        val committed = Emitter(StringBuilder(input.length * 2))
+        var start = 0
+        var end = 0
+        for (i in lengths.indices) {
+            end = input.offsetByCodePoints(end, 1)
+            // 先読みが接頭辞の中に収まる分だけ確定する。後続の字で nn などの区切りが変わるため
+            while (start + MAX_LOOKAHEAD < end) {
+                start = advance(input, start, partial = false, committed)
+            }
+            val tail = input.substring(start, end)
+            val pending = Emitter(StringBuilder()).apply { sokuon = committed.sokuon }
+            var at = 0
+            while (at < tail.length) at = advance(tail, at, partial = false, pending)
+            lengths[i] = committed.length + pending.length
+        }
+        return lengths
+    }
+
+    private fun advance(
+        input: String,
+        at: Int,
+        partial: Boolean,
+        out: Emitter,
+    ): Int =
+        when (input[at]) {
+            SOKUON -> {
+                out.sokuon = true
+                at + 1
+            }
+
+            PROLONGED_SOUND_MARK -> {
+                at + 1
+            }
+
+            in 'a'..'z' -> {
+                latin(input, at, partial, out)
+            }
+
+            else -> {
+                kana(input, at, out)
+            }
+        }
 
     /**
      * 標準形のローマ字の緩い形。
@@ -280,6 +313,7 @@ public object RomajiConverter {
         return out.toString()
     }
 
+    private const val MAX_LOOKAHEAD = 2
     private const val SOKUON = 'っ'
     private const val PROLONGED_SOUND_MARK = 'ー'
     private const val END = '\u0000'
@@ -297,6 +331,8 @@ public object RomajiConverter {
     ) {
         /** 直前に「っ」があり、次の子音を重ねる。 */
         var sokuon = false
+
+        val length: Int get() = out.length
 
         fun emit(piece: String) {
             if (piece.isEmpty()) return

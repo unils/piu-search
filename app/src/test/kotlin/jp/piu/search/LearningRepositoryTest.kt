@@ -13,6 +13,7 @@ import jp.piu.search.core.search.LearningConfig
 import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.text.NormalizedText
 import jp.piu.search.data.LocalDatabase
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -180,6 +181,7 @@ class LearningRepositoryTest {
         val cases =
             listOf<Pair<() -> String?, BackupFailure>>(
                 { "{\"format\": " } to BackupFailure.INVALID,
+                { "{\"nested\":" + "[".repeat(20_000) + "0" + "]".repeat(20_000) + "}" } to BackupFailure.INVALID,
                 { "\u0000\u0001binary" } to BackupFailure.INVALID,
                 { newer } to BackupFailure.NEWER_VERSION,
                 { null } to BackupFailure.TOO_LARGE,
@@ -203,6 +205,58 @@ class LearningRepositoryTest {
         repository.export(PROFILES, NOW, write = { throw IOException("書けない") }, onDone = { exported = it })
         repository.awaitIdle()
         assertEquals(null, exported)
+    }
+
+    @Test
+    fun importReportsSkippedRowsAndOnlyMergesAcceptedRows() {
+        repository.record(LearningDecision(MAPS_PAIR, emptyList()), NOW) { null }
+        repository.awaitIdle()
+        val work = LearnedRecord(NormalizedText("きんたい"), TRANSIT.copy(profileSerial = 7), 2, NOW, rescued = true)
+        val source = LearnedMemory(listOf(work, LearnedRecord(OKANE.query, TRANSIT, Int.MAX_VALUE, NOW, rescued = true)))
+        val file = JSONObject(LearningBackup.encode(source, BackupProfiles(0, setOf(7)), NOW))
+        val array = file.getJSONArray("records")
+        array.put(JSONObject(array.getJSONObject(0).toString()).put("query", "あ".repeat(65)))
+        var result: BackupReadResult? = null
+        repository.import(PROFILES, NOW + 1, read = { file.toString() }, onDone = { result = it })
+        repository.awaitIdle()
+        val success = result as BackupReadResult.Success
+        assertEquals(1, success.records.size)
+        assertEquals(2, success.skippedCount)
+        assertEquals(setOf(MAPS_PAIR, OKANE), repository.memory.records.keys)
+        assertEquals(repository.memory.records, onDb { database.learned.load() }.records)
+
+        repository.record(LearningDecision(OKANE, emptyList()), NOW + 2) { null }
+        repository.awaitIdle()
+        val record = onDb { database.learned.load() }.records.getValue(OKANE)
+        assertEquals(Int.MAX_VALUE, record.count)
+        assertEquals(NOW + 2, record.lastUsedAt)
+    }
+
+    @Test
+    fun anImportWithEveryRowSkippedPreservesMemoryAndDatabase() {
+        repository.record(LearningDecision(MAPS_PAIR, emptyList()), NOW) { null }
+        repository.awaitIdle()
+        val before = repository.memory
+        val work = LearnedMemory(listOf(LearnedRecord(OKANE.query, TRANSIT.copy(profileSerial = 7), 2, NOW, rescued = true)))
+        val file = LearningBackup.encode(work, BackupProfiles(0, setOf(7)), NOW)
+        var result: BackupReadResult? = null
+        repository.import(PROFILES, NOW + 1, read = { file }, onDone = { result = it })
+        repository.awaitIdle()
+        assertEquals(BackupReadResult.Success(emptyList(), skippedCount = 1), result)
+        assertSame(before, repository.memory)
+        assertEquals(before.records, onDb { database.learned.load() }.records)
+    }
+
+    @Test
+    fun usingAnExistingLearnedKeyUpdatesTheDatabaseWithoutARescueNotice() {
+        repository.record(LearningDecision(null, listOf(OKANE)), NOW) { null }
+        repository.takeNotices()
+        assertEquals(emptyList<RescueNotice>(), repository.record(LearningDecision(null, emptyList(), used = OKANE), NOW + 1) { null })
+        repository.awaitIdle()
+        assertEquals(emptyList<RescueNotice>(), repository.takeNotices())
+        val record = onDb { database.learned.load() }.records.getValue(OKANE)
+        assertEquals(1, record.count)
+        assertEquals(NOW + 1, record.lastUsedAt)
     }
 
     // Room は画面のスレッドからの読み書きを拒む（Robolectric はテストを画面のスレッドで動かす）ので、記録のスレッドで読む

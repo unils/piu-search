@@ -191,12 +191,7 @@ private fun learnedRomaji(key: SearchKey): Pair<SearchKey, IntArray>? {
     if (text.isRomajiOnly()) return null
     val romaji = RomajiConverter.toStandard(key.text, RomajiMode.COMPLETE).value
     if (!romaji.isRomajiOnly()) return null
-    val count = text.codePointCount(0, text.length)
-    val lengths =
-        IntArray(count) { i ->
-            val end = text.offsetByCodePoints(0, i + 1)
-            RomajiConverter.toStandard(NormalizedText(text.substring(0, end)), RomajiMode.COMPLETE).value.length
-        }
+    val lengths = RomajiConverter.prefixLengths(key.text)
     return SearchKey(NormalizedText(romaji), SearchKeyKind.LEARNED) to lengths
 }
 

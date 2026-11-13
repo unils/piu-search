@@ -2,6 +2,7 @@
 
 package jp.piu.search
 
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.isDialog
@@ -149,6 +150,39 @@ class LearnedListScreenTest {
         }
         compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
         compose.onRoot().captureRoboImage("src/test/screenshots/learned_import_failed.png")
+    }
+
+    @Test
+    fun screenshotOfAnImportWithSkippedRecords() {
+        captureImportSummary(2, 3, "learned_import_skipped", "2 件を読み込み、今の学習と合わせました（読み込まなかった記録 3 件）")
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun screenshotOfAnImportWithSkippedRecordsInEnglish() {
+        captureImportSummary(1, 2, "learned_import_skipped_en", "Imported 1 pair and merged it with what was learned. Skipped: 2.")
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun screenshotOfAnImportWithNoAcceptedRecordsInEnglish() {
+        captureImportSummary(0, 2, "learned_import_all_skipped_en", "Imported 0 pairs and merged them with what was learned. Skipped: 2.")
+    }
+
+    private fun captureImportSummary(
+        imported: Int,
+        skipped: Int,
+        name: String,
+        expected: String,
+    ) {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            val message = pluralStringResource(R.plurals.learned_imported, imported, imported, skipped)
+            PiuTheme { LearnedListScreen(entries(), {}, {}, {}, {}, message = message) }
+        }
+        compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+        compose.onNodeWithText(expected).assertExists()
+        compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
     }
 
     private fun entries(): List<LearnedEntry> {

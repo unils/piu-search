@@ -5,6 +5,7 @@ package jp.piu.search
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LearnedMemory
 import jp.piu.search.core.search.LearnedRecord
+import jp.piu.search.core.search.LearningLimits
 import jp.piu.search.core.search.SearchQuery
 import org.json.JSONArray
 import org.json.JSONException
@@ -30,9 +31,11 @@ sealed interface BackupReadResult {
      * 読めた。
      *
      * @property records 読んだ記録。プロファイルは今の端末の番号に直してある
+     * @property skippedCount 長すぎる語か、仕事用の行き先が決まらず捨てた記録の件数（1 行につき 1 件）
      */
     data class Success(
         val records: List<LearnedRecord>,
+        val skippedCount: Int = 0,
     ) : BackupReadResult
 
     /**
@@ -80,7 +83,7 @@ enum class BackupFailure {
  *
  * - `version` は書式の版。項目の意味を変えたり、読み落とすと困る項目を足したりしたら上げる。読めない版は何も読まない
  * - `query` は正規化した検索語（厳密形）。読み込むときに今の版の正規化でもう一度揃える
- * - `profile` は `personal`（個人用）か `work`（仕事用）。`profileSerial` は書き出した端末での番号で、仕事用の読み替えにだけ使う
+ * - `profile` は `personal`（個人用）か `work`（仕事用）。`profileSerial` は書き出した端末での参考の番号。読み込み先の番号には使わない
  * - 時刻はエポックからのミリ秒
  * - 1 つでも壊れた記録があれば、ファイル全体を読まない（一部だけ読むと、どこまで戻ったかわからないため）
  */
@@ -93,6 +96,9 @@ object LearningBackup {
 
     /** 読むファイルの大きさの上限（バイト）。記録 1 件は 300 バイトほどなので、数万件まで入る。 */
     const val MAX_BYTES = 8 * 1024 * 1024
+
+    /** JSON の入れ子の上限。書き出しの 3 段に余裕を持たせ、再帰する解析器のスタックを守る。 */
+    const val MAX_DEPTH = 8
 
     /** 学習 [memory] を、時刻 [exportedAt] の書き出しとして JSON の文字列にする。 */
     fun encode(
@@ -132,6 +138,7 @@ object LearningBackup {
         profiles: BackupProfiles,
     ): BackupReadResult =
         try {
+            checkDepth(text)
             decodeOrThrow(JSONObject(text), profiles)
         } catch (_: JSONException) {
             BackupReadResult.Failure(BackupFailure.INVALID)
@@ -148,14 +155,14 @@ object LearningBackup {
         if (version > VERSION) return BackupReadResult.Failure(BackupFailure.NEWER_VERSION)
         if (version < 1) throw InvalidBackup()
         val array = root.opt(KEY_RECORDS) as? JSONArray ?: throw InvalidBackup()
-        val records = (0 until array.length()).map { i -> recordOf(array.opt(i) as? JSONObject ?: throw InvalidBackup(), profiles) }
-        return BackupReadResult.Success(records)
+        val records = (0 until array.length()).mapNotNull { i -> recordOf(array.opt(i) as? JSONObject ?: throw InvalidBackup(), profiles) }
+        return BackupReadResult.Success(records, skippedCount = array.length() - records.size)
     }
 
     private fun recordOf(
         item: JSONObject,
         profiles: BackupProfiles,
-    ): LearnedRecord {
+    ): LearnedRecord? {
         // 正規化の決まりが版で変わっても、今の照合で引ける形に揃える
         val query = SearchQuery.of(item.text(KEY_QUERY)).strict
         if (query.isEmpty) throw InvalidBackup()
@@ -163,22 +170,92 @@ object LearningBackup {
             when (item.opt(KEY_PROFILE) as? String) {
                 PERSONAL -> profiles.own
 
-                // 仕事用が 1 つだけなら、それに読み替える。ないか 2 つ以上なら、書き出した端末の番号のまま残す（索引にないアプリの記録と同じく、効かないだけ）
-                WORK -> profiles.work.singleOrNull() ?: item.long(KEY_PROFILE_SERIAL)
+                // 別の端末の番号を流用すると、個人用や別の仕事用に結び付くおそれがある
+                WORK -> profiles.work.singleOrNull()
 
                 else -> throw InvalidBackup()
             }
         val count = item.long(KEY_COUNT)
         val lastUsedAt = item.long(KEY_LAST_USED_AT)
         if (count !in 0..Int.MAX_VALUE.toLong() || lastUsedAt < 0) throw InvalidBackup()
+        // 捨てる行も先に記録の項目を検査し、壊れた行を含むファイルは全体を拒む
+        val packageName = item.text(KEY_PACKAGE)
+        val activityName = item.text(KEY_ACTIVITY)
+        val rescued = item.flag(KEY_RESCUED)
+        val suppressed = item.flag(KEY_SUPPRESSED)
+        if (serial == null || !LearningLimits.accepts(query)) return null
         return LearnedRecord(
             query = query,
-            app = AppId(item.text(KEY_PACKAGE), item.text(KEY_ACTIVITY), serial),
+            app = AppId(packageName, activityName, serial),
             count = count.toInt(),
             lastUsedAt = lastUsedAt,
-            rescued = item.flag(KEY_RESCUED),
-            suppressed = item.flag(KEY_SUPPRESSED),
+            rescued = rescued,
+            suppressed = suppressed,
         )
+    }
+
+    private fun checkDepth(text: String) {
+        val nesting = StringBuilder(MAX_DEPTH)
+        var inString = false
+        var escaped = false
+        var inLiteral = false
+        for (ch in text) {
+            if (inString) {
+                when {
+                    escaped -> {
+                        escaped = false
+                    }
+
+                    ch == '\\' -> {
+                        escaped = true
+                    }
+
+                    ch == '"' -> {
+                        inString = false
+                        inLiteral = true
+                    }
+                }
+                continue
+            }
+            when (ch) {
+                '"' -> {
+                    // org.json は裸の語にも引用符を含められる。文字列と取り違えて入れ子を見落とさないよう拒む
+                    if (inLiteral) throw InvalidBackup()
+                    inString = true
+                }
+
+                '{', '[' -> {
+                    if (nesting.length >= MAX_DEPTH) throw InvalidBackup()
+                    nesting.append(ch)
+                    inLiteral = false
+                }
+
+                '}', ']' -> {
+                    val expected = if (ch == '}') '{' else '['
+                    if (nesting.lastOrNull() != expected) throw InvalidBackup()
+                    nesting.setLength(nesting.length - 1)
+                    inLiteral = false
+                }
+
+                ',', ':' -> {
+                    inLiteral = false
+                }
+
+                ' ', '\t', '\r', '\n' -> {
+                    continue
+                }
+
+                // コメントと単一引用符の文字列は拒む。括弧を無視する範囲が解析器と食い違わないようにするため
+                '\'', '/', '#' -> {
+                    throw InvalidBackup()
+                }
+
+                else -> {
+                    inLiteral = true
+                }
+            }
+        }
+        if (inString || nesting.isNotEmpty()) throw InvalidBackup()
     }
 
     // org.json の getInt などは文字列の "2" も数に直して受けるので、型を自分で確かめる

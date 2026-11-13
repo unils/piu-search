@@ -11,6 +11,15 @@ import org.junit.jupiter.api.Test
 class LearningPolicyTest {
     private val policy = LearningPolicy()
 
+    @Test
+    fun `64 コードポイントを超える語は選択にも救済にも判定しない`() {
+        for (word in listOf("あ", "𠮷")) {
+            val longQuery = word.repeat(65)
+            val decision = policy.decide(listOf(typed(0, longQuery), opened(1, PAYPAY, LaunchRoute.SEARCH_RESULT, longQuery)))
+            assertEquals(LearningDecision.NONE, decision)
+        }
+    }
+
     // learning.md の「例」の表を 1 行ずつ
 
     @Test

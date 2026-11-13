@@ -18,6 +18,7 @@ import jp.piu.search.core.search.LearningPolicy
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.search.SearchKeyGenerator
 import jp.piu.search.core.search.SearchKeyKind
+import jp.piu.search.core.search.SearchQuery
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -421,6 +422,49 @@ class SearchControllerTest {
         controller.onQueryChange("ちず")
         controller.onQueryChange("みち")
         assertEquals(emptyList<LearnedPair>(), controller.finishSession(controller.openRequest(ROAD)).rescues)
+    }
+
+    @Test
+    fun openingALearnedPrefixRefreshesTheOriginalRecordWithoutAddingAnotherUse() {
+        val learned = LearnedPair(NormalizedText("おかね"), ROAD)
+        for (query in listOf("おか", "oka", "おかn", "おかね")) {
+            val controller = controllerWithIndex()
+            val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+            controller.onLearningChanged(memory)
+            controller.onQueryChange(query)
+            assertEquals(learned, controller.learnedPairOf(controller.rows().single()))
+            val decision = controller.finishSession(controller.openRequest(ROAD))
+            val after = memory.recorded(decision, NOW)
+            val original = after.records.getValue(learned)
+            assertEquals(NOW, original.lastUsedAt)
+            assertEquals(if (query == "おかね") 2 else 1, original.count)
+            if (query != "おかね") assertEquals(1, after.records.getValue(LearnedPair(SearchQuery.of(query).strict, ROAD)).count)
+            assertEquals(after.records.keys, after.forgotten(NOW + LearningConfig.DEFAULT.forgetAfterMillis - 1).records.keys)
+        }
+    }
+
+    @Test
+    fun theMatchedLearnedPairIsKeptUntilOpeningFinishes() {
+        val learned = LearnedPair(NormalizedText("おかね"), ROAD)
+        val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+        val controller = controllerWithIndex()
+        controller.onLearningChanged(memory)
+        controller.onQueryChange("oka")
+        val request = controller.openRequest(ROAD)
+        controller.onQueryChange("ちず")
+        assertEquals(learned, controller.finishSession(request).used)
+    }
+
+    @Test
+    fun openingFromAllAppsOrWithAnotherMatchingKeyDoesNotRefreshTheLearnedPair() {
+        val learned = LearnedPair(NormalizedText("みちのり"), ROAD)
+        val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+        val controller = controllerWithIndex()
+        controller.onLearningChanged(memory)
+        controller.onQueryChange("みち")
+        assertNull(controller.finishSession(controller.openRequest(ROAD)).used)
+        controller.showAllApps(true)
+        assertNull(controller.finishSession(controller.openRequest(ROAD)).used)
     }
 
     private fun controllerWithIndex(
