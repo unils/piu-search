@@ -38,6 +38,9 @@ internal interface LearnedDao {
     @Query("SELECT * FROM learned")
     fun all(): List<LearnedRow>
 
+    @Query("DELETE FROM learned")
+    fun deleteAll()
+
     // 外部キーも、ほかの表から参照されることもないので、置き換え（消して入れる）で足りる
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun put(rows: List<LearnedRow>)

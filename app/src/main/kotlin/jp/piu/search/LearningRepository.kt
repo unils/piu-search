@@ -149,9 +149,16 @@ class LearningRepository(
     fun clear() {
         synchronized(notices) { notices.clear() }
         requestLoad()
-        update {
+        executor.execute {
+            try {
+                // メモリが空でも省略しない。旧版などの見えない行が DB に残っている場合も全消去するため
+                store().clear()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "学習を消せなかった", e)
+                return@execute
+            }
             beforeRescue.clear()
-            it.cleared()
+            publish(memory.cleared())
         }
     }
 

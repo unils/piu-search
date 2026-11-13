@@ -259,6 +259,68 @@ class LearningRepositoryTest {
         assertEquals(NOW + 1, record.lastUsedAt)
     }
 
+    @Test
+    fun clearingAfterLoadingLegacyRowsLeavesTheRawTableEmpty() {
+        onDb { database.learned.save(LearnedMemory.EMPTY, LearnedMemory.EMPTY.recorded(LearningDecision(MAPS_PAIR, emptyList()), NOW)) }
+        insertRowsOutsideMemory()
+        assertEquals(3, rawLearnedRowCount())
+        repository.requestLoad()
+        repository.awaitIdle()
+        assertEquals(setOf(MAPS_PAIR), repository.memory.records.keys)
+
+        repository.clear()
+        repository.awaitIdle()
+
+        assertEquals(0, rawLearnedRowCount())
+        assertTrue(repository.memory.records.isEmpty())
+    }
+
+    @Test
+    fun clearDeletesRowsOutsideMemoryEvenWhenMemoryIsAlreadyEmpty() {
+        repository.requestLoad()
+        repository.awaitIdle()
+        for (hasKnownRecord in listOf(false, true)) {
+            if (hasKnownRecord) {
+                repository.record(LearningDecision(MAPS_PAIR, emptyList()), NOW) { null }
+                repository.awaitIdle()
+            }
+            // 読み込み後に SQL で行を足し、初回の整理にもメモリの差分にも頼れない全消去を確かめる
+            insertRowsOutsideMemory()
+            assertEquals(if (hasKnownRecord) 3 else 2, rawLearnedRowCount())
+
+            repository.clear()
+            repository.awaitIdle()
+
+            assertEquals(0, rawLearnedRowCount())
+            assertTrue(repository.memory.records.isEmpty())
+        }
+    }
+
+    private fun insertRowsOutsideMemory() {
+        onDb {
+            context.openOrCreateDatabase(LocalDatabase.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
+                for (serial in listOf(0L, 10L)) {
+                    db.execSQL(
+                        "INSERT INTO learned (`query`, package_name, activity_name, profile_serial, " +
+                            "use_count, last_used_at, rescued, suppressed) " +
+                            "VALUES (?, ?, ?, ?, 3, ?, 1, ?)",
+                        arrayOf<Any>("あ".repeat(65), TRANSIT.packageName, TRANSIT.activityName, serial, NOW, if (serial == 0L) 0 else 1),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rawLearnedRowCount(): Int =
+        onDb {
+            context.openOrCreateDatabase(LocalDatabase.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
+                db.rawQuery("SELECT COUNT(*) FROM learned", null).use { cursor ->
+                    check(cursor.moveToFirst())
+                    cursor.getInt(0)
+                }
+            }
+        }
+
     // Room は画面のスレッドからの読み書きを拒む（Robolectric はテストを画面のスレッドで動かす）ので、記録のスレッドで読む
     private fun <T> onDb(block: () -> T): T = executor.submit(Callable { block() }).get()
 
