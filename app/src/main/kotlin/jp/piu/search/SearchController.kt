@@ -163,7 +163,7 @@ enum class RowAction(
 }
 
 /**
- * アプリを開く頼み。開いたら、経路と検索語で学習する（[SearchController.finishSession]）。
+ * アプリを開く頼み。開く前に、経路と検索語で学習を判定する（[SearchController.finishSession]）。
  *
  * @property app 開くアプリ
  * @property route 開いた経路
@@ -188,7 +188,7 @@ data class OpenRequest(
  * 仕事用のアプリの扱いは設定（[workProfileMode]）で変わる: 切り替える（上の通り）・個人用と混ぜる・出さない。
  *
  * 学習（[learning]）は索引に重ねて照らす（[SearchIndex.withLearning]）。結果を出すたびに、検索語と見えていた上位を [tracker] に送り、
- * アプリを開いたら（[finishSession]）記録する組を判定する。
+ * アプリを選んだら（[finishSession]）開く前に記録する組を判定する。
  *
  * @param clock 今の時刻（エポックからのミリ秒）。起動の記録の新しさと、学習の出来事の時刻に使う
  */
@@ -319,8 +319,8 @@ class SearchController(
     }
 
     /**
-     * [request] のアプリを開いた: セッションを終え、記録する組を返す（learning.md の R1・R2）。集めた出来事は捨てる。
-     * 画面のスレッドから、アプリを開けたときだけ呼ぶ。
+     * [request] のアプリを選んだ: セッションを終え、記録する組を返す（learning.md の R1・R2）。集めた出来事は捨てる。
+     * 画面のスレッドから、保存と起動を始める前に呼ぶ。待機中の呼び直し・回転で判断が変わるのを防ぐ。
      */
     fun finishSession(request: OpenRequest): LearningDecision =
         tracker.opened(clock(), request.app, request.route.learning, request.query).copy(used = request.learnedPair)

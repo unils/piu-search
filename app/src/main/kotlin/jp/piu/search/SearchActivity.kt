@@ -29,7 +29,7 @@ import androidx.core.content.ContextCompat
  * 結果のアプリを開いたら、この画面を閉じてタスクごと消す。次に呼び出すと、空の検索語の新しい画面で開く（ui.md の「画面の振る舞い」）。
  * 仕事用プロファイルの状態（追加・削除・一時停止）は、開いたときと、開いている間に OS が知らせたときに読み直す（architecture.md の「プロファイル」）。
  *
- * 学習（learning.md）: アプリを開いたら、セッションの判定を記録する。救済を記録したら、開いたアプリの上に短く知らせ、
+ * 学習（learning.md）: 選んだ時点でセッションを判定し、保存の結果を待ってからアプリを開く。救済を保存できたら、開いたアプリの上に短く知らせ、
  * 次に画面を開いたときに［取り消す］つきで知らせる（開くとこの画面はすぐ閉じるので、その場では取り消しを出せない）。
  * 画面を離れたら、集めた出来事を捨てる。
  *
@@ -55,8 +55,8 @@ class SearchActivity : ComponentActivity() {
             ContextCompat.getMainExecutor(this).execute { notices = notices.filter(learning::canUndo) }
         }
 
-    // アプリを開いて閉じるところか。onStop でセッションを「何も開かずに終わった」と数えないため
-    private var launching = false
+    // 保存を待つ間と OS へ渡す間の印。呼び直し・再生成の後に、古い完了で別の検索を閉じないため
+    private var opening: Any? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 状態バーとナビゲーションバーの裏まで描き、余白は insets で取る
@@ -126,6 +126,7 @@ class SearchActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        opening = null
         // 呼び出し直された。前の検索語やすべてのアプリの表示を残さず、新しく開いたときと同じにする（ui.md の「画面の振る舞い」）
         controller.reset()
     }
@@ -181,11 +182,12 @@ class SearchActivity : ComponentActivity() {
         container.learning.removeListener(controller)
         container.learning.removeNoticeListener(noticeListener)
         // 何も開かずに画面を離れた（アプリ情報を開いた・ホームに戻った）。打った文字の列を残さない
-        if (!launching) controller.endSession()
+        if (opening == null) controller.endSession()
         super.onStop()
     }
 
     override fun onDestroy() {
+        opening = null
         // 閉じるのではなく作り直す（向きの変更など）なら、まだ出し終えていない救済の知らせを戻し、作り直した画面で出す。
         // 戻さないと、取り出し済みの知らせが［取り消す］の機会ごと失われる
         if (!isFinishing) appContainer.learning.returnNotices(notices)
@@ -284,42 +286,56 @@ class SearchActivity : ComponentActivity() {
     }
 
     private fun open(request: OpenRequest) {
+        if (opening != null) return
         val app = request.app
         val container = appContainer
-        if (!container.launcher.launch(app)) {
-            val label = controller.labelOf(app) ?: app.packageName
-            Toast.makeText(this, getString(R.string.launch_failed, label), Toast.LENGTH_SHORT).show()
-            // 消えたアプリが索引に残っていた見込み。同期で索引から外す
-            container.indexSync.requestSync()
-            return
-        }
         val now = System.currentTimeMillis()
-        val label = controller.labelOf(app)
+        val label = controller.labelOf(app) ?: app.packageName
+        val decision = controller.finishSession(request)
+        val token = Any()
+        opening = token
+        val launch = container.launcher.prepare(app)
         val context = applicationContext
         val ui = ContextCompat.getMainExecutor(context)
-        // 両方とも同じ Executor で順に完了するので、失敗の Toast を 1 つにまとめる
-        var launchFailed = false
-        container.launchHistory.record(app, now) { launchFailed = it is StorageResult.Failure }
-        container.learning.record(controller.finishSession(request), now, onDone = { result ->
+
+        fun openSaved(notices: List<RescueNotice>) {
             ui.execute {
-                if (launchFailed || result is StorageResult.Failure) {
-                    Toast.makeText(context, R.string.search_record_failed, Toast.LENGTH_SHORT).show()
-                } else if (result is StorageResult.Success) {
-                    // 保存後にだけ知らせる。取り消しは、プロセスに預けた知らせを次に開いた画面で出す
-                    result.value.lastOrNull()?.let { notice ->
-                        Toast
-                            .makeText(
-                                context,
-                                context.getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
-                                Toast.LENGTH_LONG,
-                            ).show()
+                if (!launch.launch()) {
+                    Toast.makeText(context, context.getString(R.string.launch_failed, label), Toast.LENGTH_SHORT).show()
+                    container.indexSync.requestSync()
+                    // 保存済みの選択は残す。後の選択や消去を、失敗の巻き戻しで上書きしないため
+                    if (opening === token && !isFinishing && !isDestroyed) {
+                        opening = null
+                        controller.startSession()
                     }
+                    return@execute
+                }
+                notices.lastOrNull()?.let { notice ->
+                    Toast
+                        .makeText(
+                            context,
+                            context.getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                }
+                // OS へ渡す最中にも呼び直されうる。閉じる直前に、同じ画面・検索の要求かを確かめる
+                if (opening === token && !isFinishing && !isDestroyed) {
+                    finishAndRemoveTask()
                 }
             }
+        }
+
+        if (!launch.recordsChoice) {
+            openSaved(emptyList())
+            return
+        }
+        // AppContainer の記録用 Executor は共通の 1 本で、起動の記録 → 学習の順に結果が返る
+        var historySaved = false
+        container.launchHistory.record(app, now) { historySaved = it is StorageResult.Success }
+        container.learning.record(decision, now, onDone = { learningResult ->
+            // 片方だけ保存できた場合も開く。失敗は Repository が識別子を含めずログに残す
+            openSaved(if (historySaved && learningResult is StorageResult.Success) learningResult.value else emptyList())
         }) { label }
-        launching = true
-        // 履歴画面に残さない（excludeFromRecents と合わせて）。タスクの根でなければ、ふつうの finish と同じ
-        finishAndRemoveTask()
     }
 
     private fun reportStorageFailure(result: StorageResult<Unit>) {

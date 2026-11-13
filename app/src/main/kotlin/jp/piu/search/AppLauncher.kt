@@ -10,9 +10,23 @@ import android.content.Intent
 import android.content.pm.LauncherApps
 import android.net.Uri
 import android.os.Process
+import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import jp.piu.search.core.search.AppId
+
+/**
+ * OS に渡す先と、確認画面への差し替えの見込みを、選んだ時点で固定した起動要求。
+ *
+ * @property recordsChoice 一時停止の再開確認を挟まず、学習と起動の記録を保存する要求か
+ */
+class PreparedLaunch internal constructor(
+    val recordsChoice: Boolean,
+    private val start: () -> Boolean,
+) {
+    /** 固定した先を開く。OS が要求を受け取れば true。実際の表示や確認の取り消しまでは判別できない。 */
+    fun launch(): Boolean = start()
+}
 
 /**
  * 結果のアプリを開く（architecture.md の「起動」）。
@@ -25,20 +39,31 @@ class AppLauncher(
     private val users: ProfileUsers,
 ) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
+    private val userManager = context.getSystemService(UserManager::class.java)
 
-    /** [app] を開く。開けなかったら（消えた・無効にされた・プロファイルがない）false。 */
-    fun launch(app: AppId): Boolean {
-        val user = users.userFor(app.profileSerial) ?: return false
-        return try {
-            launcherApps.startMainActivity(ComponentName(app.packageName, app.activityName), user, null, null)
-            true
-        } catch (e: ActivityNotFoundException) {
-            Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
-            false
-        } catch (e: SecurityException) {
-            // 入口が書き出されていない・プロファイルが別のグループになった。索引が古い
-            Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
-            false
+    /**
+     * [app] を開く準備。保存を始める前に呼び、選んだプロファイルだけの一時停止を調べる。
+     * 再開の確認は取り消されても結果が返らないため、その要求は学習にも起動回数にも数えない（learning.md）。
+     */
+    fun prepare(app: AppId): PreparedLaunch {
+        val user = users.userFor(app.profileSerial)
+        val paused = user != null && user != Process.myUserHandle() && userManager.isQuietModeEnabled(user)
+        return PreparedLaunch(recordsChoice = !paused) {
+            if (user == null) {
+                false
+            } else {
+                try {
+                    launcherApps.startMainActivity(ComponentName(app.packageName, app.activityName), user, null, null)
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
+                    false
+                } catch (e: SecurityException) {
+                    // 入口が書き出されていない・プロファイルが別のグループになった。索引が古い
+                    Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
+                    false
+                }
+            }
         }
     }
 

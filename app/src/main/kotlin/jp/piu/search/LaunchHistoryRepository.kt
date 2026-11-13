@@ -49,7 +49,10 @@ class LaunchHistoryRepository(
         executor.execute { onDone(stored.ensureLoaded()) }
     }
 
-    /** [app] を時刻 [at] に起動した記録を保存し、結果を記録のスレッドから [onDone] に返す。 */
+    /**
+     * [app] を時刻 [at] に開くために選んだ記録を保存し、結果を記録のスレッドから [onDone] に返す。
+     * 呼び出し元は OS へ渡す前に結果を待つ。一時停止の再開確認への要求は渡さない（learning.md）。
+     */
     fun record(
         app: AppId,
         at: Long,

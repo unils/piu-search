@@ -108,7 +108,7 @@ class LearningRepository(
      * 判定 [decision] を時刻 [at] に保存し、救済の知らせを [onDone] に返す。失敗時は知らせと取り消し材料を変えない。
      * 結果は記録のスレッドから返し、成功した知らせは次に画面を開いたときにも取り出せるよう預かる。
      *
-     * @param labelOf アプリの表示名。わからなければ null（パッケージ名を出す）
+     * @param labelOf 選んだ時点で固定したアプリの表示名。わからなければ null（パッケージ名を出す）。画面の現在値を読み直さない
      */
     fun record(
         decision: LearningDecision,
