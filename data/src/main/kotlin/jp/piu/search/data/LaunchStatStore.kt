@@ -27,6 +27,11 @@ public class LaunchStatStore internal constructor(
             },
         )
 
+    /** 個人用と仕事用の起動の記録をすべて消す。索引と学習には触れない。 */
+    public fun clear() {
+        dao.deleteAll()
+    }
+
     /** [app] を時刻 [at]（エポックからのミリ秒）に起動したことを記録する。 */
     public fun record(
         app: AppId,

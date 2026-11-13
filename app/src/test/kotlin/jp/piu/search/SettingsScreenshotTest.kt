@@ -2,8 +2,16 @@
 
 package jp.piu.search
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
@@ -58,12 +66,46 @@ class SettingsScreenshotTest {
         capture("settings_tablet_landscape", SearchSettings())
     }
 
+    @Test
+    fun clearHistoryDialog() {
+        captureHistoryDialog("settings_clear_history_dialog")
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun clearHistoryDialogInEnglish() {
+        captureHistoryDialog("settings_clear_history_dialog_en")
+    }
+
+    private fun captureHistoryDialog(name: String) {
+        val actions = SettingsActions({}, {}, {}, {}, {}, {}, {}, {})
+        compose.setContent { PiuTheme { SettingsScreen(SearchSettings(), "0.0.1 (1)", "https://github.com/unils/piu-search", actions) } }
+        compose.onNodeWithTag(SETTINGS_CLEAR_HISTORY_TAG).performScrollTo().performClick()
+        captureDrawnImage(compose.onNode(isDialog()), name)
+    }
+
+    private fun captureDrawnImage(
+        node: SemanticsNodeInteraction,
+        name: String,
+    ) {
+        // SDK 37 の PixelCopy は古いフレームを返すことがあるため、同じ View を Canvas に描いて撮る。
+        // https://github.com/robolectric/robolectric/issues/11392
+        val view = (node.fetchSemanticsNode().root as ViewRootForTest).view
+        compose.runOnIdle {
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            bitmap.density = view.resources.displayMetrics.densityDpi
+            view.draw(Canvas(bitmap))
+            bitmap.captureRoboImage("src/test/screenshots/$name.png")
+            bitmap.recycle()
+        }
+    }
+
     private fun capture(
         name: String,
         settings: SearchSettings,
     ) {
-        val actions = SettingsActions({}, {}, {}, {}, {}, {}, {})
+        val actions = SettingsActions({}, {}, {}, {}, {}, {}, {}, {})
         compose.setContent { PiuTheme { SettingsScreen(settings, "0.0.1 (1)", "https://github.com/unils/piu-search", actions) } }
-        compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
+        captureDrawnImage(compose.onRoot(), name)
     }
 }

@@ -33,7 +33,10 @@ internal interface LaunchStatDao {
     @Query("SELECT * FROM launch_stat")
     fun all(): List<LaunchStatRow>
 
-    // UPSERT の構文（ON CONFLICT DO UPDATE）は SQLite 3.24 から。API 26 の SQLite は古いので、更新と追加に分ける
+    @Query("DELETE FROM launch_stat")
+    fun deleteAll()
+
+    // UPSERT の構文（ON CONFLICT DO UPDATE）は SQLite 3.24 から。Android 9 の SQLite 3.22 は古いので、更新と追加に分ける
     @Query(
         "UPDATE launch_stat SET launch_count = launch_count + 1, last_launched_at = MAX(last_launched_at, :at) " +
             "WHERE profile_serial = :profileSerial AND package_name = :packageName AND activity_name = :activityName",

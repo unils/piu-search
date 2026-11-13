@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-    Android 8.x。requireFlags がないので、クラウドと端末間の転送を区別できない。
-    クラウドに送らないことを優先し、すべて外す
+    Android 9〜11。索引・学習・起動の記録の DB と設定だけを、端末間転送に含める。
+    root からは databases と shared_prefs をたどらないため、領域を明示する。
+    include があると列挙した領域だけが対象になり、requireFlags によりクラウドには何も送らない。
+    Android 12 以降は data_extraction_rules.xml が使われる
 -->
 <full-backup-content>
-    <exclude domain="root" path="." />
-    <exclude domain="device_root" path="." />
+    <include domain="database" path="." requireFlags="deviceToDeviceTransfer" />
+    <include domain="sharedpref" path="." requireFlags="deviceToDeviceTransfer" />
 </full-backup-content>

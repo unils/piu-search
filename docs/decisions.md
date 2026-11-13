@@ -8,6 +8,9 @@
 
 | 日付 | 決定 | 理由 | 詳細 |
 |---|---|---|---|
+| 2026-11-13 | Android 8（API 26・27）のサポートを終了し、最小 SDK を 28（Android 9）にする | メンテナの判断。利用者が少なく、バックアップの規則など古い版のための分岐が誤りのもとになった | [architecture.md](design/architecture.md#対応する端末) |
+| 2026-11-13 | 端末間の転送は DB と設定を対象とし、主ユーザー（シリアル番号 0）の学習・起動の記録を残す。索引は必ず作り直し、仕事用などの記録は捨てる（AI） | メンテナの方針では移行の維持は必須ではないが、Room のオープン時に一度整理すれば少ない変更で整合性を保てる。転送されないインストールの乱数と DB の印を比較し、整理と印の更新を一括して確定する。旧版に印がない場合も同じ整理を行い、通常の更新であっても仕事用の記録を捨てる | [architecture.md](design/architecture.md#データの保存) |
+| 2026-11-13 | 索引・学習・起動の記録・設定のすべてをクラウドへのバックアップから外す。起動の記録の保存内容・用途・削除方法を明記し、設定に削除の操作を置く | クラウドに送らない方針を維持する（メンテナの判断）。起動の記録も利用者が把握し、消せるようにする | [PRIVACY.md](../PRIVACY.md) |
 | 2026-10-27 | ホーム画面を置き換えない検索アプリにする | 検索のためにホームアプリを替えずに済むようにする。Pixel などでは、標準でないホームアプリを使うとジェスチャーと履歴画面の不都合が出る | [requirements.md](requirements.md) U5 |
 | 2026-10-27 | 実行時に Play ストアの情報を取得しない | 壊れやすく規約上グレーで、アプリの一覧が外に出る | [matching.md](design/matching.md#5-play-ストアの情報見送りの記録) |
 | 2026-10-27（暫定） | 照合は「形態素解析による読み ＋ OS の情報（intent filter など）＋ 暗黙の学習 ＋ 愛称の辞書」で始める | 手作りの辞書に頼らず、利用者の負担を下げる | [matching.md](design/matching.md) |
@@ -21,7 +24,7 @@
 | 2026-10-27 | 土台はゼロから作る（AI） | Material Search は漢字の読みと学習を持たず、作り直す部分が大半。YomiLauncher はライセンスがなく流用できない | |
 | 2026-10-27 | 形態素解析器は Kuromoji 0.9.0 ＋ IPADIC（AI） | 純 Java で Android での実績がある。13 MB。手元の試しで読みの質が十分。差し替えられるよう interface の向こうに置く | [reading-sources.md](research/reading-sources.md) |
 | 2026-10-27 | 英字のブランド名は、自前の読みの表と頭字語の規則で読む（AI） | Mozc の辞書にも英字のブランド名の読みはない | [matching.md](design/matching.md#英字のブランド名の読み) |
-| 2026-10-27 | 最小 SDK 26、target SDK 37（AI） | カテゴリと差分の検出の API が 26 から。AndroidX が 23 未満を切っている | [architecture.md](design/architecture.md#対応する端末) |
+| 2026-10-27 | ~~最小 SDK 26~~（2026-11-13 に 28 に変更）、target SDK 37（AI） | カテゴリと差分の検出の API が 26 から。AndroidX が 23 未満を切っている | [architecture.md](design/architecture.md#対応する端末) |
 | 2026-10-27 | `INTERNET` と `QUERY_ALL_PACKAGES` を持たない（AI。後者は M2 で確認） | A1。`<queries>` で足りる見込み | [architecture.md](design/architecture.md#権限とマニフェスト) |
 | 2026-10-27 | v1 の呼び出しは、アイコン・デジタルアシスタント・クイック設定タイル。ウィジェットは後（AI） | アシスタントの条件は `ACTION_ASSIST` の Activity だけで満たせる | [android-platform.md](research/android-platform.md) |
 | 2026-10-27 | 仕事用プロファイルのアプリも対象にする。プライベートスペースは対象外（AI） | 前者は `LauncherApps` で許される。後者は既定のホームアプリにしか許されない | [android-platform.md](research/android-platform.md#仕事用プロファイルとプライベートスペース) |

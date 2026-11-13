@@ -156,4 +156,9 @@
     </plurals>
     <string name="licenses_notice">Notices (NOTICE)</string>
     <string name="licenses_notice_intro">Includes the notices for the Japanese analyzer Kuromoji and its dictionary IPADIC (NAIST and ICOT).</string>
+    <string name="settings_clear_history">Clear launch history</string>
+    <string name="settings_clear_history_detail">Clear records used for the empty search list and ranking search results</string>
+    <string name="settings_clear_history_confirm">Clear launch counts and the last opened time for all personal and work apps? Learning and settings will be kept. This cannot be undone.</string>
+    <string name="settings_history_cleared">Launch history cleared</string>
+    <string name="settings_history_clear_failed">Could not clear launch history. Please try again</string>
 </resources>

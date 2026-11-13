@@ -73,6 +73,22 @@ class LaunchHistoryRepository(
         }
     }
 
+    /** 起動の記録をすべて消し、結果を記録のスレッドから [onDone] に返す。削除後の起動は新しく記録する。 */
+    fun clear(onDone: (Boolean) -> Unit) {
+        requestLoad()
+        executor.execute {
+            try {
+                store().clear()
+                publish(LaunchHistory.EMPTY)
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "起動の記録を消せなかった", e)
+                onDone(false)
+                return@execute
+            }
+            onDone(true)
+        }
+    }
+
     private fun publish(next: LaunchHistory) {
         history = next
         listeners.forEach { it.onHistoryChanged(next) }

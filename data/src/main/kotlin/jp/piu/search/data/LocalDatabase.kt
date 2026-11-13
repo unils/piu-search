@@ -58,6 +58,7 @@ public class LocalDatabase internal constructor(
                     Room.databaseBuilder(appContext, PiuRoomDatabase::class.java, name)
                 }
             builder.addMigrations(*PiuRoomDatabase.MIGRATIONS)
+            if (name != null) builder.addCallback(InstallationGuard(appContext))
             if (allowMainThread) builder.allowMainThreadQueries()
             return LocalDatabase(builder.build(), indexVersion)
         }

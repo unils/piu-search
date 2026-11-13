@@ -17,7 +17,7 @@ jdkToolchain = "21"
 jvmTarget = "17"
 
 # Android
-minSdk = "26"
+minSdk = "28"
 compileSdk = "37"
 targetSdk = "37"
 

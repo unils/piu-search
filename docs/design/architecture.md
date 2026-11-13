@@ -99,6 +99,7 @@ Room（AndroidX の SQLite のライブラリ。表の定義と問い合わせ�
 | `search_key` | アプリ・キーの順・検索キー・種類（名前・読み・ローマ字・別言語の名前・パッケージ名・ジャンル）・形（厳密形・緩い形）・語の頭の位置。照合の中で作り直さないよう保存する。重みは種類から `MatchingConfig` で決まるので保存しない | よい |
 | `learned` | 正規化した検索語・アプリ（プロファイルのシリアル番号・パッケージ名・Activity 名）・回数・最後に使った時刻・救済になったことがあるか・「この語では出さない」の印。主キーは（プロファイル・パッケージ・Activity・検索語）。索引の表に外部キーは張らない（データベースの版 3、M4-02） | **よくない**（利用者の学習） |
 | `launch_stat` | アプリごとの起動の回数と最後の時刻。主キーは（プロファイルのシリアル番号・パッケージ名・Activity 名）で、索引の表への外部キーは張らない（データベースの版 2、M3-01） | よくない |
+| `installation` | インストールごとの乱数。転送されない `noBackupFilesDir` 内の印との照合に使う。索引の版を変えても消さない（データベースの版 4） | よくない |
 | `meta` | 索引の版、前回の変更番号、`BOOT_COUNT`、言語 | よい |
 
 作り直せるもの（索引）と、作り直せないもの（学習）を分けておき、索引の作り直しで学習を消さないようにする。そのための約束（M2-03）:
@@ -110,9 +111,15 @@ Room（AndroidX の SQLite のライブラリ。表の定義と問い合わせ�
 
 バックアップ:
 
-- Android の自動バックアップ（Google ドライブへの送信）からは外す。中身は「どの語でどのアプリを開いたか」で、利用者の情報を Google に集めないという方針に合わない
-- 機種変更のときの端末間の転送は許す
+- 索引・学習・起動の記録・設定は、すべてクラウド（Google ドライブ）への自動バックアップから外す
+- Android 9〜11 は `backup_rules.xml` の `database` と `sharedpref` に `requireFlags="deviceToDeviceTransfer"` を付ける。`root` はこれらの領域を含めて巡回しない。Android 12 以上も `data_extraction_rules.xml` の `device-transfer` に同じ 2 領域を明示する
+- `noBackupFilesDir` のインストールごとの乱数と、データベースの `installation` の印を、Room の `onOpen` で照合する。印が違えば、どの表も読み出す前に、索引の 3 表を空にし、主ユーザー（`profileSerial = 0`）以外の学習と起動の記録を捨てる。主ユーザーの記録と設定は残す。仕事用の番号が移行先で偶然一致しても引き継がない
+- 整理と DB の印の更新は 1 つのトランザクションで行う。乱数のファイルは `AtomicFile` で書く。印を読めない場合は DB を公開せず、次回に再試行する。端末の識別子（`ANDROID_ID` など）は使わない
+- 印のない旧版の DB も移行と区別できないため同じ整理を行う。通常の更新でも初回だけ仕事用などの記録が消えるが、主ユーザーの記録は残す。通常の再起動や索引の版の変更では印を保ち、仕事用の記録も残す
+- 起動の記録は、設定の「起動の記録を消す」で全プロファイル分を削除できる。保存先とメモリ上の写しを同じ記録のスレッドで更新し、検索の一覧と並べ替えにすぐ反映する
 - 設定画面から、学習をファイルに書き出し・読み込みできるようにする（保存先は利用者が選ぶ。SAF の保存画面を使うので権限は要らない）
+
+規則と保存場所の根拠（2026-11-13 確認）: [Android の Auto Backup](https://developer.android.com/identity/data/autobackup)、[AOSP の BackupAgent.onFullBackup](https://android.googlesource.com/platform/frameworks/base/+/HEAD/core/java/android/app/backup/BackupAgent.java)。
 
 ## 権限とマニフェスト
 
@@ -127,7 +134,7 @@ Room（AndroidX の SQLite のライブラリ。表の定義と問い合わせ�
 
 ## 対応する端末
 
-- 最小 SDK: 26（Android 8.0）。`ApplicationInfo.category` と `getChangedPackages` が 26 から。AndroidX が 23 未満を切っているので、下げる余地は小さい
+- 最小 SDK: 28（Android 9）。2026-11-13 のメンテナの判断で Android 8（API 26・27）のサポートを終了した。利用者が少なく、バックアップ規則などの古い版のための分岐が誤りのもとになったため
 - target SDK: 37（Android 17、2026-10-27 時点の最新）
 - 素の Android（Pixel）と GrapheneOS の両方で動かす。GrapheneOS 固有の API は使わない。どちらにもない機能（Google のサービス）に依存しない
 - 端末の言語が日本語でなくても壊れない。日本語の文字を含まない名前は、形態素解析にかけずに正規化だけする

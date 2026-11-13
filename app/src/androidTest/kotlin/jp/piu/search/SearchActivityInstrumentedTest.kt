@@ -16,7 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 // 本物の Android で検索の画面を開き、索引の同期が裏で済むと、テスト用のアプリ（test-apps/）が引けることを確かめる。
-// Robolectric は描画と insets を模すだけなので、最小 SDK（26）と最新（37）の実物で開くことを見る
+// Robolectric は描画と insets を模すだけなので、最小 SDK（28）と最新（37）の実物で開くことを見る
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class SearchActivityInstrumentedTest {

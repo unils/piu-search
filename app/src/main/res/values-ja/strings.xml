@@ -139,4 +139,9 @@
     </plurals>
     <string name="licenses_notice">注意書き（NOTICE）</string>
     <string name="licenses_notice_intro">形態素解析器 Kuromoji と、その辞書 IPADIC の注意書き（奈良先端科学技術大学院大学と ICOT）を含みます。</string>
+    <string name="settings_clear_history">起動の記録を消す</string>
+    <string name="settings_clear_history_detail">空の検索語の一覧と、検索結果の並べ替えに使う記録を消します</string>
+    <string name="settings_clear_history_confirm">個人用と仕事用のアプリの起動回数と、最後に開いた時刻をすべて消します。学習と設定は残ります。この操作は取り消せません。</string>
+    <string name="settings_history_cleared">起動の記録を消しました</string>
+    <string name="settings_history_clear_failed">起動の記録を消せませんでした。もう一度お試しください</string>
 </resources>
