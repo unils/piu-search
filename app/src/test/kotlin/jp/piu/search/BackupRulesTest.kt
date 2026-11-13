@@ -3,6 +3,7 @@
 package jp.piu.search
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
@@ -11,6 +12,12 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 // root からは database と sharedpref をたどらないため、転送する領域を明示する。クラウドはどの領域も許さない。
 class BackupRulesTest {
+    @Test
+    fun obsoleteResourceFolderDoesNotRemainEvenWhenEmpty() {
+        // Lint は空のディレクトリも検査するため、XML を移すだけでは足りない。
+        assertFalse(File("src/main/res/xml-v28").exists())
+    }
+
     @Test
     fun android9To11TransferIncludesDatabasesAndPreferencesButCloudIncludesNothing() {
         val files = File("src/main/res").walkTopDown().filter { it.name == "backup_rules.xml" }.toList()

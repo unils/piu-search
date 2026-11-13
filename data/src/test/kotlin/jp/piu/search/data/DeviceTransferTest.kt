@@ -24,6 +24,9 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 // データベースだけが別のインストールへ移る状況を作る。番号や更新時刻が偶然同じでも、前の端末の索引と仕事用の記録を使わない。
 @RunWith(AndroidJUnit4::class)
@@ -109,6 +112,24 @@ class DeviceTransferTest {
                 .records.keys,
         )
         assertEquals(SyncMode.CHANGES, sync(reopened).sync().mode)
+    }
+
+    @Test
+    fun reopeningTheSameInstallationCanReadWhileAnotherConnectionIsWriting() {
+        val original = seed()
+        val reopened = open()
+        val writer = original.room.openHelper.writableDatabase
+        val reader = Executors.newSingleThreadExecutor()
+        // WAL は別の接続での読み出しを許す。再オープンの印の確認だけで、書き込みを待たせない。
+        writer.beginTransactionNonExclusive()
+        try {
+            val records = reader.submit(Callable { reopened.launchStats.load().records }).get(10, TimeUnit.SECONDS)
+            assertEquals(setOf(PERSONAL_APP, WORK_APP), records.keys)
+        } finally {
+            writer.endTransaction()
+            reader.shutdownNow()
+            assertTrue(reader.awaitTermination(10, TimeUnit.SECONDS))
+        }
     }
 
     @Test

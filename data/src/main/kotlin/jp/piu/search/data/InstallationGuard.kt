@@ -20,10 +20,12 @@ internal class InstallationGuard(
 ) : RoomDatabase.Callback() {
     override fun onOpen(db: SupportSQLiteDatabase) {
         val installationId = installationId()
+        // 通常の再オープンでは書き込みを取らない。別接続の書き込み中も WAL の読み出しを妨げないため。
+        if (matchesInstallation(db, installationId)) return
         db.beginTransaction()
         try {
-            val previous = db.query("SELECT token FROM installation WHERE id = 0").use { if (it.moveToFirst()) it.getString(0) else null }
-            if (previous != installationId) {
+            // ロックを待つ間に別接続が整理を済ませた場合は、二重に消さない。
+            if (!matchesInstallation(db, installationId)) {
                 // 古い版には印がなく、元の端末か移行先か区別できない。その場合も安全側に倒す。
                 db.execSQL("DELETE FROM app")
                 db.execSQL("DELETE FROM meta")
@@ -38,6 +40,11 @@ internal class InstallationGuard(
             db.endTransaction()
         }
     }
+
+    private fun matchesInstallation(
+        db: SupportSQLiteDatabase,
+        token: String,
+    ): Boolean = db.query("SELECT token FROM installation WHERE id = 0").use { it.moveToFirst() && it.getString(0) == token }
 
     private fun installationId(): String =
         synchronized(InstallationGuard::class.java) {
