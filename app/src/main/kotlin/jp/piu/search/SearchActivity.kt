@@ -49,6 +49,12 @@ class SearchActivity : ComponentActivity() {
     // 出す救済の知らせ（前に開いたときの分）
     private var notices by mutableStateOf(emptyList<RescueNotice>())
 
+    private val noticeListener =
+        RescueNoticeListener {
+            val learning = appContainer.learning
+            ContextCompat.getMainExecutor(this).execute { notices = notices.filter(learning::canUndo) }
+        }
+
     // アプリを開いて閉じるところか。onStop でセッションを「何も開かずに終わった」と数えないため
     private var launching = false
 
@@ -105,7 +111,7 @@ class SearchActivity : ComponentActivity() {
                             reportStorageFailure(result)
                         }
                     },
-                    onNoticeDone = { done -> notices = notices - done },
+                    onNoticeDone = { done -> notices = notices.filterNot { it === done } },
                     onRowCapacity = controller::onRowCapacity,
                     onScrolled = controller::onScrolled,
                     searchBarOnTop = searchSettings.searchBarPosition == SearchBarPosition.TOP,
@@ -131,6 +137,8 @@ class SearchActivity : ComponentActivity() {
         sync.addListener(controller)
         container.launchHistory.addListener(controller)
         container.learning.addListener(controller)
+        container.learning.addNoticeListener(noticeListener)
+        notices = notices.filter(container.learning::canUndo)
         sync.startWatching()
         sync.requestSync()
         // 忘却（R5）は画面を開くたびに見る。記録は多くても数百件で、読み込みの後に同じスレッドで走る
@@ -141,7 +149,7 @@ class SearchActivity : ComponentActivity() {
             val pending = container.learning.takeNotices()
             ContextCompat.getMainExecutor(this).execute {
                 if (!isFinishing && !isDestroyed && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    notices = (notices + pending).distinct()
+                    notices = (notices + pending).filter(container.learning::canUndo).distinctBy { it.undoKey }
                 } else {
                     container.learning.returnNotices(pending)
                 }
@@ -171,6 +179,7 @@ class SearchActivity : ComponentActivity() {
         sync.removeListener(controller)
         container.launchHistory.removeListener(controller)
         container.learning.removeListener(controller)
+        container.learning.removeNoticeListener(noticeListener)
         // 何も開かずに画面を離れた（アプリ情報を開いた・ホームに戻った）。打った文字の列を残さない
         if (!launching) controller.endSession()
         super.onStop()

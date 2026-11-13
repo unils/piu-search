@@ -146,6 +146,169 @@ class RepositoryFailureTest {
     }
 
     @Test
+    fun failedUndoThenNewSelectionKeepsTheNewRecordWhenOldUndoIsRetried() {
+        repository.record(RESCUE, 1) { "アプリ" }
+        drain()
+        val notice = repository.takeNotices().single()
+        learned.failWrite = true
+        var undone: StorageResult<Unit>? = null
+        repository.undo(notice) {
+            undone = it
+            if (it is StorageResult.Failure) repository.returnNotices(listOf(notice))
+        }
+        drain()
+        assertTrue(undone is StorageResult.Failure)
+        learned.failWrite = false
+        var recorded: StorageResult<List<RescueNotice>>? = null
+        repository.record(SELECTION, 3, onDone = { recorded = it }) { "アプリ" }
+        drain()
+        assertTrue(recorded is StorageResult.Success)
+        val saved = repository.memory
+        val savedWrites = learned.writes
+        assertEquals(2, saved.records.getValue(PAIR).count)
+        assertEquals(3L, saved.records.getValue(PAIR).lastUsedAt)
+
+        repository.undo(notice) { undone = it }
+        drain()
+
+        assertTrue(undone is StorageResult.Success)
+        assertSame(saved, repository.memory)
+        assertEquals(saved.records, learned.memory.records)
+        assertEquals(savedWrites, learned.writes)
+        assertTrue(repository.takeNotices().isEmpty())
+        // 遅れて届いた失敗のコールバックや、向きの変更でも古い知らせを戻せないことを確かめる
+        repository.returnNotices(listOf(notice))
+        assertTrue(repository.takeNotices().isEmpty())
+    }
+
+    @Test
+    fun failedNewSelectionKeepsTheOldUndoAvailable() {
+        repository.record(RESCUE, 1) { "アプリ" }
+        drain()
+        val notice = repository.takeNotices().single()
+        learned.failWrite = true
+        var result: StorageResult<Unit>? = null
+        repository.undo(notice) { result = it }
+        drain()
+        assertTrue(result is StorageResult.Failure)
+        var recorded: StorageResult<List<RescueNotice>>? = null
+        repository.record(SELECTION, 3, onDone = { recorded = it }) { "アプリ" }
+        drain()
+        assertTrue(recorded is StorageResult.Failure)
+        repository.returnNotices(listOf(notice))
+        assertEquals(listOf(notice), repository.takeNotices())
+        learned.failWrite = false
+
+        repository.undo(notice) { result = it }
+        drain()
+
+        assertTrue(result is StorageResult.Success)
+        assertTrue(repository.memory.records.isEmpty())
+        assertTrue(learned.memory.records.isEmpty())
+    }
+
+    @Test
+    fun aSuccessfulRecordForAnotherPairDoesNotInvalidateTheOldUndo() {
+        repository.record(RESCUE, 1) { "アプリ" }
+        drain()
+        val notice = repository.takeNotices().single()
+        learned.failWrite = true
+        var result: StorageResult<Unit>? = null
+        repository.undo(notice) { result = it }
+        drain()
+        assertTrue(result is StorageResult.Failure)
+        learned.failWrite = false
+        val other = LearnedPair(NormalizedText("べつ"), APP)
+        repository.record(LearningDecision(other, emptyList()), 3) { "アプリ" }
+        drain()
+        repository.returnNotices(listOf(notice))
+        assertEquals(listOf(notice), repository.takeNotices())
+
+        repository.undo(notice) { result = it }
+        drain()
+
+        assertTrue(result is StorageResult.Success)
+        assertEquals(setOf(other), repository.memory.records.keys)
+        assertEquals(repository.memory.records, learned.memory.records)
+    }
+
+    @Test
+    fun otherSuccessfulChangesToThePairAlsoInvalidateTheOldUndo() {
+        val changes =
+            listOf<() -> Unit>(
+                { repository.remove(PAIR) },
+                { repository.suppress(PAIR, 3) },
+                { repository.import(PROFILES, 3, read = { file() }, onDone = { assertTrue(it is BackupReadResult.Success) }) },
+                { repository.forgetExpired(1 + LearningConfig.DEFAULT.forgetAfterMillis) },
+                { repository.clear() },
+            )
+        for (change in changes) {
+            repository.clear()
+            repository.record(RESCUE, 1) { "アプリ" }
+            drain()
+            val notice = repository.takeNotices().single()
+            learned.failWrite = true
+            var undone: StorageResult<Unit>? = null
+            repository.undo(notice) { undone = it }
+            drain()
+            assertTrue(undone is StorageResult.Failure)
+            repository.returnNotices(listOf(notice))
+            learned.failWrite = false
+
+            val previousWrites = learned.writes
+            change()
+            drain()
+            assertTrue(learned.writes > previousWrites)
+            val saved = repository.memory
+            val savedWrites = learned.writes
+            repository.undo(notice) { undone = it }
+            drain()
+
+            assertTrue(undone is StorageResult.Success)
+            assertSame(saved, repository.memory)
+            assertEquals(saved.records, learned.memory.records)
+            assertEquals(savedWrites, learned.writes)
+            assertTrue(repository.takeNotices().isEmpty())
+            repository.returnNotices(listOf(notice))
+            assertTrue(repository.takeNotices().isEmpty())
+        }
+    }
+
+    @Test
+    fun newRescueInvalidatesTheOldNoticeAndKeepsItsOwnUndo() {
+        // 時計の分解能で同じ時刻になっても、別の保存の知らせを区別する
+        for (at in listOf(2L, 1L)) {
+            repository.clear()
+            repository.record(RESCUE, 1) { "アプリ" }
+            drain()
+            val oldNotice = repository.takeNotices().single()
+            repository.record(RESCUE, at) { "アプリ" }
+            drain()
+            val newNotice = repository.takeNotices().single()
+            val saved = repository.memory
+
+            repository.undo(oldNotice)
+            drain()
+            assertSame(saved, repository.memory)
+            repository.undo(newNotice)
+            drain()
+            assertEquals(
+                1,
+                repository.memory.records
+                    .getValue(PAIR)
+                    .count,
+            )
+            assertEquals(
+                1L,
+                repository.memory.records
+                    .getValue(PAIR)
+                    .lastUsedAt,
+            )
+            assertEquals(repository.memory.records, learned.memory.records)
+        }
+    }
+
+    @Test
     fun failedLoadRejectsAllWritesAndExportsThenNextOperationRetries() {
         learned.memory = LearnedMemory.EMPTY.recorded(SELECTION, 1).recorded(SELECTION, 2)
         learned.failRead = true

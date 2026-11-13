@@ -9,6 +9,7 @@ import jp.piu.search.core.search.LearnedRecord
 import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.data.LearnedStorage
 import java.io.IOException
+import java.util.IdentityHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
@@ -18,6 +19,12 @@ import java.util.concurrent.TimeUnit
 fun interface LearningListener {
     /** 学習が [memory] になった。 */
     fun onLearningChanged(memory: LearnedMemory)
+}
+
+/** 取り消せなくなった救済の知らせの受け取り手。記録のスレッドから呼ばれる。 */
+fun interface RescueNoticeListener {
+    /** 古い取り消し材料が無効になった。表示中の知らせも [LearningRepository.canUndo] で確かめ直す。 */
+    fun onNoticesInvalidated()
 }
 
 /**
@@ -33,7 +40,10 @@ data class RescueNotice(
     val label: String,
     val selection: LearnedPair?,
     val at: Long,
-)
+) {
+    /** 同じ時刻・内容でも、別の保存で作った知らせを取り違えないための印。 */
+    internal val undoKey = Any()
+}
 
 /**
  * 学習（`learned`）のメモリ上の写しと、データベースへの書き込み（[LaunchHistoryRepository] と同じ形）。
@@ -49,10 +59,11 @@ class LearningRepository(
     private val executor: Executor,
 ) {
     private val listeners = CopyOnWriteArrayList<LearningListener>()
+    private val noticeListeners = CopyOnWriteArrayList<RescueNoticeListener>()
     private val notices = ArrayList<RescueNotice>()
 
-    // 救済を記録する前の記録（なければ null）。取り消しで戻す。executor のスレッドでだけ読み書きする
-    private val beforeRescue = HashMap<RescueNotice, LearnedRecord?>()
+    // 救済前の記録（なければ null）。更新は Executor に閉じ、画面からの有効性の確認は notices と同じロックで守る
+    private val beforeRescue = IdentityHashMap<RescueNotice, LearnedRecord?>()
 
     private val stored =
         StoredSnapshot(LearnedMemory.EMPTY, TAG, { store().load() }) { next ->
@@ -74,6 +85,19 @@ class LearningRepository(
     fun removeListener(listener: LearningListener) {
         listeners -= listener
     }
+
+    /** 取り消しが無効になったことを受け取る [listener] を足す。 */
+    fun addNoticeListener(listener: RescueNoticeListener) {
+        noticeListeners += listener
+    }
+
+    /** 取り消しが無効になったことを受け取る [listener] を外す。 */
+    fun removeNoticeListener(listener: RescueNoticeListener) {
+        noticeListeners -= listener
+    }
+
+    /** [notice] の取り消し材料がまだ有効かを返す。どのスレッドからでも呼べる。 */
+    fun canUndo(notice: RescueNotice): Boolean = synchronized(notices) { beforeRescue.containsKey(notice) }
 
     /** 未読・読み込み失敗なら読み直し、結果を記録のスレッドから [onDone] に返す。 */
     fun requestLoad(onDone: (StorageResult<Unit>) -> Unit = {}) {
@@ -104,8 +128,13 @@ class LearningRepository(
             if (result is StorageResult.Failure) {
                 onDone(result)
             } else {
-                made.forEach { beforeRescue[it] = old.records[it.pair] }
-                synchronized(notices) { notices += made }
+                // 回数が上限で値が変わらない記録も、後の保存を古い取り消しで巻き戻さない
+                val recordedPairs = (decision.rescues + listOfNotNull(decision.selection, decision.used)).toSet()
+                invalidateNotices { it.pair in recordedPairs }
+                synchronized(notices) {
+                    made.forEach { beforeRescue[it] = old.records[it.pair] }
+                    notices += made
+                }
                 onDone(StorageResult.Success(made))
             }
         }
@@ -119,19 +148,24 @@ class LearningRepository(
 
     /**
      * 取り出したが出し終えていない知らせ [unshown] を戻す。次の [takeNotices] で、ほかの知らせより先に返す。
-     * 向きの変更などで画面を作り直すときに使う（作り直した画面が取り出して出す）。
+     * 向きの変更などで画面を作り直すときに使う。後の保存で取り消せなくなった知らせは戻さない。
      */
     fun returnNotices(unshown: List<RescueNotice>) {
         if (unshown.isEmpty()) return
-        synchronized(notices) { notices.addAll(0, unshown.filterNot { it in notices }) }
+        synchronized(notices) {
+            notices.addAll(0, unshown.filter { notice -> beforeRescue.containsKey(notice) && notices.none { it === notice } })
+        }
     }
 
-    /** 救済を記録する前に戻し、保存結果を記録のスレッドから [onDone] に返す。失敗時は再試行できる。 */
+    /**
+     * 救済を記録する前に戻し、保存結果を記録のスレッドから [onDone] に返す。
+     * 失敗時は再試行できるが、その間に同じ組を保存したら古い取り消しは何も変えずに成功を返す。
+     */
     fun undo(
         notice: RescueNotice,
         onDone: (StorageResult<Unit>) -> Unit = {},
     ) {
-        update(onDone, afterSave = { beforeRescue.remove(notice) }) { old ->
+        update(onDone, afterSave = { invalidateNotices { it === notice } }) { old ->
             if (!beforeRescue.containsKey(notice)) {
                 old
             } else {
@@ -168,8 +202,7 @@ class LearningRepository(
             // 差分ではなく全行を消す。旧版などのメモリに見えない行も残さないため
             val result = stored.save(memory.cleared()) { store().clear() }
             if (result is StorageResult.Success) {
-                beforeRescue.clear()
-                synchronized(notices) { notices.clear() }
+                invalidateNotices { true }
             }
             onDone(result)
         }
@@ -284,7 +317,24 @@ class LearningRepository(
         val old = memory
         val next = change(old)
         if (next === old) return StorageResult.Success(Unit)
-        return stored.save(next) { store().save(old, next) }
+        val result = stored.save(next) { store().save(old, next) }
+        if (result is StorageResult.Success) {
+            invalidateNotices { old.records[it.pair] != next.records[it.pair] }
+        }
+        return result
+    }
+
+    // 保存済みの新しい学習を、古いスナップショットに戻す取り消しで失わないようにする
+    private fun invalidateNotices(affected: (RescueNotice) -> Boolean) {
+        val invalidated =
+            synchronized(notices) {
+                val removed = beforeRescue.keys.filter(affected)
+                removed.forEach { beforeRescue.remove(it) }
+                val removedKeys = removed.map { it.undoKey }.toSet()
+                notices.removeAll { it.undoKey in removedKeys }
+                removed.isNotEmpty()
+            }
+        if (invalidated) noticeListeners.forEach { it.onNoticesInvalidated() }
     }
 
     private companion object {

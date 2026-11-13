@@ -90,6 +90,38 @@ class RecreationTest {
     }
 
     @Test
+    fun newLearningDismissesTheOldUndoAndRecreationCannotRestoreIt() {
+        container.learning.record(LearningDecision(null, listOf(DENSHA)), NOW) { "乗換案内" }
+        container.learning.awaitIdle()
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
+            compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+            compose.onNodeWithText(NOTICE, substring = true).assertExists()
+            compose.onNodeWithText("取り消す").assertExists()
+
+            container.learning.record(LearningDecision(DENSHA, emptyList()), NOW + 1) { "乗換案内" }
+            container.learning.awaitIdle()
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+            compose.onNodeWithText(NOTICE, substring = true).assertDoesNotExist()
+            compose.onNodeWithText("取り消す").assertDoesNotExist()
+
+            scenario.recreate()
+            container.learning.awaitIdle()
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+            compose.onNodeWithText(NOTICE, substring = true).assertDoesNotExist()
+            compose.onNodeWithText("取り消す").assertDoesNotExist()
+            assertEquals(
+                2,
+                container.learning.memory.records
+                    .getValue(DENSHA)
+                    .count,
+            )
+        }
+    }
+
+    @Test
     fun noticesAreNotKeptAfterTheScreenCloses() {
         container.learning.record(LearningDecision(null, listOf(DENSHA)), NOW) { "乗換案内" }
         container.learning.awaitIdle()

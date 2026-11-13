@@ -303,7 +303,7 @@ private fun RescueNoticeEffect(
     val undo = stringResource(R.string.rescue_undo)
     val currentUndo by rememberUpdatedState(onUndo)
     val currentDone by rememberUpdatedState(onDone)
-    LaunchedEffect(notice) {
+    LaunchedEffect(notice.undoKey) {
         val result =
             withTimeoutOrNull(NOTICE_MILLIS) {
                 snackbar.showSnackbar(message, actionLabel = undo, duration = SnackbarDuration.Indefinite)
