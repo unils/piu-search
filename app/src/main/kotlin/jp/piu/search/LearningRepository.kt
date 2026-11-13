@@ -57,6 +57,7 @@ data class RescueNotice(
 class LearningRepository(
     private val store: () -> LearnedStorage,
     private val executor: Executor,
+    private val isProfilePresent: (Long) -> Boolean = { true },
 ) {
     private val listeners = CopyOnWriteArrayList<LearningListener>()
     private val noticeListeners = CopyOnWriteArrayList<RescueNoticeListener>()
@@ -122,14 +123,20 @@ class LearningRepository(
                 onDone(loaded)
                 return@execute
             }
+            val accepted =
+                decision.copy(
+                    selection = decision.selection?.takeIf { isProfilePresent(it.app.profileSerial) },
+                    rescues = decision.rescues.filter { isProfilePresent(it.app.profileSerial) },
+                    used = decision.used?.takeIf { isProfilePresent(it.app.profileSerial) },
+                )
             val old = memory
-            val made = decision.rescues.map { RescueNotice(it, labelOf(it) ?: it.app.packageName, decision.selection, at) }
-            val result = applyChange { it.recorded(decision, at) }
+            val made = accepted.rescues.map { RescueNotice(it, labelOf(it) ?: it.app.packageName, accepted.selection, at) }
+            val result = applyChange { it.recorded(accepted, at) }
             if (result is StorageResult.Failure) {
                 onDone(result)
             } else {
                 // 回数が上限で値が変わらない記録も、後の保存を古い取り消しで巻き戻さない
-                val recordedPairs = (decision.rescues + listOfNotNull(decision.selection, decision.used)).toSet()
+                val recordedPairs = (accepted.rescues + listOfNotNull(accepted.selection, accepted.used)).toSet()
                 invalidateNotices { it.pair in recordedPairs }
                 synchronized(notices) {
                     made.forEach { beforeRescue[it] = old.records[it.pair] }
@@ -180,7 +187,7 @@ class LearningRepository(
         at: Long,
         onDone: (StorageResult<Unit>) -> Unit = {},
     ) {
-        update(onDone) { it.suppressed(pair, at) }
+        update(onDone) { if (isProfilePresent(pair.app.profileSerial)) it.suppressed(pair, at) else it }
     }
 
     /** [pair] の学習を消し、保存結果を記録のスレッドから [onDone] に返す。 */
@@ -262,7 +269,8 @@ class LearningRepository(
             }
             val result =
                 try {
-                    read()?.let { LearningBackup.decode(it, profiles) } ?: BackupReadResult.Failure(BackupFailure.TOO_LARGE)
+                    read()?.let { LearningBackup.decode(it, profiles) }?.let(::acceptExistingProfiles)
+                        ?: BackupReadResult.Failure(BackupFailure.TOO_LARGE)
                 } catch (e: IOException) {
                     Log.w(TAG, "学習のファイルを読めなかった: ${e.javaClass.simpleName}")
                     BackupReadResult.Failure(BackupFailure.UNREADABLE)
@@ -297,6 +305,19 @@ class LearningRepository(
         val done = CountDownLatch(1)
         executor.execute { done.countDown() }
         done.await(AWAIT_SECONDS, TimeUnit.SECONDS)
+    }
+
+    /** 共通の書き手で削除が確定した後、写しと取り消し材料を差し替える。新しい仕事は積まない。 */
+    internal fun profilesRemoved(serials: Set<Long>) {
+        val retained = memory.records.values.filter { it.app.profileSerial !in serials }
+        if (retained.size != memory.records.size) stored.reflectSaved(LearnedMemory(retained))
+        invalidateNotices { it.pair.app.profileSerial in serials || it.selection?.app?.profileSerial in serials }
+    }
+
+    private fun acceptExistingProfiles(result: BackupReadResult): BackupReadResult {
+        if (result !is BackupReadResult.Success) return result
+        val records = result.records.filter { isProfilePresent(it.app.profileSerial) }
+        return result.copy(records = records, skippedCount = result.skippedCount + result.records.size - records.size)
     }
 
     private fun update(

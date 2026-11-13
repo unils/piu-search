@@ -115,6 +115,14 @@ internal class StoredSnapshot<T>(
         return StorageResult.Success(Unit)
     }
 
+    /** 別の表と一緒に保存済みの変更を反映する。未読・読み込み失敗を Ready に変えて読み込みを省かない。 */
+    fun reflectSaved(next: T) {
+        if (next === snapshot) return
+        snapshot = next
+        if (state is LoadState.Ready) state = LoadState.Ready(next)
+        onChanged(next)
+    }
+
     private fun publish(next: T) {
         snapshot = next
         state = LoadState.Ready(next)

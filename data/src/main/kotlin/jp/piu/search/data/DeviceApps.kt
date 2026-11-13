@@ -19,7 +19,7 @@ internal interface DeviceApps {
     /** [sequence] より後に変わったパッケージと、今の変更の番号（`PackageManager.getChangedPackages`）。 */
     fun changedPackages(sequence: Int): PackageChanges
 
-    /** 索引に入れるプロファイルのシリアル番号。 */
+    /** 今回読めるプロファイルのシリアル番号。一覧にないことは、ユーザーが消えたことを意味しない。 */
     fun profileSerials(): Set<Long>
 
     /** すべての入口の識別子。[withUpdateTime] が false なら時刻は 0。 */
@@ -76,7 +76,7 @@ internal class AndroidDeviceApps(
         return PackageChanges(changed.sequenceNumber, changed.packageNames.toSet())
     }
 
-    override fun profileSerials(): Set<Long> = reader.source.profiles().mapTo(LinkedHashSet()) { it.serial }
+    override fun profileSerials(): Set<Long> = reader.source.readableProfiles().mapTo(LinkedHashSet()) { it.serial }
 
     override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> =
         reader.source.stamps(withUpdateTime).filter { it.id.packageName != ownPackage }

@@ -6,8 +6,11 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.Process
 import jp.piu.search.core.reading.KuromojiReadingAnalyzer
+import jp.piu.search.data.DatabaseWriter
+import jp.piu.search.data.ExistingProfiles
 import jp.piu.search.data.IndexSync
 import jp.piu.search.data.LocalDatabase
+import jp.piu.search.data.ProfileReconciler
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -29,22 +32,34 @@ class AppContainer(
     val database: LocalDatabase by lazy { LocalDatabase.open(appContext) }
 
     /** 索引の同期。 */
-    val indexSync: IndexSync by lazy { IndexSync(appContext, database, analyzer) }
+    val indexSync: IndexSync by lazy { IndexSync(appContext, database, analyzer, writer, profiles) }
 
     /** 漢字の検索語に読みを付けるスレッド。索引の作り直しを待たずに読みを付けられるよう、同期とは分ける。 */
     val queryExecutor: ExecutorService = backgroundThread("piu-query-reading")
 
-    /** 起動の記録と学習の読み書きのスレッド。辞書の読み込みや索引の作り直しの後ろで待たないよう、ほかと分ける。 */
-    private val recordExecutor: ExecutorService = backgroundThread("piu-launch-record")
+    /** 索引・学習・起動の記録に共通の書き手。削除と遅い記録の順序もここで決める。 */
+    val writer: DatabaseWriter = DatabaseWriter()
+
+    private val profiles = ProfileReconciler({ database.profiles }, ExistingProfiles(appContext)::serials)
 
     /** プロファイルの識別子と、仕事用プロファイルの状態。 */
     val users: ProfileUsers by lazy { ProfileUsers(appContext) }
 
     /** 起動の記録。 */
-    val launchHistory: LaunchHistoryRepository = LaunchHistoryRepository({ database.launchStats }, recordExecutor)
+    val launchHistory: LaunchHistoryRepository = LaunchHistoryRepository({ database.launchStats }, writer, profiles::isPresent)
 
     /** 学習。起動の記録と同じスレッドで読み書きする（どちらも小さく、アプリを開いたときに続けて書くため）。 */
-    val learning: LearningRepository = LearningRepository({ database.learned }, recordExecutor)
+    val learning: LearningRepository = LearningRepository({ database.learned }, writer, profiles::isPresent)
+
+    /** 起動時の照合と、検索画面を閉じている間も必要なプロファイルの放送。 */
+    val profileLifecycle: ProfileLifecycle by lazy { ProfileLifecycle(appContext, writer, profiles, indexSync::requestSync) }
+
+    init {
+        profiles.addRemovalListener { removed ->
+            learning.profilesRemoved(removed)
+            launchHistory.profilesRemoved(removed)
+        }
+    }
 
     /** 学習の書き出し・読み込みの結果で、学習の一覧の画面がまだ出し終えていないもの。画面を作り直しても失わないよう、ここに置く。 */
     val backupOutcome: PendingResult<BackupOutcome> = PendingResult()

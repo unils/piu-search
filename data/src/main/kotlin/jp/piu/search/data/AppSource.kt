@@ -85,6 +85,10 @@ public class AppSource(
             .sortedByDescending { it.isCurrent }
     }
 
+    /** 一時停止・ロック中の一覧は正常な空と区別するため、読み取りの対象から外す。 */
+    public fun readableProfiles(): List<Profile> =
+        profiles().filter { !userManager.isQuietModeEnabled(it.user) && userManager.isUserUnlocked(it.user) }
+
     /**
      * すべてのプロファイルの起動の入口。1 つのアプリが入口を 2 つ持てば 2 件になる。
      * [packages] を渡せば、そのパッケージの入口だけ（null ならすべて）。
@@ -118,7 +122,7 @@ public class AppSource(
         updatedAt(activity.id.packageName, activity.applicationInfo, activity.user == Process.myUserHandle())
 
     private fun launcherEntries(packages: Set<String>?): List<Pair<LauncherActivityInfo, Profile>> =
-        profiles().flatMap { profile ->
+        readableProfiles().flatMap { profile ->
             val infos =
                 if (packages == null) {
                     launcherApps.getActivityList(null, profile.user)

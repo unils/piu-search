@@ -25,6 +25,8 @@ internal abstract class PiuRoomDatabase : RoomDatabase() {
 
     abstract fun learnedDao(): LearnedDao
 
+    abstract fun profileDao(): ProfileDao
+
     companion object {
         /** 表の定義の版。 */
         const val VERSION = 4

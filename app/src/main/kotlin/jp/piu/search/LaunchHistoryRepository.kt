@@ -21,6 +21,7 @@ fun interface LaunchHistoryListener {
 class LaunchHistoryRepository(
     private val store: () -> LaunchStatStorage,
     private val executor: Executor,
+    private val isProfilePresent: (Long) -> Boolean = { true },
 ) {
     private val listeners = CopyOnWriteArrayList<LaunchHistoryListener>()
     private val stored =
@@ -59,6 +60,10 @@ class LaunchHistoryRepository(
         onDone: (StorageResult<Unit>) -> Unit = {},
     ) {
         executor.execute {
+            if (!isProfilePresent(app.profileSerial)) {
+                onDone(StorageResult.Success(Unit))
+                return@execute
+            }
             val loaded = stored.ensureLoaded()
             onDone(if (loaded is StorageResult.Failure) loaded else stored.save(history.recorded(app, at)) { store().record(app, at) })
         }
@@ -70,5 +75,11 @@ class LaunchHistoryRepository(
             val loaded = stored.ensureLoaded()
             onDone(if (loaded is StorageResult.Failure) loaded else stored.save(LaunchHistory.EMPTY) { store().clear() })
         }
+    }
+
+    /** 共通の書き手で削除が確定した後、写しだけを差し替える。未読なら次の読み込みで残りの行を読む。 */
+    internal fun profilesRemoved(serials: Set<Long>) {
+        val retained = history.records.filterKeys { it.profileSerial !in serials }
+        if (retained.size != history.records.size) stored.reflectSaved(LaunchHistory(retained))
     }
 }

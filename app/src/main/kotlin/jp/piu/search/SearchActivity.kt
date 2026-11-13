@@ -2,11 +2,7 @@
 
 package jp.piu.search
 
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -57,6 +53,10 @@ class SearchActivity : ComponentActivity() {
 
     // 保存を待つ間と OS へ渡す間の印。呼び直し・再生成の後に、古い完了で別の検索を閉じないため
     private var opening: Any? = null
+
+    private val profileListener: () -> Unit = {
+        controller.onWorkProfileChanged(appContainer.users.workProfileState())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 状態バーとナビゲーションバーの裏まで描き、余白は insets で取る
@@ -141,7 +141,8 @@ class SearchActivity : ComponentActivity() {
         container.learning.addNoticeListener(noticeListener)
         notices = notices.filter(container.learning::canUndo)
         sync.startWatching()
-        sync.requestSync()
+        container.profileLifecycle.addListener(profileListener)
+        container.profileLifecycle.onSearchStarted()
         // 忘却（R5）は画面を開くたびに見る。記録は多くても数百件で、読み込みの後に同じスレッドで走る
         container.launchHistory.requestLoad(::reportStorageFailure)
         container.learning.forgetExpired(System.currentTimeMillis(), ::reportStorageFailure)
@@ -157,7 +158,6 @@ class SearchActivity : ComponentActivity() {
             }
         }
         readSettings()
-        registerProfileReceiver()
         controller.onWorkProfileChanged(container.users.workProfileState())
         // 足すまでの間に差し替わった索引と記録を取りこぼさない
         controller.onIndexChanged(sync.index)
@@ -173,8 +173,9 @@ class SearchActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        unregisterReceiver(profileReceiver)
         val container = appContainer
+        container.profileLifecycle.onSearchStopped()
+        container.profileLifecycle.removeListener(profileListener)
         val sync = container.indexSync
         sync.stopWatching()
         sync.removeListener(controller)
@@ -207,36 +208,6 @@ class SearchActivity : ComponentActivity() {
         searchSettings = settings.search
         onboardingShown = !settings.onboardingDismissed
         controller.onWorkProfileModeChanged(searchSettings.workProfileMode)
-    }
-
-    // 仕事用プロファイルの追加・削除・一時停止と再開。どれも OS だけが送る放送で、登録した受け手にだけ届く
-    private val profileReceiver =
-        object : BroadcastReceiver() {
-            override fun onReceive(
-                context: Context,
-                intent: Intent,
-            ) {
-                controller.onWorkProfileChanged(appContainer.users.workProfileState())
-                // 足された・再開したプロファイルのアプリを索引に入れ、消えたプロファイルの分を除く
-                appContainer.indexSync.requestSync()
-            }
-        }
-
-    private fun registerProfileReceiver() {
-        val filter =
-            IntentFilter().apply {
-                addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
-                addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED)
-                addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
-                addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
-            }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(profileReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            // 旧い版の ContextCompat.registerReceiver は、ほかのアプリを締め出すために自前の権限をマニフェストに足すので使わない。
-            // ここで受けるのは OS だけが送れる放送なので、締め出しは要らない
-            registerReceiver(profileReceiver, filter)
-        }
     }
 
     private fun onboardingActions() =

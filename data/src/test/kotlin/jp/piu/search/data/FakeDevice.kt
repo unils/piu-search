@@ -20,6 +20,15 @@ internal class FakeDevice : DeviceApps {
     private val changes = ArrayList<String>()
     private val apps = LinkedHashMap<AppId, InstalledApp>()
     private val profiles = linkedSetOf(PERSONAL, WORK)
+    val unavailable = HashSet<Long>()
+    var failUserQuery = false
+    var beforeStamps: () -> Unit = {}
+    var beforeRead: () -> Unit = {}
+
+    fun existingProfiles(): Set<Long> {
+        check(!failUserQuery)
+        return profiles.toSet()
+    }
 
     fun install(
         vararg installed: InstalledApp,
@@ -66,13 +75,19 @@ internal class FakeDevice : DeviceApps {
         return PackageChanges(this.sequence, changes.subList(from, changes.size).toSet())
     }
 
-    override fun profileSerials(): Set<Long> = profiles.toSet()
+    override fun profileSerials(): Set<Long> = profiles - unavailable
 
-    override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> =
-        apps.values.map { ActivityStamp(it.entry.id, if (withUpdateTime) it.packageUpdatedAt else 0) }
+    override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> {
+        beforeStamps()
+        return apps.values
+            .filter { it.entry.id.profileSerial !in unavailable }
+            .map { ActivityStamp(it.entry.id, if (withUpdateTime) it.packageUpdatedAt else 0) }
+    }
 
-    override fun read(packages: Set<String>?): List<InstalledApp> =
-        apps.values.filter { packages == null || it.entry.id.packageName in packages }
+    override fun read(packages: Set<String>?): List<InstalledApp> {
+        beforeRead()
+        return apps.values.filter { it.entry.id.profileSerial !in unavailable && (packages == null || it.entry.id.packageName in packages) }
+    }
 }
 
 /** 呼ばれた回数を数える、読みを付けない形態素解析器。作り直さない同期で使わないことを確かめる。 */

@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.pm.LauncherApps
 import android.os.Handler
 import android.os.Looper
-import android.os.Process
 import android.os.SystemClock
 import android.os.UserHandle
 import android.util.Log
@@ -18,8 +17,6 @@ import jp.piu.search.core.search.LatinWordReader
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.search.SearchKeyGenerator
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /**
  * 索引の受け取り手。索引を差し替えるたびに、同期のスレッドから呼ばれる。
@@ -77,7 +74,7 @@ public data class SyncReport(
  * 消えたパッケージは可視性の制限で返らないこともあるため。
  *
  * 形態素解析器の辞書は、作り直す入口があるときだけ読み込む（キーの生成が最初に使うとき）。
- * 同期は 1 本の裏のスレッドで順に行い、画面のスレッドを待たせない。[sync] は呼んだスレッドで行う（テストと裏のスレッドから呼ぶ）。
+ * 同期は記録と共通の [DatabaseWriter] で順に行い、画面のスレッドを待たせない。[sync] も同じ書き手に並べて完了を待つ。
  */
 public class IndexSync internal constructor(
     private val store: IndexStore,
@@ -85,30 +82,35 @@ public class IndexSync internal constructor(
     generatorFactory: () -> SearchKeyGenerator,
     private val analyzer: ReadingAnalyzer,
     private val launcherApps: LauncherApps?,
+    private val writer: DatabaseWriter = DatabaseWriter(),
+    private val profiles: ProfileReconciler? = null,
 ) {
     /**
      * 端末の部品で作る。[analyzer] は、漢字の検索語に読みを付ける側（画面）と共有してよい。
      * ブランド表は最初の同期のときに裏のスレッドで読む。
      */
-    public constructor(context: Context, database: LocalDatabase, analyzer: ReadingAnalyzer) : this(
+    public constructor(
+        context: Context,
+        database: LocalDatabase,
+        analyzer: ReadingAnalyzer,
+        writer: DatabaseWriter = DatabaseWriter(),
+        profiles: ProfileReconciler = ProfileReconciler({ database.profiles }, ExistingProfiles(context)::serials),
+    ) : this(
         store = database.index,
         device = AndroidDeviceApps(context.applicationContext),
         generatorFactory = { SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.loadDefault())) },
         analyzer = analyzer,
         launcherApps = context.getSystemService(LauncherApps::class.java),
+        writer = writer,
+        profiles = profiles,
     )
 
     private val generator by lazy(generatorFactory)
     private val lock = Any()
     private val listeners = CopyOnWriteArrayList<IndexListener>()
-    private val executor: ExecutorService by lazy {
-        Executors.newSingleThreadExecutor { task ->
-            Thread({
-                // 画面の描画より後に回す
-                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-                task.run()
-            }, "piu-index-sync")
-        }
+
+    init {
+        profiles?.addRemovalListener(::profilesRemoved)
     }
 
     // lock の中でだけ読み書きする。apps は保存した索引と同じ中身
@@ -142,30 +144,33 @@ public class IndexSync internal constructor(
      * @param packages 変更の番号に出なくても作り直すパッケージ（`LauncherApps.Callback` で知ったもの）
      */
     public fun sync(packages: Set<String> = emptySet()): SyncReport =
-        synchronized(lock) {
-            val started = SystemClock.elapsedRealtime()
-            loadLocked()
-            val bootCount = device.bootCount()
-            val locales = device.locales()
-            val previous = state
-            val plan =
-                if (previous == null || previous.locales != locales) {
-                    rebuildAll(bootCount, locales)
-                } else {
-                    reconcile(previous, bootCount, locales, packages)
-                }
-            val analyzerMillis = warmUpIfNeeded(plan.rebuild)
-            val built = plan.rebuild?.let(::build).orEmpty()
-            apply(plan, built)
-            SyncReport(
-                mode = plan.mode,
-                rebuiltApps = built.size,
-                removedPackages = plan.removedPackages.size,
-                removedProfiles = plan.removedProfiles.size,
-                analyzerLoadMillis = analyzerMillis,
-                totalMillis = SystemClock.elapsedRealtime() - started,
-                indexSize = apps.size,
-            ).also { Log.i(TAG, "索引を同期した: $it") }
+        writer.run {
+            synchronized(lock) {
+                val started = SystemClock.elapsedRealtime()
+                val removedProfiles = profiles?.reconcile().orEmpty()
+                loadLocked()
+                val bootCount = device.bootCount()
+                val locales = device.locales()
+                val previous = state
+                val plan =
+                    if (previous == null || previous.locales != locales) {
+                        rebuildAll(bootCount, locales)
+                    } else {
+                        reconcile(previous, bootCount, locales, packages)
+                    }
+                val analyzerMillis = warmUpIfNeeded(plan.rebuild)
+                val built = plan.rebuild?.let(::build).orEmpty()
+                apply(plan, built)
+                SyncReport(
+                    mode = plan.mode,
+                    rebuiltApps = built.size,
+                    removedPackages = plan.removedPackages.size,
+                    removedProfiles = removedProfiles.size,
+                    analyzerLoadMillis = analyzerMillis,
+                    totalMillis = SystemClock.elapsedRealtime() - started,
+                    indexSize = apps.size,
+                ).also { Log.i(TAG, "索引を同期した: $it") }
+            }
         }
 
     /**
@@ -225,11 +230,11 @@ public class IndexSync internal constructor(
 
     /** 頼んだ同期がすべて終わるまで待つ。テストで、データベースを閉じる前に使う。 */
     internal fun awaitIdle() {
-        executor.submit {}.get()
+        writer.run {}
     }
 
     private fun submit(packages: Set<String>) {
-        executor.execute {
+        writer.execute {
             // 同期に失敗しても、今の索引のまま検索を続けられる。次に画面を開いたときにもう一度試す
             try {
                 sync(packages)
@@ -254,7 +259,18 @@ public class IndexSync internal constructor(
     ): Plan {
         // 番号は一覧を取る前に得る。取っている間の変更は、次の同期で番号から拾う
         val sequence = device.changedPackages(0).sequence
-        return Plan(SyncMode.FULL_REBUILD, SyncState(sequence, bootCount, locales), device.read(null), replaceAll = true)
+        val before = device.profileSerials()
+        val read = device.read(null)
+        val readable = before intersect device.profileSerials()
+        val preserved = apps.filter { it.app.id.profileSerial !in readable && isPresent(it.app.id.profileSerial) }
+        return Plan(
+            SyncMode.FULL_REBUILD,
+            // 読めなかった分も再開後に新しい言語で作り直せるよう、全件が揃うまで言語を進めない
+            SyncState(sequence, bootCount, if (preserved.isEmpty()) locales else state?.locales ?: locales),
+            read.filter { it.entry.id.profileSerial in readable && isPresent(it.entry.id.profileSerial) },
+            replaceAll = true,
+            preserved = preserved,
+        )
     }
 
     private fun reconcile(
@@ -266,12 +282,17 @@ public class IndexSync internal constructor(
         val sequenceUsable = bootCount != null && previous.bootCount == bootCount && previous.changeSequence != null
         val changes = device.changedPackages(if (sequenceUsable) previous.changeSequence else 0)
         val changed = if (sequenceUsable) changes.packages + requested else requested
-        val listed = device.stamps(withUpdateTime = !sequenceUsable).groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
-        val profiles = device.profileSerials()
-        val removedProfiles = apps.mapTo(HashSet()) { it.app.id.profileSerial } - profiles
+        val beforeProfiles = device.profileSerials()
+        val stamps = device.stamps(withUpdateTime = !sequenceUsable)
+        // 一覧や材料の取得中にも一時停止へ移れる。前後とも読めた範囲だけで削除を判定する
+        val readable = beforeProfiles intersect device.profileSerials()
+        val listed =
+            stamps
+                .filter { it.id.profileSerial in readable && isPresent(it.id.profileSerial) }
+                .groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
         val stored =
             apps
-                .filter { it.app.id.profileSerial !in removedProfiles }
+                .filter { it.app.id.profileSerial in readable && isPresent(it.app.id.profileSerial) }
                 .groupBy { PackageKey(it.app.id.profileSerial, it.app.id.packageName) }
 
         val dirty = HashSet<PackageKey>()
@@ -288,10 +309,12 @@ public class IndexSync internal constructor(
         }
         val mode = if (sequenceUsable) SyncMode.CHANGES else SyncMode.FULL_REVIEW
         val newState = SyncState(changes.sequence, bootCount, locales)
-        if (dirty.isEmpty()) return Plan(mode, newState, null, removedProfiles = removedProfiles)
-        val read = device.read(dirty.mapTo(HashSet()) { it.packageName }).filter { it.key in dirty }
+        if (dirty.isEmpty()) return Plan(mode, newState, null)
+        val candidates = device.read(dirty.mapTo(HashSet()) { it.packageName })
+        val completed = readable intersect device.profileSerials()
+        val read = candidates.filter { it.key in dirty && it.entry.id.profileSerial in completed && isPresent(it.entry.id.profileSerial) }
         val present = read.mapTo(HashSet()) { it.key }
-        return Plan(mode, newState, read, removedPackages = dirty - present, removedProfiles = removedProfiles)
+        return Plan(mode, newState, read, removedPackages = (dirty - present).filterTo(HashSet()) { it.profileSerial in completed })
     }
 
     private fun warmUpIfNeeded(rebuild: List<InstalledApp>?): Long {
@@ -308,21 +331,33 @@ public class IndexSync internal constructor(
         plan: Plan,
         built: List<StoredApp>,
     ) {
-        val changed = plan.rebuild != null || plan.removedProfiles.isNotEmpty()
+        val changed = plan.rebuild != null
         if (plan.replaceAll) {
-            store.replaceAll(built, plan.state)
-            apps = built
+            val next = built + plan.preserved
+            store.replaceAll(next, plan.state)
+            apps = next
         } else if (changed) {
-            store.update(built, plan.removedPackages, plan.removedProfiles, plan.state)
+            store.update(built, plan.removedPackages, state = plan.state)
             val replaced = built.mapTo(HashSet()) { it.key } + plan.removedPackages
             apps =
-                apps.filter { it.app.id.profileSerial !in plan.removedProfiles && it.key !in replaced } + built
+                apps.filter { it.key !in replaced } + built
         } else if (plan.state != state) {
             // 入口は変わらず、番号だけが進んだ
             store.update(emptyList(), state = plan.state)
         }
         state = plan.state
         if (plan.replaceAll || changed) publish()
+    }
+
+    private fun isPresent(serial: Long): Boolean = profiles?.isPresent(serial) != false
+
+    private fun profilesRemoved(serials: Set<Long>) {
+        synchronized(lock) {
+            val next = apps.filter { it.app.id.profileSerial !in serials }
+            if (next.size == apps.size) return
+            apps = next
+            publish()
+        }
     }
 
     private fun publish() {
@@ -343,7 +378,7 @@ public class IndexSync internal constructor(
         val rebuild: List<InstalledApp>?,
         val replaceAll: Boolean = false,
         val removedPackages: Set<PackageKey> = emptySet(),
-        val removedProfiles: Set<Long> = emptySet(),
+        val preserved: List<StoredApp> = emptyList(),
     )
 
     private companion object {

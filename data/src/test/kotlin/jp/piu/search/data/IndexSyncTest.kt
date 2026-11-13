@@ -35,10 +35,20 @@ class IndexSyncTest {
         context.deleteDatabase(FILE)
     }
 
-    private fun newSync(indexVersion: Int = 4): IndexSync {
+    private fun newSync(
+        indexVersion: Int = 4,
+        existingProfiles: () -> Set<Long>? = { device.existingProfiles() },
+    ): IndexSync {
         val database = LocalDatabase.open(context, FILE, indexVersion, allowMainThread = true).also(opened::add)
         val generator = SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.parse(emptyList())))
-        return IndexSync(database.index, device, { generator }, analyzer, launcherApps = null)
+        return IndexSync(
+            database.index,
+            device,
+            { generator },
+            analyzer,
+            launcherApps = null,
+            profiles = ProfileReconciler({ database.profiles }, existingProfiles),
+        )
     }
 
     private fun IndexSync.labels(): List<String> = index.labels()
@@ -191,6 +201,72 @@ class IndexSyncTest {
 
         assertEquals(1, report.removedProfiles)
         assertEquals(setOf(PERSONAL), sync.index.profiles())
+    }
+
+    @Test
+    fun pausedOrUnlistedProfileKeepsItsIndexIncludingDuringFullRebuild() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.unavailable += WORK
+        assertEquals(0, sync.sync().removedProfiles)
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        device.locales = "en-US"
+        device.install(WORK_TRANSIT.copy(label = "仕事用テスト2"), silently = true)
+        sync.sync()
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        device.unavailable.clear()
+        sync.sync()
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        assertEquals("仕事用テスト2", sync.index.labelOf(WORK_TRANSIT.entry.id))
+    }
+
+    @Test
+    fun failedUserQueryDoesNotTreatAnUnlistedProfileAsRemoved() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.unavailable += WORK
+        device.failUserQuery = true
+        sync.sync()
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+    }
+
+    @Test
+    fun staleDeviceEntriesCannotRestoreAConfirmedRemovedProfile() {
+        var existing = setOf(PERSONAL, WORK)
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync(existingProfiles = { existing })
+        sync.sync()
+        // LauncherApps の一覧が古くても、UserManager で確定した削除が優先する
+        existing = setOf(PERSONAL)
+        assertEquals(1, sync.sync().removedProfiles)
+        assertEquals(setOf(PERSONAL), sync.index.profiles())
+        device.locales = "en-US"
+        sync.sync()
+        assertEquals(setOf(PERSONAL), sync.index.profiles())
+        assertEquals(setOf(PERSONAL), opened.last().profiles.serials())
+    }
+
+    @Test
+    fun profileBecomingUnavailableDuringEnumerationOrReadKeepsTheIndex() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.beforeStamps = { device.unavailable += WORK }
+        sync.sync()
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        device.beforeStamps = {}
+        device.unavailable.clear()
+        device.beforeRead = { device.unavailable += WORK }
+        sync.sync(setOf(WORK_TRANSIT.entry.id.packageName))
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        device.beforeRead = {}
+        device.unavailable.clear()
+        device.locales = "en-US"
+        device.beforeRead = { device.unavailable += WORK }
+        sync.sync()
+        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
     }
 
     @Test
