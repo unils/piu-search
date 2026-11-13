@@ -15,10 +15,12 @@ import jp.piu.search.core.search.SearchKeyGenerator
 import jp.piu.search.core.search.SearchQuery
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 
 // 同期の判断（全件の作り直し・全件の見直し・変更の番号による差分・一覧との突き合わせ）を、偽の端末で確かめる。
 // 保存は Robolectric の SQLite（ファイル）。「次に画面を開いたとき」を、同じファイルで新しい IndexSync を作ることで再現する
@@ -150,6 +152,71 @@ class IndexSyncTest {
         val next = sync.sync()
         assertEquals(SyncMode.CHANGES, next.mode)
         assertEquals(0, next.rebuiltApps)
+    }
+
+    @Test
+    @Config(sdk = [28, 37])
+    fun bootCountChangeReviewsACompleteStoredPackageWithAStaleTime() {
+        device.install(TRANSIT, MAPS)
+        newSync().sync()
+        val database = opened.single()
+        val stored = database.index.load()
+        // 指紋は完全な読み取りの印でもあるため、再起動による時刻の見直しの試験では引き継ぐ
+        val stale =
+            stored.apps.filter { it.app.id == TRANSIT.entry.id }.map {
+                it.copy(app = it.app.copy(label = "古い名前"), packageUpdatedAt = 0)
+            }
+        assertEquals(1, stale.size)
+        assertNotNull(stale.single().apkFingerprint)
+        database.index.update(stale, state = checkNotNull(stored.state))
+        assertEquals(
+            stale.single(),
+            database.index
+                .load()
+                .apps
+                .single { it.app.id == TRANSIT.entry.id },
+        )
+
+        val sameBoot = newSync()
+        val unchanged = sameBoot.sync()
+        assertEquals(SyncMode.CHANGES, unchanged.mode)
+        assertEquals(0, unchanged.rebuiltApps)
+        assertEquals("古い名前", sameBoot.index.labelOf(TRANSIT.entry.id))
+
+        device.reboot()
+        val rebooted = newSync()
+        val reviewed = rebooted.sync()
+        assertEquals(SyncMode.FULL_REVIEW, reviewed.mode)
+        assertEquals(1, reviewed.rebuiltApps)
+        assertEquals(TRANSIT.entry.label, rebooted.index.labelOf(TRANSIT.entry.id))
+    }
+
+    @Test
+    @Config(sdk = [28, 37])
+    fun storedPackageWithoutAFingerprintIsRetriedInTheSameBoot() {
+        device.install(TRANSIT, MAPS)
+        newSync().sync()
+        val database = opened.single()
+        val stored = database.index.load()
+        assertNotNull(stored.apps.single { it.app.id == TRANSIT.entry.id }.apkFingerprint)
+        val stale =
+            stored.apps.filter { it.app.id == TRANSIT.entry.id }.map {
+                it.copy(app = it.app.copy(label = "古い名前"), apkFingerprint = null)
+            }
+        database.index.update(stale, state = checkNotNull(stored.state))
+
+        val reopened = newSync()
+        val retried = reopened.sync()
+        assertEquals(SyncMode.CHANGES, retried.mode)
+        assertEquals(1, retried.rebuiltApps)
+        assertEquals(TRANSIT.entry.label, reopened.index.labelOf(TRANSIT.entry.id))
+        assertNotNull(
+            database.index
+                .load()
+                .apps
+                .single { it.app.id == TRANSIT.entry.id }
+                .apkFingerprint,
+        )
     }
 
     @Test

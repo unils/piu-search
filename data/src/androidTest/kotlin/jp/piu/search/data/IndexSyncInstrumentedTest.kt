@@ -12,7 +12,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import jp.piu.search.core.reading.KuromojiReadingAnalyzer
 import jp.piu.search.core.search.BrandTable
-import jp.piu.search.core.search.IndexedApp
 import jp.piu.search.core.search.LatinWordReader
 import jp.piu.search.core.search.SearchEngine
 import jp.piu.search.core.search.SearchIndex
@@ -21,6 +20,7 @@ import jp.piu.search.core.search.SearchQuery
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -116,8 +116,18 @@ class IndexSyncInstrumentedTest {
         val stale =
             stored.apps
                 .filter { it.app.id.packageName == TRANSIT && it.app.id.profileSerial == mySerial }
-                .map { StoredApp(IndexedApp(it.app.id, "古い名前", it.app.keys), packageUpdatedAt = 0) }
+                // 指紋を落とすと不完全な材料として即座に再試行され、再起動による時刻の見直しを試せなくなる
+                .map { it.copy(app = it.app.copy(label = "古い名前"), packageUpdatedAt = 0) }
+        assertEquals(1, stale.size)
+        assertNotNull(stale.single().apkFingerprint)
         database.index.update(stale, state = stored.state!!)
+        assertEquals(
+            stale.single(),
+            database.index
+                .load()
+                .apps
+                .single { it.app.id == stale.single().app.id },
+        )
 
         // 同じ起動の間なら、番号に出ないので見直さない
         val sameBoot = newSync()
