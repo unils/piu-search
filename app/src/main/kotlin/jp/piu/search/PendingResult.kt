@@ -43,6 +43,14 @@ class PendingResult<T : Any> {
 /** 学習の書き出し・読み込みの結果（学習の一覧の画面に知らせる）。 */
 sealed interface BackupOutcome {
     /**
+     * 保存先の操作が失敗した。削除・全消去・初回の読み込みにも使う。
+     * @property reason 操作の失敗理由
+     */
+    data class Failed(
+        val reason: StorageFailure,
+    ) : BackupOutcome
+
+    /**
      * 書き出した。
      *
      * @property count 書き出した件数。書けなければ null

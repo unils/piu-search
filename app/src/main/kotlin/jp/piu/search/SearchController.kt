@@ -487,7 +487,7 @@ class SearchController(
                     searchQuery.withReading(analyzer)
                 } catch (e: RuntimeException) {
                     // 辞書が読めなくても、表記のままの結果は出ている
-                    Log.w(TAG, "検索語に読みを付けられなかった", e)
+                    Log.w(TAG, "検索語に読みを付けられなかった: ${e.javaClass.simpleName}")
                     null
                 }
             main.execute {

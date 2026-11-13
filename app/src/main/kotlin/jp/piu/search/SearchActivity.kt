@@ -57,8 +57,6 @@ class SearchActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = appContainer
-        container.launchHistory.requestLoad()
-        container.learning.requestLoad()
         notices = container.learning.takeNotices()
         entrySetup = EntrySetup(this)
         onboardingShown = !container.settings.onboardingDismissed
@@ -101,7 +99,12 @@ class SearchActivity : ComponentActivity() {
                     onboarding = if (onboardingShown) onboardingActions() else null,
                     focusKey = controller.openCount,
                     notices = notices,
-                    onUndoNotice = container.learning::undo,
+                    onUndoNotice = { notice ->
+                        container.learning.undo(notice) { result ->
+                            if (result is StorageResult.Failure) container.learning.returnNotices(listOf(notice))
+                            reportStorageFailure(result)
+                        }
+                    },
                     onNoticeDone = { done -> notices = notices - done },
                     onRowCapacity = controller::onRowCapacity,
                     onScrolled = controller::onScrolled,
@@ -131,7 +134,19 @@ class SearchActivity : ComponentActivity() {
         sync.startWatching()
         sync.requestSync()
         // 忘却（R5）は画面を開くたびに見る。記録は多くても数百件で、読み込みの後に同じスレッドで走る
-        container.learning.forgetExpired(System.currentTimeMillis())
+        container.launchHistory.requestLoad(::reportStorageFailure)
+        container.learning.forgetExpired(System.currentTimeMillis(), ::reportStorageFailure)
+        // 前に閉じた画面の保存がまだ走っていた場合も、成功後の知らせをこの画面で受け取る
+        container.learning.runAfterPending {
+            val pending = container.learning.takeNotices()
+            ContextCompat.getMainExecutor(this).execute {
+                if (!isFinishing && !isDestroyed && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    notices = (notices + pending).distinct()
+                } else {
+                    container.learning.returnNotices(pending)
+                }
+            }
+        }
         readSettings()
         registerProfileReceiver()
         controller.onWorkProfileChanged(container.users.workProfileState())
@@ -240,11 +255,11 @@ class SearchActivity : ComponentActivity() {
             }
 
             RowAction.SUPPRESS -> {
-                appContainer.learning.suppress(controller.suppressionOf(row), System.currentTimeMillis())
+                appContainer.learning.suppress(controller.suppressionOf(row), System.currentTimeMillis(), ::reportStorageFailure)
             }
 
             RowAction.FORGET_LEARNING -> {
-                controller.learnedPairOf(row)?.let(appContainer.learning::remove)
+                controller.learnedPairOf(row)?.let { appContainer.learning.remove(it, ::reportStorageFailure) }
             }
 
             RowAction.MANAGE_LEARNING -> {
@@ -270,21 +285,45 @@ class SearchActivity : ComponentActivity() {
             return
         }
         val now = System.currentTimeMillis()
-        container.launchHistory.record(app, now)
         val label = controller.labelOf(app)
-        val made = container.learning.record(controller.finishSession(request), now) { label }
-        // 開いたアプリの上に出す（文字だけの Toast は、裏に回ったアプリからも出せる）。取り消しは次に開いたときの知らせで
-        made.lastOrNull()?.let { notice ->
-            Toast
-                .makeText(
-                    applicationContext,
-                    getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
-                    Toast.LENGTH_LONG,
-                ).show()
-        }
+        val context = applicationContext
+        val ui = ContextCompat.getMainExecutor(context)
+        // 両方とも同じ Executor で順に完了するので、失敗の Toast を 1 つにまとめる
+        var launchFailed = false
+        container.launchHistory.record(app, now) { launchFailed = it is StorageResult.Failure }
+        container.learning.record(controller.finishSession(request), now, onDone = { result ->
+            ui.execute {
+                if (launchFailed || result is StorageResult.Failure) {
+                    Toast.makeText(context, R.string.search_record_failed, Toast.LENGTH_SHORT).show()
+                } else if (result is StorageResult.Success) {
+                    // 保存後にだけ知らせる。取り消しは、プロセスに預けた知らせを次に開いた画面で出す
+                    result.value.lastOrNull()?.let { notice ->
+                        Toast
+                            .makeText(
+                                context,
+                                context.getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
+                                Toast.LENGTH_LONG,
+                            ).show()
+                    }
+                }
+            }
+        }) { label }
         launching = true
         // 履歴画面に残さない（excludeFromRecents と合わせて）。タスクの根でなければ、ふつうの finish と同じ
         finishAndRemoveTask()
+    }
+
+    private fun reportStorageFailure(result: StorageResult<Unit>) {
+        if (result !is StorageResult.Failure) return
+        val context = applicationContext
+        ContextCompat.getMainExecutor(context).execute {
+            val message =
+                when (result.reason.operation) {
+                    StorageOperation.LOAD -> R.string.search_record_load_failed
+                    StorageOperation.SAVE -> R.string.search_record_failed
+                }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private companion object {

@@ -60,8 +60,8 @@ class LearnedListActivity : ComponentActivity() {
             PiuTheme {
                 LearnedListScreen(
                     entries = memory?.let { learnedEntries(it, index, container.users.ownSerial) { at -> dateFormat.format(Date(at)) } },
-                    onDelete = { container.learning.remove(it.pair) },
-                    onClearAll = container.learning::clear,
+                    onDelete = { container.learning.remove(it.pair, ::reportFailure) },
+                    onClearAll = { container.learning.clear(::reportFailure) },
                     onExport = ::chooseExportFile,
                     onImport = ::chooseImportFile,
                     message = outcome?.let(::messageOf),
@@ -85,11 +85,12 @@ class LearnedListActivity : ComponentActivity() {
         // 索引は表示名を引くためだけに使う。設定画面から先に開いたとき（OS のアプリ情報から来たなど）のために、読み込みを頼む
         container.indexSync.requestSync()
         index = container.indexSync.index
-        container.learning.requestLoad()
-        // 読み込みが済んでから出す（済む前の空の学習で「まだ何も覚えていません」を出さないため）
-        container.learning.runAfterPending {
-            val loaded = container.learning.memory
-            uiExecutor.execute { memory = loaded }
+        container.learning.requestLoad { result ->
+            reportFailure(result)
+            if (result is StorageResult.Success) {
+                val loaded = container.learning.memory
+                uiExecutor.execute { memory = loaded }
+            }
         }
     }
 
@@ -129,7 +130,7 @@ class LearnedListActivity : ComponentActivity() {
             now = System.currentTimeMillis(),
             write = { text ->
                 // 既にあるファイルを選んだときに、前の中身の後ろが残らないよう切り詰める
-                val stream = resolver.openOutputStream(uri, "wt") ?: throw IOException("書き出し先を開けない: $uri")
+                val stream = resolver.openOutputStream(uri, "wt") ?: throw IOException("書き出し先を開けない")
                 stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
             },
             // 結果は預かりの箱に入れる。この画面（this）に直接渡すと、終わる前に向きを変えたとき、作り直した画面に届かない
@@ -148,8 +149,18 @@ class LearnedListActivity : ComponentActivity() {
         )
     }
 
+    private fun reportFailure(result: StorageResult<Unit>) {
+        if (result is StorageResult.Failure) appContainer.backupOutcome.post(BackupOutcome.Failed(result.reason))
+    }
+
     private fun messageOf(outcome: BackupOutcome): String =
         when (outcome) {
+            is BackupOutcome.Failed -> {
+                getString(
+                    if (outcome.reason.operation == StorageOperation.LOAD) R.string.learned_load_failed else R.string.learned_save_failed,
+                )
+            }
+
             is BackupOutcome.Exported -> {
                 outcome.count?.let { resources.getQuantityString(R.plurals.learned_exported, it, it) }
                     ?: getString(R.string.learned_export_failed)
@@ -182,7 +193,7 @@ class LearnedListActivity : ComponentActivity() {
             resolver: ContentResolver,
             uri: Uri,
         ): String? {
-            val stream = resolver.openInputStream(uri) ?: throw IOException("ファイルを開けない: $uri")
+            val stream = resolver.openInputStream(uri) ?: throw IOException("ファイルを開けない")
             return stream.use { input ->
                 val out = ByteArrayOutputStream()
                 val buffer = ByteArray(BUFFER_BYTES)
@@ -198,6 +209,8 @@ class LearnedListActivity : ComponentActivity() {
 
         fun failureText(reason: BackupFailure): Int =
             when (reason) {
+                BackupFailure.DATABASE_READ -> R.string.learned_load_failed
+                BackupFailure.DATABASE_WRITE -> R.string.learned_import_save_failed
                 BackupFailure.UNREADABLE -> R.string.learned_import_unreadable
                 BackupFailure.TOO_LARGE -> R.string.learned_import_too_large
                 BackupFailure.INVALID -> R.string.learned_import_invalid

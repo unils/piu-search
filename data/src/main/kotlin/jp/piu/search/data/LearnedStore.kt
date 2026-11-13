@@ -8,9 +8,25 @@ import jp.piu.search.core.search.LearnedPair
 import jp.piu.search.core.search.LearnedRecord
 import jp.piu.search.core.search.LearningLimits
 import jp.piu.search.core.text.NormalizedText
+import jp.piu.search.data.db.LearnedDao
 import jp.piu.search.data.db.LearnedRow
 import jp.piu.search.data.db.PiuRoomDatabase
 import java.util.concurrent.Callable
+
+/** 学習の保存先。保存が失敗したときは例外を返し、変更を残さない。 */
+public interface LearnedStorage {
+    /** 保存した学習を読む。 */
+    public fun load(): LearnedMemory
+
+    /** [before] が保存済みの内容と一致する前提で、差分全体を保存する。 */
+    public fun save(
+        before: LearnedMemory,
+        after: LearnedMemory,
+    )
+
+    /** メモリに見えない行も含め、全行を消す。 */
+    public fun clear()
+}
 
 /**
  * 学習の表（`learned`）の読み書き。[LocalDatabase.learned] で得る。
@@ -21,9 +37,8 @@ import java.util.concurrent.Callable
  */
 public class LearnedStore internal constructor(
     private val database: PiuRoomDatabase,
-) {
-    private val dao = database.learnedDao()
-
+    private val dao: LearnedDao = database.learnedDao(),
+) : LearnedStorage {
     private var legacyRowsChecked = false
 
     /**
@@ -31,7 +46,7 @@ public class LearnedStore internal constructor(
      * 初回は上限を超える旧版の行を DB からも削除し、メモリに見えず消せない記録を残さない。
      */
     @Synchronized
-    public fun load(): LearnedMemory {
+    override fun load(): LearnedMemory {
         val rows =
             if (legacyRowsChecked) {
                 dao.all()
@@ -68,7 +83,7 @@ public class LearnedStore internal constructor(
     }
 
     /** 個人用・仕事用の学習を全行削除する。メモリに見えない行も消し、索引と起動の記録には触れない。 */
-    public fun clear() {
+    override fun clear() {
         dao.deleteAll()
     }
 
@@ -76,7 +91,7 @@ public class LearnedStore internal constructor(
      * [before] から [after] に変わった組だけを、1 つのトランザクションで書く。[after] にない組は消す。
      * メモリ上の記録（[before]）がデータベースと同じであることを前提にする。
      */
-    public fun save(
+    override fun save(
         before: LearnedMemory,
         after: LearnedMemory,
     ) {

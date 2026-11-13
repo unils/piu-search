@@ -72,7 +72,8 @@ class SettingsActivity : ComponentActivity() {
     private fun clearLaunchHistory() {
         appContainer.launchHistory.clear { cleared ->
             runOnUiThread {
-                val message = if (cleared) R.string.settings_history_cleared else R.string.settings_history_clear_failed
+                val message =
+                    if (cleared is StorageResult.Success) R.string.settings_history_cleared else R.string.settings_history_clear_failed
                 Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
             }
         }

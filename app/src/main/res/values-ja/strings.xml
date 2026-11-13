@@ -144,4 +144,9 @@
     <string name="settings_clear_history_confirm">個人用と仕事用のアプリの起動回数と、最後に開いた時刻をすべて消します。学習と設定は残ります。この操作は取り消せません。</string>
     <string name="settings_history_cleared">起動の記録を消しました</string>
     <string name="settings_history_clear_failed">起動の記録を消せませんでした。もう一度お試しください</string>
+    <string name="learned_load_failed">保存した学習を読めませんでした。画面を開き直すと、もう一度試します</string>
+    <string name="learned_save_failed">変更を保存できませんでした。もう一度お試しください</string>
+    <string name="learned_import_save_failed">読み込んだ学習を保存できませんでした。もう一度お試しください</string>
+    <string name="search_record_failed">学習または起動の記録を保存できませんでした</string>
+    <string name="search_record_load_failed">学習または起動の記録を読めませんでした</string>
 </resources>

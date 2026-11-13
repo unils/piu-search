@@ -33,11 +33,11 @@ class AppLauncher(
             launcherApps.startMainActivity(ComponentName(app.packageName, app.activityName), user, null, null)
             true
         } catch (e: ActivityNotFoundException) {
-            Log.w(TAG, "開けなかった: $app", e)
+            Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
             false
         } catch (e: SecurityException) {
             // 入口が書き出されていない・プロファイルが別のグループになった。索引が古い
-            Log.w(TAG, "開けなかった: $app", e)
+            Log.w(TAG, "開けなかった: ${e.javaClass.simpleName}")
             false
         }
     }
@@ -62,10 +62,10 @@ class AppLauncher(
             }
             true
         } catch (e: ActivityNotFoundException) {
-            Log.w(TAG, "アプリ情報を開けなかった: $app", e)
+            Log.w(TAG, "アプリ情報を開けなかった: ${e.javaClass.simpleName}")
             false
         } catch (e: SecurityException) {
-            Log.w(TAG, "アプリ情報を開けなかった: $app", e)
+            Log.w(TAG, "アプリ情報を開けなかった: ${e.javaClass.simpleName}")
             false
         }
     }

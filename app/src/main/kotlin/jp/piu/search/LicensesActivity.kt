@@ -31,7 +31,7 @@ class LicensesActivity : ComponentActivity() {
                                 OssLicenses.load(assets)
                             } catch (e: IOException) {
                                 // ビルドが入れるので起きないはず。起きても画面は見出しだけで落とさない
-                                Log.e(TAG, "ライセンスの文を読めない", e)
+                                Log.e(TAG, "ライセンスの文を読めない: ${e.javaClass.simpleName}")
                                 null
                             }
                         }

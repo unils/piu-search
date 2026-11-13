@@ -234,7 +234,7 @@ public class IndexSync internal constructor(
             try {
                 sync(packages)
             } catch (e: RuntimeException) {
-                Log.w(TAG, "索引の同期に失敗した", e)
+                Log.w(TAG, "索引の同期に失敗した: ${e.javaClass.simpleName}")
             }
         }
     }

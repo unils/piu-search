@@ -161,4 +161,9 @@
     <string name="settings_clear_history_confirm">Clear launch counts and the last opened time for all personal and work apps? Learning and settings will be kept. This cannot be undone.</string>
     <string name="settings_history_cleared">Launch history cleared</string>
     <string name="settings_history_clear_failed">Could not clear launch history. Please try again</string>
+    <string name="learned_load_failed">Could not load saved learning. Reopen this screen to try again.</string>
+    <string name="learned_save_failed">Could not save the change. Please try again.</string>
+    <string name="learned_import_save_failed">Could not save imported learning. Please try again.</string>
+    <string name="search_record_failed">Could not save learning or launch history.</string>
+    <string name="search_record_load_failed">Could not load learning or launch history.</string>
 </resources>

@@ -65,9 +65,9 @@ internal class InstallationGuard(
                     throw e
                 }
             } catch (e: IOException) {
-                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する", e)
+                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する: ${e.javaClass.simpleName}")
             } catch (e: SecurityException) {
-                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する", e)
+                Log.w(TAG, "インストールの印を保存できないため、索引と仕事用の記録を整理する: ${e.javaClass.simpleName}")
             }
             // 保存できなくても新しい印で整理して DB を開く。次のオープンでも不一致となるため、古い索引や仕事用を信用しない。
             token

@@ -45,7 +45,12 @@ class LearningRepositoryTest {
         repository.addListener { heard += it }
         // 前に選択で 1 回記録した組が、救済にもなった
         repository.record(LearningDecision(OKANE, emptyList()), NOW) { "乗換案内" }
-        val notices = repository.record(LearningDecision(null, listOf(OKANE)), NOW + 1) { "乗換案内" }
+        var notices = emptyList<RescueNotice>()
+        repository.record(
+            LearningDecision(null, listOf(OKANE)),
+            NOW + 1,
+            onDone = { notices = (it as StorageResult.Success).value },
+        ) { "乗換案内" }
         repository.awaitIdle()
 
         assertEquals(listOf(RescueNotice(OKANE, "乗換案内", null, NOW + 1)), notices)
@@ -250,8 +255,9 @@ class LearningRepositoryTest {
     @Test
     fun usingAnExistingLearnedKeyUpdatesTheDatabaseWithoutARescueNotice() {
         repository.record(LearningDecision(null, listOf(OKANE)), NOW) { null }
+        repository.awaitIdle()
         repository.takeNotices()
-        assertEquals(emptyList<RescueNotice>(), repository.record(LearningDecision(null, emptyList(), used = OKANE), NOW + 1) { null })
+        repository.record(LearningDecision(null, emptyList(), used = OKANE), NOW + 1) { null }
         repository.awaitIdle()
         assertEquals(emptyList<RescueNotice>(), repository.takeNotices())
         val record = onDb { database.learned.load() }.records.getValue(OKANE)

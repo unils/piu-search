@@ -38,7 +38,7 @@ class LaunchHistoryRepositoryTest {
         val heard = ArrayList<LaunchHistory>()
         repository.addListener { heard += it }
         var cleared = false
-        repository.clear { cleared = it }
+        repository.clear { cleared = it is StorageResult.Success }
         onDb {}
         assertTrue(cleared)
         assertEquals(LaunchHistory.EMPTY, repository.history)
@@ -76,12 +76,12 @@ class LaunchHistoryRepositoryTest {
         val before = failing.history
         fail = true
         var cleared = true
-        failing.clear { cleared = it }
+        failing.clear { cleared = it is StorageResult.Success }
         onDb {}
         assertFalse(cleared)
         assertEquals(before, failing.history)
         fail = false
-        failing.clear { cleared = it }
+        failing.clear { cleared = it is StorageResult.Success }
         onDb {}
         assertTrue(cleared)
         assertTrue(failing.history.records.isEmpty())

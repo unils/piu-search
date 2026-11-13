@@ -50,6 +50,12 @@ sealed interface BackupReadResult {
 
 /** 学習のファイルを読めなかったわけ。 */
 enum class BackupFailure {
+    /** 保存済みの学習を読めないので、ファイルを合わせられない。 */
+    DATABASE_READ,
+
+    /** ファイルは読めたが、合わせた学習を保存できない。 */
+    DATABASE_WRITE,
+
     /** ファイルを開けない・読めない。 */
     UNREADABLE,
 

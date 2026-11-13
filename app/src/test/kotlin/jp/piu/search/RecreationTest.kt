@@ -67,8 +67,32 @@ class RecreationTest {
     }
 
     @Test
+    fun noticeSavedWhileTheNextScreenOpensCanStillBeUndone() {
+        val release = CountDownLatch(1)
+        container.learning.runAfterPending { release.await() }
+        container.learning.record(LearningDecision(null, listOf(DENSHA)), NOW) { "乗換案内" }
+        compose.mainClock.autoAdvance = false
+        try {
+            ActivityScenario.launch(SearchActivity::class.java).use {
+                release.countDown()
+                container.learning.awaitIdle()
+                // 裏の保存完了と、画面のスレッドに渡した知らせの反映をそれぞれ待つ
+                compose.waitForIdle()
+                compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+                compose.onNodeWithText(NOTICE, substring = true).assertExists()
+                compose.onNodeWithText("取り消す").performClick()
+                container.learning.awaitIdle()
+                assertEquals(LearnedMemory.EMPTY.records, container.learning.memory.records)
+            }
+        } finally {
+            release.countDown()
+        }
+    }
+
+    @Test
     fun noticesAreNotKeptAfterTheScreenCloses() {
         container.learning.record(LearningDecision(null, listOf(DENSHA)), NOW) { "乗換案内" }
+        container.learning.awaitIdle()
         val scenario = ActivityScenario.launch(SearchActivity::class.java)
         // アプリを開いたときと同じく、閉じる（作り直さない）。出しかけの知らせは戻さない
         scenario.onActivity(Activity::finish)
