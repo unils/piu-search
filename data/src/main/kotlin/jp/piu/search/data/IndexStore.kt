@@ -15,17 +15,20 @@ import jp.piu.search.data.db.SearchKeyRow
 /**
  * 保存する入口 1 つ: 索引のアプリと、パッケージの最後の更新の時刻。
  *
+ * @property apkFingerprint base と split のパスと時刻。不完全な材料なら null にして次回に読み直す
  * @property app 識別子・表示名・検索キー
  * @property packageUpdatedAt パッケージの最後の更新の時刻（`PackageInfo.lastUpdateTime`、ミリ秒）。全件の見直しで、作り直すアプリを選ぶのに使う
  */
 public data class StoredApp(
     val app: IndexedApp,
     val packageUpdatedAt: Long,
+    val apkFingerprint: String? = null,
 )
 
 /**
  * 索引を作ったときの端末の状態（`meta` の表）。次に画面を開いたとき、差分の取り方を決めるのに使う（architecture.md の「索引の作成と更新」）。
  *
+ * @property buildFingerprint OS のビルド。変更時は全件を作り直す
  * @property changeSequence `PackageManager.getChangedPackages` に渡す、前回の変更の番号。分からなければ null
  * @property bootCount `Settings.Global.BOOT_COUNT`。変わっていれば変更の番号が使えないので全件を見直す。取れなければ null
  * @property locales 索引を作ったときの端末の言語（`LocaleList.toLanguageTags` の形）。変わっていれば全件を作り直す
@@ -34,6 +37,7 @@ public data class SyncState(
     val changeSequence: Int?,
     val bootCount: Int?,
     val locales: String,
+    val buildFingerprint: String = "",
 )
 
 /**
@@ -126,6 +130,24 @@ public class IndexStore internal constructor(
         }
     }
 
+    /** ジャンルだけの変化では、名前のキーと入口の行を保存し直さない。外側の保存と同じトランザクションで呼ぶ。 */
+    internal fun updateGenres(apps: List<StoredApp>) {
+        for (stored in apps) {
+            val id = stored.app.id
+            val rowId = dao.appRowId(id.profileSerial, id.packageName, id.activityName)
+            dao.deleteGenreKeys(rowId)
+            val position = dao.nextKeyPosition(rowId)
+            dao.insertKeys(
+                stored.app.keys.filter { it.kind == jp.piu.search.core.search.SearchKeyKind.GENRE }.mapIndexed { offset, key ->
+                    key.toRow(
+                        rowId,
+                        position + offset,
+                    )
+                },
+            )
+        }
+    }
+
     /** 計算の間に版や同期の状態が変わったら書かない。照合と保存を同じトランザクションに入れるための境界。 */
     internal fun writeIfCurrent(
         expected: SyncState?,
@@ -149,6 +171,7 @@ public class IndexStore internal constructor(
                     profileSerial = id.profileSerial,
                     label = stored.app.label,
                     packageUpdatedAt = stored.packageUpdatedAt,
+                    apkFingerprint = stored.apkFingerprint,
                 ),
             )
         dao.insertKeys(stored.app.keys.mapIndexed { position, key -> key.toRow(appId, position) })
@@ -160,13 +183,19 @@ public class IndexStore internal constructor(
     }
 
     private fun SyncState.toMetaRow(): MetaRow =
-        MetaRow(indexVersion = indexVersion, changeSequence = changeSequence, bootCount = bootCount, locales = locales)
+        MetaRow(
+            indexVersion = indexVersion,
+            changeSequence = changeSequence,
+            bootCount = bootCount,
+            locales = locales,
+            buildFingerprint = buildFingerprint,
+        )
 }
 
-private fun MetaRow.toSyncState(): SyncState = SyncState(changeSequence, bootCount, locales)
+private fun MetaRow.toSyncState(): SyncState = SyncState(changeSequence, bootCount, locales, buildFingerprint)
 
 private fun AppRow.toStoredApp(keys: List<SearchKey>): StoredApp =
-    StoredApp(IndexedApp(AppId(packageName, activityName, profileSerial), label, keys), packageUpdatedAt)
+    StoredApp(IndexedApp(AppId(packageName, activityName, profileSerial), label, keys), packageUpdatedAt, apkFingerprint)
 
 private fun SearchKey.toRow(
     appId: Long,

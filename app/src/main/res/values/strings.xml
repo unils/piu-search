@@ -166,4 +166,5 @@
     <string name="learned_import_save_failed">Could not save imported learning. Please try again.</string>
     <string name="search_record_failed">Could not save learning or launch history.</string>
     <string name="search_record_load_failed">Could not load learning or launch history.</string>
+    <string name="index_sync_failed">Could not update the index</string>
 </resources>

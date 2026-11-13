@@ -34,6 +34,7 @@ internal data class AppRow(
     val label: String,
     // パッケージの最後の更新の時刻（PackageInfo.lastUpdateTime、ミリ秒）。全件の見直しで、作り直すアプリを選ぶため
     @ColumnInfo(name = "package_updated_at") val packageUpdatedAt: Long,
+    @ColumnInfo(name = "apk_fingerprint") val apkFingerprint: String? = null,
 )
 
 /**
@@ -78,6 +79,7 @@ internal data class MetaRow(
     @ColumnInfo(name = "change_sequence") val changeSequence: Int?,
     @ColumnInfo(name = "boot_count") val bootCount: Int?,
     @ColumnInfo(name = "locales") val locales: String,
+    @ColumnInfo(name = "build_fingerprint", defaultValue = "''") val buildFingerprint: String = "",
 ) {
     companion object {
         const val SINGLE_ID = 0

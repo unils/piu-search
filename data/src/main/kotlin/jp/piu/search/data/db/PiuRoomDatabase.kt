@@ -29,10 +29,10 @@ internal abstract class PiuRoomDatabase : RoomDatabase() {
 
     companion object {
         /** 表の定義の版。 */
-        const val VERSION = 4
+        const val VERSION = 5
 
         /** 版の移行。古い版から開くときに順に当てる。 */
-        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3, Migration3To4)
+        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3, Migration3To4, Migration4To5)
     }
 }
 
@@ -63,5 +63,13 @@ internal object Migration2To3 : Migration(2, 3) {
 internal object Migration3To4 : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `installation` (`id` INTEGER NOT NULL, `token` TEXT NOT NULL, PRIMARY KEY(`id`))")
+    }
+}
+
+/** 4 → 5: 索引の変更検出の材料を足す。利用者の学習・起動の記録・インストールの印は保つ。 */
+internal object Migration4To5 : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE app ADD COLUMN apk_fingerprint TEXT")
+        db.execSQL("ALTER TABLE meta ADD COLUMN build_fingerprint TEXT NOT NULL DEFAULT ''")
     }
 }

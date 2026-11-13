@@ -68,10 +68,10 @@ class ProfileLifecycle(
         listeners -= listener
     }
 
-    /** 次の検索まで溜めていた追加・再開も含めて同期する。 */
-    fun onSearchStarted() {
+    /** 前面にあることを記録する。[syncNow] が false なら、開くときの同期は IndexLifecycle にまとめる。 */
+    fun onSearchStarted(syncNow: Boolean = true) {
         searchVisible = true
-        requestSync()
+        if (syncNow) requestSync()
     }
 
     /** 画面が裏に回った後は、放送だけで索引を作り直さない。 */

@@ -38,12 +38,13 @@ class IndexSyncTest {
     private fun newSync(
         indexVersion: Int = 4,
         existingProfiles: () -> Set<Long>? = { device.existingProfiles() },
+        source: DeviceApps = device,
     ): IndexSync {
         val database = LocalDatabase.open(context, FILE, indexVersion, allowMainThread = true).also(opened::add)
         val generator = SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.parse(emptyList())))
         return IndexSync(
             database.index,
-            device,
+            source,
             { generator },
             analyzer,
             launcherApps = null,
@@ -270,8 +271,8 @@ class IndexSyncTest {
     }
 
     @Test
-    fun requestedPackagesAreRebuiltWithoutASequenceChange() {
-        // LauncherApps.Callback で知った仕事用プロファイルの更新（番号に出ない）
+    fun requestedPackagesAreRebuiltEvenWithTheSameFingerprint() {
+        // 資源の重ね合わせなど、APK の指紋が同じ変更を Callback から知った場合を再現する
         device.install(TRANSIT, WORK_TRANSIT)
         val sync = newSync()
         sync.sync()
@@ -282,6 +283,34 @@ class IndexSyncTest {
 
         assertEquals(2, report.rebuiltApps)
         assertEquals(listOf("乗換テスト", "乗換テスト2"), sync.labels())
+    }
+
+    @Test
+    fun workUpdateWhileTheScreenIsClosedIsFoundByTheNextSync() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        newSync().sync()
+        device.install(WORK_TRANSIT.copy(label = "仕事用更新テスト", updatedAt = 2_000), silently = true)
+
+        val reopened = newSync()
+        assertEquals(1, reopened.sync().rebuiltApps)
+        assertEquals("仕事用更新テスト", reopened.index.labelOf(WORK_TRANSIT.entry.id))
+    }
+
+    @Test
+    fun requestedPackageSurvivesAFailedSync() {
+        device.install(WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.install(WORK_TRANSIT.copy(label = "更新テスト"), silently = true)
+        device.beforeRead = { error("読み取りの失敗") }
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            sync.sync(setOf(WORK_TRANSIT.entry.id.packageName))
+        }
+        assertEquals("乗換テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+        device.beforeRead = {}
+
+        assertEquals(1, sync.sync().rebuiltApps)
+        assertEquals("更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
     }
 
     @Test
@@ -308,6 +337,176 @@ class IndexSyncTest {
                 .state
                 ?.changeSequence,
         )
+    }
+
+    @Test
+    fun osBuildChangeRebuildsEverything() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.fingerprint = "next-build"
+        assertEquals(SyncMode.FULL_REBUILD, sync.sync().mode)
+    }
+
+    @Test
+    fun incompleteMaterialHasNoFingerprintAndIsRetriedWithoutASequenceChange() {
+        device.install(TRANSIT, MAPS)
+        val sync = newSync()
+        sync.sync()
+        val incomplete = TRANSIT.copy(label = "更新テスト").copy(complete = false)
+        device.install(incomplete, MAPS.copy(label = "地図更新テスト"))
+        val partial = sync.sync()
+        assertEquals("地図更新テスト", sync.index.labelOf(MAPS.entry.id))
+        assertEquals(1, partial.failedPackages)
+        assertEquals(jp.piu.search.data.SyncFailure.READ, sync.status.failure)
+        org.junit.Assert.assertNull(
+            opened
+                .last()
+                .index
+                .load()
+                .apps
+                .single { it.app.id == TRANSIT.entry.id }
+                .apkFingerprint,
+        )
+        device.install(incomplete.copy(complete = true), silently = true)
+        assertEquals(1, sync.sync().rebuiltApps)
+        org.junit.Assert.assertNotNull(
+            opened
+                .last()
+                .index
+                .load()
+                .apps
+                .single { it.app.id == TRANSIT.entry.id }
+                .apkFingerprint,
+        )
+        org.junit.Assert.assertNull(sync.status.failure)
+    }
+
+    @Test
+    fun failedProfileKeepsItsIndexAndRetriesAfterTheSequenceAdvanced() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.failedProfiles += PERSONAL
+        device.install(TRANSIT.copy(label = "個人用更新テスト"))
+        device.install(WORK_TRANSIT.copy(label = "仕事用更新テスト", updatedAt = 2_000), silently = true)
+        val partial = sync.sync()
+        assertEquals(1, partial.failedProfiles)
+        assertEquals("乗換テスト", sync.index.labelOf(TRANSIT.entry.id))
+        assertEquals("仕事用更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+        device.failedProfiles.clear()
+        sync.sync()
+        assertEquals("個人用更新テスト", sync.index.labelOf(TRANSIT.entry.id))
+    }
+
+    @Test
+    fun genresAreRefreshedWithoutRebuildingNameKeys() {
+        device.install(TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        analyzer.calls = 0
+        device.install(TRANSIT.copy(entry = TRANSIT.entry.copy(genres = listOf(Genres.BROWSER))), silently = true)
+        assertEquals(0, sync.sync().rebuiltApps)
+        assertEquals(0, analyzer.calls)
+        assertTrue(
+            sync.index
+                .inNameOrder()
+                .single()
+                .app.keys
+                .any { it.kind == jp.piu.search.core.search.SearchKeyKind.GENRE },
+        )
+        assertTrue(
+            opened
+                .last()
+                .index
+                .load()
+                .apps
+                .single()
+                .app.keys
+                .any { it.kind == jp.piu.search.core.search.SearchKeyKind.GENRE },
+        )
+    }
+
+    @Test
+    fun backgroundNotificationIsRetainedUntilTheNextExplicitSync() {
+        device.install(TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.install(TRANSIT.copy(label = "背景の更新テスト"), silently = true)
+        sync.packagesChanged(setOf(TRANSIT.entry.id.packageName))
+        sync.awaitIdle()
+        assertEquals("乗換テスト", sync.index.labelOf(TRANSIT.entry.id))
+        assertEquals(1, sync.sync().rebuiltApps)
+        assertEquals("背景の更新テスト", sync.index.labelOf(TRANSIT.entry.id))
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun defaultBrowserChangeUpdatesOnlyGenreRowsWithTheSameApk() {
+        device.install(TRANSIT, MAPS)
+        val manager = context.packageManager
+        val resolver = GenreResolver(manager)
+        val source =
+            object : DeviceApps by device {
+                override fun genres(stamps: List<ActivityStamp>) = resolver.resolveStamps(stamps)
+            }
+        val intent = GENRE_RULES.first { it.genre == Genres.BROWSER }.intent.toIntent()
+
+        fun handler(app: InstalledApp) =
+            android.content.pm.ResolveInfo().apply {
+                activityInfo =
+                    android.content.pm.ActivityInfo().apply {
+                        packageName = app.entry.id.packageName
+                        name = app.entry.id.activityName
+                    }
+            }
+        val shadow = org.robolectric.Shadows.shadowOf(manager)
+        shadow.setResolveInfosForIntent(intent, listOf(handler(TRANSIT)))
+        val sync = newSync(source = source)
+        sync.sync()
+        val dao = opened.last().room.indexDao()
+        val beforeApps = dao.apps()
+        val beforeKeys = dao.keys().filter { it.kind != jp.piu.search.core.search.SearchKeyKind.GENRE }
+        analyzer.calls = 0
+        shadow.setResolveInfosForIntent(intent, listOf(handler(MAPS)))
+        val report = sync.sync()
+        assertEquals(0, report.rebuiltApps)
+        assertEquals(0, analyzer.calls)
+        assertEquals(beforeApps, dao.apps())
+        assertEquals(beforeKeys, dao.keys().filter { it.kind != jp.piu.search.core.search.SearchKeyKind.GENRE })
+        val browserApps =
+            sync.index
+                .inNameOrder()
+                .filter { row ->
+                    row.app.keys.any { it.text.value == Genres.BROWSER.value }
+                }.map { it.app.id }
+        assertEquals(listOf(MAPS.entry.id), browserApps)
+    }
+
+    @Test
+    fun successfulNotificationIsClearedWhileAnIncompletePackageIsRetained() {
+        device.install(TRANSIT, MAPS)
+        val sync = newSync()
+        sync.sync()
+        device.install(TRANSIT.copy(complete = false), silently = true)
+        sync.sync(setOf(TRANSIT.entry.id.packageName, MAPS.entry.id.packageName))
+        device.install(TRANSIT, MAPS.copy(label = "番号にない変更テスト"), silently = true)
+        assertEquals(1, sync.sync().rebuiltApps)
+        assertEquals(MAPS.entry.label, sync.index.labelOf(MAPS.entry.id))
+    }
+
+    @Test
+    fun notificationArrivingDuringReadIsNotClearedByTheOlderSync() {
+        device.install(TRANSIT)
+        val sync = newSync()
+        sync.sync()
+        device.beforeRead = {
+            device.beforeRead = {}
+            sync.packagesChanged(setOf(TRANSIT.entry.id.packageName))
+        }
+        sync.sync(setOf(TRANSIT.entry.id.packageName))
+        assertEquals(1, sync.sync().rebuiltApps)
+        assertEquals(0, sync.sync().rebuiltApps)
     }
 
     private fun SearchIndex.profiles(): Set<Long> =

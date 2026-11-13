@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import jp.piu.search.data.IndexSyncStatus
 
 /**
  * 検索の画面。ランチャーのアイコン・デジタルアシスタント（`ACTION_ASSIST`）・クイック設定のタイル（[SearchTileService]）から開く。
@@ -44,6 +45,11 @@ class SearchActivity : ComponentActivity() {
 
     // 出す救済の知らせ（前に開いたときの分）
     private var notices by mutableStateOf(emptyList<RescueNotice>())
+
+    private var syncFailed by mutableStateOf(false)
+    private val syncStatusListener: (IndexSyncStatus) -> Unit = { status ->
+        ContextCompat.getMainExecutor(this).execute { syncFailed = status.failure != null }
+    }
 
     private val noticeListener =
         RescueNoticeListener {
@@ -117,6 +123,7 @@ class SearchActivity : ComponentActivity() {
                     searchBarOnTop = searchSettings.searchBarPosition == SearchBarPosition.TOP,
                     showReasons = searchSettings.showReasons,
                     workPausedNotice = controller.workPausedVisible,
+                    syncFailed = syncFailed,
                     onOpenSettings = ::openSettings,
                 )
             }
@@ -140,12 +147,11 @@ class SearchActivity : ComponentActivity() {
         container.learning.addListener(controller)
         container.learning.addNoticeListener(noticeListener)
         notices = notices.filter(container.learning::canUndo)
-        sync.startWatching()
+        sync.addStatusListener(syncStatusListener)
+        syncFailed = sync.status.failure != null
+        container.indexLifecycle.onSearchStarted(::reportStorageFailure)
         container.profileLifecycle.addListener(profileListener)
-        container.profileLifecycle.onSearchStarted()
-        // 忘却（R5）は画面を開くたびに見る。記録は多くても数百件で、読み込みの後に同じスレッドで走る
-        container.launchHistory.requestLoad(::reportStorageFailure)
-        container.learning.forgetExpired(System.currentTimeMillis(), ::reportStorageFailure)
+        container.profileLifecycle.onSearchStarted(syncNow = false)
         // 前に閉じた画面の保存がまだ走っていた場合も、成功後の知らせをこの画面で受け取る
         container.learning.runAfterPending {
             val pending = container.learning.takeNotices()
@@ -177,7 +183,8 @@ class SearchActivity : ComponentActivity() {
         container.profileLifecycle.onSearchStopped()
         container.profileLifecycle.removeListener(profileListener)
         val sync = container.indexSync
-        sync.stopWatching()
+        container.indexLifecycle.onSearchStopped()
+        sync.removeStatusListener(syncStatusListener)
         sync.removeListener(controller)
         container.launchHistory.removeListener(controller)
         container.learning.removeListener(controller)

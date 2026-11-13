@@ -54,6 +54,14 @@ class AppContainer(
     /** 起動時の照合と、検索画面を閉じている間も必要なプロファイルの放送。 */
     val profileLifecycle: ProfileLifecycle by lazy { ProfileLifecycle(appContext, writer, profiles, indexSync::requestSync) }
 
+    /** Callback と索引・記録の更新のきっかけ。Application が登録の寿命を持つ。 */
+    val indexLifecycle: IndexLifecycle by lazy {
+        IndexLifecycle(indexSync, { icons.invalidate(it) }) { onDone ->
+            launchHistory.requestLoad(onDone)
+            learning.forgetExpired(System.currentTimeMillis(), onDone)
+        }
+    }
+
     init {
         profiles.addRemovalListener { removed ->
             learning.profilesRemoved(removed)

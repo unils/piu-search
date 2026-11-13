@@ -15,6 +15,13 @@ internal const val WORK = 11L
 /** 偽の端末。パッケージの変更を番号つきで記録する（silently は番号に出ない変更）。 */
 internal class FakeDevice : DeviceApps {
     var bootCount: Int? = 1
+    var fingerprint = "test-build"
+
+    override fun buildFingerprint(): String = fingerprint
+
+    val failedProfiles = HashSet<Long>()
+    var genresCalls = 0
+    var stampCalls = 0
     var locales = "ja-JP"
     private var sequence = 0
     private val changes = ArrayList<String>()
@@ -35,7 +42,14 @@ internal class FakeDevice : DeviceApps {
         silently: Boolean = false,
     ) {
         for (app in installed) {
-            apps[app.entry.id] = app
+            apps[app.entry.id] =
+                if (app.complete && app.apkFingerprint == null &&
+                    app.packageUpdatedAt != 0L
+                ) {
+                    app.copy(apkFingerprint = "apk:${app.packageUpdatedAt}")
+                } else {
+                    app
+                }
             if (!silently && app.entry.id.profileSerial == PERSONAL) touch(app.entry.id.packageName)
         }
     }
@@ -78,10 +92,28 @@ internal class FakeDevice : DeviceApps {
     override fun profileSerials(): Set<Long> = profiles - unavailable
 
     override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> {
+        stampCalls++
         beforeStamps()
         return apps.values
             .filter { it.entry.id.profileSerial !in unavailable }
-            .map { ActivityStamp(it.entry.id, if (withUpdateTime) it.packageUpdatedAt else 0) }
+            .map {
+                ActivityStamp(
+                    it.entry.id,
+                    if (withUpdateTime) it.packageUpdatedAt else 0,
+                    it.apkFingerprint,
+                    it.entry.id.profileSerial == PERSONAL,
+                )
+            }
+    }
+
+    override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
+        super.stampProfiles(withUpdateTime).mapValues { (serial, result) ->
+            if (serial in failedProfiles) ProfileRead(ProfileReadStatus.FAILED) else result
+        }
+
+    override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<jp.piu.search.core.search.GenreId>> {
+        genresCalls++
+        return apps.values.associate { it.entry.id to it.entry.genres }
     }
 
     override fun read(packages: Set<String>?): List<InstalledApp> {

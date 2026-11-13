@@ -35,7 +35,19 @@ public class GenreResolver internal constructor(
      * [activities] の各入口のジャンル。ジャンルのない入口は結果に入れない。
      * ジャンルは matching.md の表の順に並べる。
      */
-    public fun resolve(activities: List<LaunchableActivity>): Map<AppId, List<GenreId>> {
+    public fun resolve(activities: List<LaunchableActivity>): Map<AppId, List<GenreId>> =
+        resolveEntries(activities.map { GenreEntry(it.id, it.applicationInfo.category) })
+
+    /** 名前や署名を読み直さず、毎回の一覧からジャンルだけを判定する。 */
+    public fun resolveStamps(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> =
+        resolveEntries(stamps.map { GenreEntry(it.id, it.category) })
+
+    private data class GenreEntry(
+        val id: AppId,
+        val category: Int,
+    )
+
+    private fun resolveEntries(activities: List<GenreEntry>): Map<AppId, List<GenreId>> {
         val handlers = queryHandlers()
         val result = LinkedHashMap<AppId, List<GenreId>>()
         for ((_, entries) in activities.groupBy { it.id.packageName to it.id.profileSerial }) {
@@ -54,7 +66,7 @@ public class GenreResolver internal constructor(
                 }
             }
             for (entry in entries) {
-                APP_CATEGORY_GENRES[entry.applicationInfo.category]?.let { packageWide += it }
+                APP_CATEGORY_GENRES[entry.category]?.let { packageWide += it }
                 val genres = packageWide + perEntry[entry.id.activityName].orEmpty()
                 if (genres.isNotEmpty()) result[entry.id] = Genres.ORDER.filter { it in genres }
             }

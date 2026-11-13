@@ -185,6 +185,32 @@ class IndexSyncConcurrencyTest {
             assertTrue(fixture.reads >= 2)
         }
 
+    @Test
+    fun requestsDuringSyncAreCoalescedIntoOneFollowup() =
+        withFixture { fixture ->
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            var passes = 0
+            fixture.device.beforeRead = {
+                passes++
+                entered.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+            }
+            fixture.sync.requestSync()
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS))
+                assertTrue(fixture.sync.status.running)
+                repeat(20) { fixture.sync.requestSync() }
+            } finally {
+                release.countDown()
+                fixture.sync.awaitIdle()
+            }
+            assertEquals(1, passes)
+            assertEquals(2, fixture.device.stampCalls)
+            assertEquals(2, fixture.device.genresCalls)
+            assertFalse(fixture.sync.status.running)
+        }
+
     private fun withFixture(test: (Fixture) -> Unit) {
         LocalDatabase.open(ApplicationProvider.getApplicationContext(), null, allowMainThread = true).use { database ->
             DatabaseWriter().use { writer ->
@@ -208,8 +234,8 @@ class IndexSyncConcurrencyTest {
         var reads = 0
         private val source =
             object : DeviceApps by device {
-                override fun read(packages: Set<String>?): List<InstalledApp> {
-                    val result = device.read(packages)
+                override fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> {
+                    val result = device.readProfiles(packages)
                     reads++
                     pause.getAndSet(null)?.let { (entered, release) ->
                         entered.countDown()

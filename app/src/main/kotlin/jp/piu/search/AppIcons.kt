@@ -5,6 +5,9 @@ package jp.piu.search
 import android.content.Context
 import android.content.pm.LauncherApps
 import android.util.LruCache
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -18,6 +21,9 @@ import kotlin.math.roundToInt
 
 /** 結果の行に出すアイコン。画面のテストでは偽物に差し替える。 */
 interface AppIcons {
+    /** 表示中の行も更新を読み直すためのキャッシュの世代。 */
+    val revision: Long get() = 0
+
     /** メモリにある [app] のアイコン。なければ null（[load] で読む）。 */
     fun cached(app: AppId): ImageBitmap?
 
@@ -36,6 +42,7 @@ class LauncherAppIcons(
     context: Context,
     private val users: ProfileUsers,
     executor: ExecutorService,
+    private val readIcon: ((AppId) -> ImageBitmap?)? = null,
 ) : AppIcons {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val densityDpi = context.resources.displayMetrics.densityDpi
@@ -51,14 +58,52 @@ class LauncherAppIcons(
             ): Int = value.asAndroidBitmap().allocationByteCount
         }
 
+    private val lock = Any()
+
+    override var revision: Long by mutableLongStateOf(0)
+        private set
+
     override fun cached(app: AppId): ImageBitmap? = cache.get(app)
 
     override suspend fun load(app: AppId): ImageBitmap? =
-        cached(app) ?: withContext(dispatcher) { cached(app) ?: read(app)?.also { cache.put(app, it) } }
+        withContext(dispatcher) {
+            while (true) {
+                val generation =
+                    synchronized(lock) {
+                        cached(app)?.let { return@withContext it }
+                        revision
+                    }
+                val bitmap = readIcon?.invoke(app) ?: if (readIcon == null) read(app) else null
+                synchronized(lock) {
+                    // 読み込み中の更新で古いアイコンをキャッシュへ戻さない
+                    if (revision == generation) {
+                        if (bitmap != null) cache.put(app, bitmap)
+                        return@withContext bitmap
+                    }
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            null
+        }
+
+    /** 更新されたパッケージのすべての入口・プロファイルのアイコンを手放す。 */
+    fun invalidate(packages: Set<String>) {
+        synchronized(lock) {
+            cache
+                .snapshot()
+                .keys
+                .filter { it.packageName in packages }
+                .forEach(cache::remove)
+            revision++
+        }
+    }
 
     /** メモリにあるアイコンを手放す（`onTrimMemory`）。 */
     fun clear() {
-        cache.evictAll()
+        synchronized(lock) {
+            cache.evictAll()
+            revision++
+        }
     }
 
     private fun read(app: AppId): ImageBitmap? {

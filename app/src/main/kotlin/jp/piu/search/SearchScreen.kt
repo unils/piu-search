@@ -163,6 +163,7 @@ data class ProfileSwitch(
  * @param onScrolled 結果の一覧をスクロールしたとき
  * @param searchBarOnTop 検索窓を画面の上に置く（設定）
  * @param showReasons 出た理由を行に出す（設定）。出さなくても、長押しのメニューの出し分けには理由を使う
+ * @param syncFailed 索引の更新に失敗した知らせを控えめに出す
  * @param workPausedNotice 仕事用アプリが一時停止中である知らせを出す。既定は、切り替えで仕事用を選んでいて一時停止中のとき
  * @param onOpenSettings 設定のボタンを押したとき。null ならボタンを出さない。ボタンは検索語が空の間だけ、検索窓の中に小さく出す
  */
@@ -193,6 +194,7 @@ fun SearchScreen(
     showReasons: Boolean = true,
     workPausedNotice: Boolean = profileSwitch?.let { it.selected == ProfileTab.WORK && it.workPaused } ?: false,
     onOpenSettings: (() -> Unit)? = null,
+    syncFailed: Boolean = false,
 ) {
     val rows = RowHandlers(icons, onOpen, rowMenu, onRowAction, onScrolled, showReasons, searchBarOnTop)
     val snackbar = remember { SnackbarHostState() }
@@ -209,6 +211,14 @@ fun SearchScreen(
                     SearchBarRow(query, onQueryChange, onSearchAction, showingAllApps, onShowAllApps, autoFocus, focusKey, onOpenSettings)
                 }
                 val profile: @Composable () -> Unit = {
+                    if (syncFailed) {
+                        Text(
+                            stringResource(R.string.index_sync_failed),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (searchBarOnTop) {
                         profileSwitch?.let { ProfileSwitchRow(it.selected, onSelectProfile) }
                         if (workPausedNotice) WorkPausedNotice()
@@ -711,7 +721,7 @@ private fun AppIcon(
     icons: AppIcons,
 ) {
     val modifier = Modifier.size(LauncherAppIcons.ICON_SIZE_DP.dp)
-    val bitmap by produceState(icons.cached(app), app) { if (value == null) value = icons.load(app) }
+    val bitmap by produceState(icons.cached(app), app, icons.revision) { value = icons.load(app) }
     val current = bitmap
     // 読み込む前も同じ大きさを取り、読み込んだときに名前の位置が動かないようにする
     if (current == null) Box(modifier) else Image(current, contentDescription = null, modifier = modifier)

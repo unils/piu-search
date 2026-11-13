@@ -29,6 +29,19 @@ internal interface IndexDao {
     @Insert
     fun insertKeys(keys: List<SearchKeyRow>)
 
+    @Query("SELECT id FROM app WHERE profile_serial = :serial AND package_name = :packageName AND activity_name = :activityName")
+    fun appRowId(
+        serial: Long,
+        packageName: String,
+        activityName: String,
+    ): Long
+
+    @Query("DELETE FROM search_key WHERE app_id = :appId AND kind = 'GENRE'")
+    fun deleteGenreKeys(appId: Long)
+
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM search_key WHERE app_id = :appId")
+    fun nextKeyPosition(appId: Long): Int
+
     // 検索キーは外部キーの CASCADE で一緒に消える
     @Query("DELETE FROM app WHERE profile_serial = :profileSerial AND package_name = :packageName")
     fun deletePackage(

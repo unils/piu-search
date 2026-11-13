@@ -172,6 +172,53 @@ class GenreResolverTest {
         assertTrue(resolver().resolve(listOf(plain)).isEmpty())
     }
 
+    @Suppress("DEPRECATION")
+    @Test
+    fun defaultBrowserChangeIsQueriedAgainWithoutAnApkUpdate() {
+        val first = install("test.browser.first")
+        val second = install("test.browser.second")
+        val intent = GENRE_RULES.first { it.genre == Genres.BROWSER }.intent.toIntent()
+        val shadow = shadowOf(packageManager)
+
+        fun handler(activity: LaunchableActivity) =
+            android.content.pm.ResolveInfo().apply {
+                activityInfo =
+                    android.content.pm.ActivityInfo().apply {
+                        packageName = activity.id.packageName
+                        name = activity.id.activityName
+                    }
+            }
+        shadow.setResolveInfosForIntent(intent, listOf(handler(first)))
+        val resolver = resolver()
+        val stamps = listOf(first, second).map { ActivityStamp(it.id, 1, "same-apk") }
+        assertEquals(listOf(Genres.BROWSER), resolver.resolveStamps(stamps)[first.id])
+        shadow.setResolveInfosForIntent(intent, listOf(handler(second)))
+        val updated = resolver.resolveStamps(stamps)
+        assertEquals(null, updated[first.id])
+        assertEquals(listOf(Genres.BROWSER), updated[second.id])
+    }
+
+    @Test
+    fun measureGenreResolutionForFiveHundredEntries() {
+        val stamps =
+            (0 until 500).map { i ->
+                ActivityStamp(AppId("io.example.app$i", "Main", 0), 1, category = ApplicationInfo.CATEGORY_MAPS)
+            }
+        val resolver = resolver()
+        repeat(3) { resolver.resolveStamps(stamps) }
+        val nanos =
+            (0 until 10)
+                .map {
+                    val started = System.nanoTime()
+                    assertEquals(500, resolver.resolveStamps(stamps).size)
+                    System.nanoTime() - started
+                }.sorted()
+        val medianMillis = (nanos[4] + nanos[5]) / 2_000_000.0
+        println(
+            "ジャンル 500 入口・10 回: 中央値 $medianMillis ms、最小 ${nanos.first() / 1_000_000.0} ms、最大 ${nanos.last() / 1_000_000.0} ms（Robolectric）",
+        )
+    }
+
     private fun resolver(sdkInt: Int = 37) = GenreResolver(packageManager, sdkInt)
 
     /** 起動の入口を 1 つ（`Main`）持つアプリを入れる。 */

@@ -139,6 +139,7 @@ class IndexSyncInstrumentedTest {
         sync.sync()
         val published = LinkedBlockingQueue<SearchIndex>()
         sync.addListener { published += it }
+        sync.setSearchVisible(true)
         sync.startWatching()
         try {
             shell("pm uninstall $TRANSIT")
@@ -146,6 +147,7 @@ class IndexSyncInstrumentedTest {
             shell("pm install $ORIGINAL_APK")
             assertTrue("入ったことが届く", awaitIndex(published) { it.labelsFor("のりかえ") == listOf(TRANSIT_LABELS[0]) })
         } finally {
+            sync.setSearchVisible(false)
             sync.stopWatching()
             // 遅れて届いた変更の同期が、データベースを閉じた後に走らないようにする
             Thread.sleep(SETTLE_MILLIS)

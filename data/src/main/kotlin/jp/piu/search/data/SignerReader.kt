@@ -24,7 +24,7 @@ import java.security.cert.X509Certificate
 public class SignerReader(
     private val packageManager: PackageManager,
 ) {
-    /** [activity] のパッケージの署名者の DN（RFC 2253 の形）。読めなければ空。 */
+    /** [activity] のパッケージの署名者の DN（RFC 2253 の形）。読み取り失敗は例外で知らせ、再試行の対象にする。 */
     public fun read(activity: LaunchableActivity): List<String> {
         val info =
             if (activity.user == Process.myUserHandle()) {
@@ -32,11 +32,8 @@ public class SignerReader(
             } else {
                 null
             } ?: activity.applicationInfo.sourceDir?.let(::archiveInfo)
-        return info
-            ?.let(::signatures)
-            .orEmpty()
-            .mapNotNull(::subjectOf)
-            .distinct()
+        val signatures = info?.let(::signatures)?.takeIf { it.isNotEmpty() } ?: throw MaterialReadException()
+        return signatures.map(::subjectOf).distinct()
     }
 
     private fun installedInfo(packageName: String): PackageInfo? =
@@ -74,7 +71,7 @@ public class SignerReader(
             .distinct()
     }
 
-    private fun subjectOf(signature: Signature): String? =
+    private fun subjectOf(signature: Signature): String =
         try {
             val certificate =
                 CertificateFactory
@@ -82,7 +79,7 @@ public class SignerReader(
                     .generateCertificate(ByteArrayInputStream(signature.toByteArray())) as X509Certificate
             certificate.subjectX500Principal.name
         } catch (_: CertificateException) {
-            // 壊れた証明書は手がかりにしない
-            null
+            // 正常な署名の不在にすると欠けた提供元が固定されるため、次回に再試行する
+            throw MaterialReadException()
         }
 }

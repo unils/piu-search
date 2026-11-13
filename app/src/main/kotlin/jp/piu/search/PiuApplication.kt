@@ -15,6 +15,7 @@ class PiuApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container.profileLifecycle.start()
+        container.indexLifecycle.start()
     }
 
     override fun onTrimMemory(level: Int) {
