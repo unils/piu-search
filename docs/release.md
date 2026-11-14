@@ -58,7 +58,11 @@ apksigner sign --alignment-preserved --ks <メンテナの鍵> \
 apksigner verify --verbose --print-certs piu-search-0.1.0.apk
 ```
 
-`--alignment-preserved` は必ず付ける。build-tools 35 以降の `apksigner` は、付けないと署名のときに ZIP の詰め物（揃えのための余白）を作り直す。すると署名なしの APK とバイトの並びが変わり、F-Droid が署名を貼っても検証が通らない。署名の後に `zipalign` も掛けない（AGP が揃えてある）。
+`--alignment-preserved` は必ず付ける。build-tools 35 以降の `apksigner` は、付けないと署名のときに ZIP の詰め物（揃えのための余白）を作り直す。すると署名なしの APK とバイトの並びが変わり、F-Droid が署名を貼っても検証が通らない。揃え（圧縮しない資源や `.so` を 4 バイトや 16 KB の境目に置き、端末がファイルを展開せずにそのまま読めるようにすること）は、AGP が組み立てのときに済ませている。付けても揃えの効果は変わらず、詰め物の作り方が変わらないだけになる。署名の後に `zipalign` も掛けない。その代わり、署名の前に揃っていることを確かめる。
+
+```bash
+zipalign -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
+```
 
 `verify` の出力の `Signer #1 certificate SHA-256 digest` が、README の「インストール」に載せた指紋と同じであることを確かめる。
 
