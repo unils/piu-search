@@ -329,6 +329,8 @@ class SearchControllerTest {
         // 両方にあるアプリは両方出る
         controller.onQueryChange("ちず")
         assertEquals(setOf(MAPS, MAPS_WORK), controller.rows().map { it.app }.toSet())
+        // 混ぜて出すときだけ、仕事用の行に印を付ける（読み上げで同名のアプリを区別するため）
+        assertEquals(setOf(MAPS to false, MAPS_WORK to true), controller.rows().map { it.app to it.isWork }.toSet())
         // 一致がなくても「仕事用に N 件」は出さない（もう混ぜて引いている）
         controller.onQueryChange("ぴざ")
         assertEquals(SearchContent.NoMatch(workMatches = 0), controller.content)

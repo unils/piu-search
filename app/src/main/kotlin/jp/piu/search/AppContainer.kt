@@ -75,6 +75,12 @@ class AppContainer(
     /** 学習の書き出し・読み込みの結果で、学習の一覧の画面がまだ出し終えていないもの。画面を作り直しても失わないよう、ここに置く。 */
     val backupOutcome: PendingResult<BackupOutcome> = PendingResult()
 
+    /**
+     * 直近にアプリを開いたときの、起動の記録か学習の保存に失敗したか。
+     * 開くと検索の画面は閉じるので、次に画面を開いたときに控えめに知らせるためここに持つ。次の保存が両方成功したら下ろす。
+     */
+    @Volatile var openRecordFailed: Boolean = false
+
     /** 利用者の設定（初回の案内を閉じたかなど）。 */
     val settings: SettingsStore by lazy { SettingsStore(appContext) }
 

@@ -91,6 +91,7 @@ class OpenFlowTest {
             assertEquals(1, launches)
             assertTrue(ShadowToast.getTextOfLatestToast().contains("「おかね」で アプリ を出すようにしました"))
             scenario.onActivity { assertTrue(it.isFinishing) }
+            assertFalse(container.openRecordFailed)
         }
     }
 
@@ -518,6 +519,8 @@ class OpenFlowTest {
                 assertEquals(1, launches)
                 assertEquals(0, ShadowToast.shownToastCount())
                 scenario.onActivity { assertTrue(it.isFinishing) }
+                // 画面は閉じるので、次に開いたときに控えめに知らせる印が残る
+                assertTrue(container.openRecordFailed)
                 if (table == "learned") {
                     assertTrue(
                         container.learning.memory.records

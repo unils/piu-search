@@ -149,5 +149,6 @@
     <string name="learned_import_save_failed">読み込んだ学習を保存できませんでした。もう一度お試しください</string>
     <string name="search_record_failed">学習または起動の記録を保存できませんでした</string>
     <string name="search_record_load_failed">学習または起動の記録を読めませんでした</string>
+    <string name="open_record_failed">前に選んだ記録を保存できなかった</string>
     <string name="index_sync_failed">索引を更新できなかった</string>
 </resources>

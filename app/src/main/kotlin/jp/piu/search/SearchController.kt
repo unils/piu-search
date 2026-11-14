@@ -34,11 +34,13 @@ import java.util.concurrent.Executor
  * @property app アプリの識別子
  * @property label 表示名
  * @property reason 出た理由。名前で一致したとき・空の検索語の一覧では null（ui.md の「理由は名前で一致しなかったときだけ」）
+ * @property isWork 個人用と混ぜて出している中の仕事用の行。読み上げで個人用の同名のアプリと区別する
  */
 data class ResultRow(
     val app: AppId,
     val label: String,
     val reason: MatchReason? = null,
+    val isWork: Boolean = false,
 )
 
 /** 検索の画面の、検索窓の上に出すもの。 */
@@ -632,9 +634,16 @@ class SearchController(
 
     private companion object {
         const val TAG = "PiuSearch"
-
-        fun SearchResult.toRow(): ResultRow = ResultRow(app, label, reason.takeUnless { it.keyKind == SearchKeyKind.NAME })
-
-        fun IndexedApp.toRow(): ResultRow = ResultRow(id, label)
     }
+
+    /**
+     * 個人用と仕事用を混ぜて出すときだけ、仕事用の行に印を付ける。
+     * 切り替えで仕事用を選んでいる間は全部が仕事用なので、読み上げを冗長にしない。
+     */
+    private fun isMixedWork(app: AppId): Boolean = workProfileMode == WorkProfileMode.MIXED && app.profileSerial in workSerials
+
+    private fun SearchResult.toRow(): ResultRow =
+        ResultRow(app, label, reason.takeUnless { it.keyKind == SearchKeyKind.NAME }, isMixedWork(app))
+
+    private fun IndexedApp.toRow(): ResultRow = ResultRow(id, label, isWork = isMixedWork(id))
 }

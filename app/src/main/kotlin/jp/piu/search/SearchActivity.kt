@@ -51,6 +51,9 @@ class SearchActivity : ComponentActivity() {
     private var notices by mutableStateOf(emptyList<RescueNotice>())
 
     private var syncFailed by mutableStateOf(false)
+
+    // 前にアプリを開いたときの記録の保存失敗。画面が閉じる前に見せられないので、次に開いたときに出す
+    private var openRecordFailed by mutableStateOf(false)
     private val syncStatusListener: (IndexSyncStatus) -> Unit = { status ->
         ContextCompat.getMainExecutor(this).execute { syncFailed = status.failure != null }
     }
@@ -133,6 +136,7 @@ class SearchActivity : ComponentActivity() {
                     showReasons = searchSettings.showReasons,
                     workPausedNotice = controller.workPausedVisible,
                     syncFailed = syncFailed,
+                    openRecordFailed = openRecordFailed,
                     onOpenSettings = ::openSettings,
                 )
             }
@@ -159,6 +163,7 @@ class SearchActivity : ComponentActivity() {
         receiveNotices()
         sync.addStatusListener(syncStatusListener)
         syncFailed = sync.status.failure != null
+        openRecordFailed = container.openRecordFailed
         container.indexLifecycle.onSearchStarted(::reportStorageFailure)
         container.profileLifecycle.addListener(profileListener)
         container.profileLifecycle.onSearchStarted(syncNow = false)
@@ -315,7 +320,10 @@ class SearchActivity : ComponentActivity() {
         var historySaved = false
         container.launchHistory.record(app, now) { historySaved = it is StorageResult.Success }
         container.learning.record(decision, now, onDone = { learningResult ->
-            // 片方だけ保存できた場合も開く。失敗は Repository が識別子を含めずログに残す
+            // 片方だけ保存できた場合も開く。失敗は Repository が識別子を含めずログに残し、画面にも控えめに出す
+            val failed = !historySaved || learningResult !is StorageResult.Success
+            container.openRecordFailed = failed
+            ui.execute { openRecordFailed = failed }
             openSaved(if (historySaved && learningResult is StorageResult.Success) learningResult.value else emptyList())
         }) { label }
     }

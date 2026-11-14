@@ -2,6 +2,9 @@
 
 package jp.piu.search
 
+import android.content.Context
+import android.os.Build
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
@@ -63,6 +66,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalResources
@@ -77,6 +81,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -164,6 +169,8 @@ data class ProfileSwitch(
  * @param searchBarOnTop 検索窓を画面の上に置く（設定）
  * @param showReasons 出た理由を行に出す（設定）。出さなくても、長押しのメニューの出し分けには理由を使う
  * @param syncFailed 索引の更新に失敗した知らせを控えめに出す
+ * @param noticeBaseMillis 救済の知らせを出す時間の基準（ミリ秒）。ユーザー補助の「操作の時間」の設定があれば、それに合わせて延ばす
+ * @param openRecordFailed 前にアプリを開いたときの、起動の記録か学習の保存の失敗を控えめに出す
  * @param workPausedNotice 仕事用アプリが一時停止中である知らせを出す。既定は、切り替えで仕事用を選んでいて一時停止中のとき
  * @param onOpenSettings 設定のボタンを押したとき。null ならボタンを出さない。ボタンは検索語が空の間だけ、検索窓の中に小さく出す
  */
@@ -195,10 +202,13 @@ fun SearchScreen(
     workPausedNotice: Boolean = profileSwitch?.let { it.selected == ProfileTab.WORK && it.workPaused } ?: false,
     onOpenSettings: (() -> Unit)? = null,
     syncFailed: Boolean = false,
+    openRecordFailed: Boolean = false,
+    noticeBaseMillis: Long = NOTICE_MILLIS,
 ) {
     val rows = RowHandlers(icons, onOpen, rowMenu, onRowAction, onScrolled, showReasons, searchBarOnTop)
     val snackbar = remember { SnackbarHostState() }
-    RescueNoticeEffect(notices.firstOrNull(), snackbar, onUndoNotice, onNoticeDone)
+    val shownFor = noticeMillis(LocalContext.current, noticeBaseMillis)
+    RescueNoticeEffect(notices.firstOrNull(), query, shownFor, snackbar, onUndoNotice, onNoticeDone)
     // 打ち始めたら知らせを下げる。知らせは検索窓の直上（結果の 1 位の位置）に出るため
     LaunchedEffect(query) { if (query.isNotEmpty()) snackbar.currentSnackbarData?.dismiss() }
     // testTag を画面の外（UiAutomator）から resource-id として引けるようにする。
@@ -211,14 +221,8 @@ fun SearchScreen(
                     SearchBarRow(query, onQueryChange, onSearchAction, showingAllApps, onShowAllApps, autoFocus, focusKey, onOpenSettings)
                 }
                 val profile: @Composable () -> Unit = {
-                    if (syncFailed) {
-                        Text(
-                            stringResource(R.string.index_sync_failed),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    if (syncFailed) QuietNotice(stringResource(R.string.index_sync_failed))
+                    if (openRecordFailed) QuietNotice(stringResource(R.string.open_record_failed))
                     if (searchBarOnTop) {
                         profileSwitch?.let { ProfileSwitchRow(it.selected, onSelectProfile) }
                         if (workPausedNotice) WorkPausedNotice()
@@ -297,13 +301,30 @@ private class RowHandlers(
 )
 
 /**
- * 救済の知らせ [notice] を［取り消す］つきで [NOTICE_MILLIS] だけ出す。
+ * 救済の知らせを出す時間（ミリ秒）。API 29 以上はユーザー補助の「操作の時間」の設定（[AccessibilityManager.getRecommendedTimeoutMillis]）に従い、
+ * 28 は [baseMillis] のまま。知らせは文と［取り消す］の両方を持つので、読む時間と操作の時間の両方を見込む。
+ */
+internal fun noticeMillis(
+    context: Context,
+    baseMillis: Long,
+): Long {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return baseMillis
+    val manager = context.getSystemService(AccessibilityManager::class.java) ?: return baseMillis
+    val flags = AccessibilityManager.FLAG_CONTENT_TEXT or AccessibilityManager.FLAG_CONTENT_CONTROLS
+    return manager.getRecommendedTimeoutMillis(baseMillis.toInt(), flags).toLong()
+}
+
+/**
+ * 救済の知らせ [notice] を［取り消す］つきで [millis] だけ出す。
  *
- * Material の Snackbar の長さは 4 秒か 10 秒しか選べないので、期限なしで出して自分で下げる。
+ * Material の Snackbar の長さは 4 秒か 10 秒しか選べず、ユーザー補助の時間も使えないので、期限なしで出して自分で下げる。
+ * 検索語 [query] があるときは出さずに消費する。知らせは結果の 1 位に重なるため、打ち始めて下げた後の次の知らせも出さない。
  */
 @Composable
 private fun RescueNoticeEffect(
     notice: RescueNotice?,
+    query: String,
+    millis: Long,
     snackbar: SnackbarHostState,
     onUndo: (RescueNotice) -> Unit,
     onDone: (RescueNotice) -> Unit,
@@ -313,9 +334,15 @@ private fun RescueNoticeEffect(
     val undo = stringResource(R.string.rescue_undo)
     val currentUndo by rememberUpdatedState(onUndo)
     val currentDone by rememberUpdatedState(onDone)
+    val currentQuery by rememberUpdatedState(query)
+    val currentMillis by rememberUpdatedState(millis)
     LaunchedEffect(notice.undoKey) {
+        if (currentQuery.isNotEmpty()) {
+            currentDone(notice)
+            return@LaunchedEffect
+        }
         val result =
-            withTimeoutOrNull(NOTICE_MILLIS) {
+            withTimeoutOrNull(currentMillis) {
                 snackbar.showSnackbar(message, actionLabel = undo, duration = SnackbarDuration.Indefinite)
             }
         if (result == SnackbarResult.ActionPerformed) currentUndo(notice)
@@ -415,6 +442,17 @@ private fun SearchField(
             }
         }
     }
+}
+
+/** 検索を妨げない、小さな 1 行の知らせ。 */
+@Composable
+private fun QuietNotice(text: String) {
+    Text(
+        text,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -656,6 +694,8 @@ private fun ResultRowItem(
     val resources = LocalResources.current
     val reason = row.reason?.takeIf { rows.showReasons }?.let { describeReason(it, resources) }
     val actions = rows.menuFor(row)
+    // 混ぜて出すと同じ名前のアプリが個人用と仕事用に並ぶ。アイコンの印は読み上げに出ないので、状態として読ませる
+    val workState = if (row.isWork) stringResource(R.string.profile_work) else null
     var menuOpen by remember { mutableStateOf(false) }
     // メニューは行のすぐ下に出す。Box で行とメニューの位置を揃える
     Box {
@@ -666,6 +706,7 @@ private fun ResultRowItem(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(min = ROW_MIN_HEIGHT)
+                    .semantics { workState?.let { stateDescription = it } }
                     .combinedClickable(
                         onLongClickLabel = stringResource(R.string.row_menu),
                         onLongClick = if (actions.isEmpty()) null else ({ menuOpen = true }),
@@ -755,7 +796,7 @@ private fun CenteredMessage(
 private val ROW_MIN_HEIGHT = 56.dp
 
 /** 救済の知らせを出す時間（ミリ秒）。「数秒」（ui.md）。読んで［取り消す］を押せる長さにした（仮）。 */
-private const val NOTICE_MILLIS = 6_000L
+internal const val NOTICE_MILLIS = 6_000L
 
 /** 押せる部分の大きさの下限（dp。ui.md）。 */
 private const val MIN_TOUCH_DP = 48
