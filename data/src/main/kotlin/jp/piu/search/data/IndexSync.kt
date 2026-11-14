@@ -549,7 +549,6 @@ public class IndexSync internal constructor(
         // 一覧にあった入口が詳細で消えた場合は競合かもしれず、正常な削除と決めない
         dirty.filterTo(failed) { it in listed && it !in present }
         val removed = dirty.filterTo(HashSet()) { it !in listed && it.profileSerial in completed && it !in failed }
-        val unavailable = snapshot.apps.any { it.app.id.profileSerial !in completed }
         val newState = SyncState(changes.sequence, bootCount, locales, buildFingerprint)
         return Plan(
             if (full) {
@@ -559,14 +558,9 @@ public class IndexSync internal constructor(
             } else {
                 SyncMode.FULL_REVIEW
             },
-            // 未読の旧言語・旧ビルドを残したなら、再開時に全件の読み直しをやり直す
-            if (full && unavailable &&
-                previous != null
-            ) {
-                newState.copy(locales = previous.locales, buildFingerprint = previous.buildFingerprint)
-            } else {
-                newState
-            },
+            // 読めなかった入口は指紋なしで保存され、再開後に作り直される。前の言語・ビルドを残すと、
+            // 再開までの同期がすべて全件の作り直しになり、読めたプロファイルを毎回作り直してしまう。
+            newState,
             read,
             removed,
             completed,

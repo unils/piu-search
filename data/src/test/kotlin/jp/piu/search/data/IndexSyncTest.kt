@@ -317,12 +317,41 @@ class IndexSyncTest {
         assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
         device.locales = "en-US"
         device.install(WORK_TRANSIT.copy(label = "仕事用テスト2"), silently = true)
-        sync.sync()
+        // 言語の変更で作り直すのは読める個人用だけ。再開を待つ間の同期と再オープンでは繰り返さない
+        assertEquals(1, sync.sync().rebuiltApps)
         assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
+        assertEquals(0, sync.sync().rebuiltApps)
+        opened.forEach(LocalDatabase::close)
+        opened.clear()
+        val reopened = newSync()
+        assertEquals(0, reopened.sync().rebuiltApps)
         device.unavailable.clear()
+        // 指紋も更新時刻も変わらない静かな変更でも、再開後に仕事用だけを読み直す
+        assertEquals(1, reopened.sync().rebuiltApps)
+        assertEquals(setOf(PERSONAL, WORK), reopened.index.profiles())
+        assertEquals("仕事用テスト2", reopened.index.labelOf(WORK_TRANSIT.entry.id))
+        assertEquals(0, reopened.sync().rebuiltApps)
+    }
+
+    @Test
+    fun buildChangeWhilePausedRebuildsPersonalOnceAndWorkAfterResuming() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        val sync = newSync()
         sync.sync()
-        assertEquals(setOf(PERSONAL, WORK), sync.index.profiles())
-        assertEquals("仕事用テスト2", sync.index.labelOf(WORK_TRANSIT.entry.id))
+        device.unavailable += WORK
+        device.fingerprint = "test-build-2"
+        val first = sync.sync()
+        assertEquals(SyncMode.FULL_REBUILD, first.mode)
+        assertEquals(1, first.rebuiltApps)
+        val second = sync.sync()
+        assertEquals(SyncMode.CHANGES, second.mode)
+        assertEquals(0, second.rebuiltApps)
+        analyzer.calls = 0
+        device.unavailable.clear()
+        // 仕事用の入口は旧ビルドで作ったまま。APK が同じでも再開後に新しいビルドで作り直す
+        assertEquals(1, sync.sync().rebuiltApps)
+        assertTrue(analyzer.calls > 0)
+        assertEquals(0, sync.sync().rebuiltApps)
     }
 
     @Test
