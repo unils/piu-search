@@ -91,7 +91,7 @@ YomiLauncher は英単語の読みの辞書（約 6.7 万語）を持つが、�
 - ジャンルの id（評価セットと実装で使う。M1-06a で決めた）: `maps email phone messaging camera photos video music browser calendar contacts calculator clock files weather translate store pdf game news social`（表の順）
 - ジャンルの語はローマ字の経路でも引ける（`chizu`・`tenki` → 地図・天気のジャンル）
 - 「`category=`」は `ApplicationInfo.category`、「`CATEGORY_APP_`」はメイン Activity のカテゴリ。
-- `<queries>` にこれらの intent を書く（パッケージの可視性の制限）。
+- `<queries>` は `MAIN`＋`LAUNCHER` だけにする（M2-04）。入口のあるパッケージが見えれば、ジャンルの intent の問い合わせにも出るので、ジャンルごとの宣言は足さない。
 - 未確認: 日本のアプリ（Yahoo!マップ・ジョルダンなど）が `geo:` やカテゴリを実際に宣言しているか。実機で `adb shell cmd package query-activities -a android.intent.action.VIEW -d geo:0,0` を試せば確かめられる。実機の試験（M6）の項目に入れる。
 - 天気・乗換・銀行のように、OS の情報に出ないジャンルは学習で埋める。
 
