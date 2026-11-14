@@ -76,10 +76,30 @@ class AccessibilityNoticeTest {
     }
 
     @Test
-    fun recommendedTimeoutFromApi29IsAskedOfTheAccessibilityManager() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        // 設定がなければ、基準の時間のまま返る
-        assertEquals(6_000L, noticeMillis(context, 6_000L))
+    @Config(sdk = [29], qualifiers = "ja-rJP", shadows = [LongTimeoutAccessibilityShadow::class])
+    fun noticeIsExtendedToTheAccessibilityManagersRecommendedTimeout() {
+        var notices by mutableStateOf(listOf(notice("ペイ")))
+        compose.setContent {
+            PiuTheme {
+                SearchScreen(
+                    "",
+                    {},
+                    SearchContent.Waiting,
+                    icons,
+                    {},
+                    {},
+                    autoFocus = false,
+                    notices = notices,
+                    onNoticeDone = { done -> notices = notices.filterNot { it === done } },
+                )
+            }
+        }
+        // 基準は 6 秒のまま。推奨が 20 秒なので、6 秒を過ぎても残る
+        compose.mainClock.advanceTimeBy(NOTICE_MILLIS + 1_000)
+        compose.onNodeWithText("「おかね」で ペイ を出すようにしました").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(LongTimeoutAccessibilityShadow.RECOMMENDED_MILLIS)
+        compose.waitForIdle()
+        compose.onNodeWithText("「おかね」で ペイ を出すようにしました").assertDoesNotExist()
     }
 
     @Test
@@ -131,5 +151,19 @@ class AccessibilityNoticeTest {
         compose.onNodeWithText("前に選んだ記録を保存できなかった").assertIsDisplayed()
         compose.runOnIdle { failed = false }
         compose.onNodeWithText("前に選んだ記録を保存できなかった").assertDoesNotExist()
+    }
+}
+
+/** ユーザー補助の「操作の時間」が長い設定を模す。Robolectric の標準の shadow は推奨時間を持たない。 */
+@org.robolectric.annotation.Implements(android.view.accessibility.AccessibilityManager::class)
+class LongTimeoutAccessibilityShadow : org.robolectric.shadows.ShadowAccessibilityManager() {
+    @org.robolectric.annotation.Implementation
+    fun getRecommendedTimeoutMillis(
+        originalTimeout: Int,
+        uiContentFlags: Int,
+    ): Int = maxOf(originalTimeout, RECOMMENDED_MILLIS.toInt())
+
+    companion object {
+        const val RECOMMENDED_MILLIS = 20_000L
     }
 }
