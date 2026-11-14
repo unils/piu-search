@@ -17,13 +17,8 @@ import java.io.File
 class EvalRunTest {
     @Test
     fun `評価セットが合格の目安を満たす`() {
-        val apps = EvalSet.apps(EvalSet.parse(EvalSet.resource("apps.tsv")))
-        val queries = EvalSet.queries(EvalSet.parse(EvalSet.resource("queries.tsv")))
-        val runner = EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji)
-        val report = EvalReport(runner.run(queries))
-        // 学習の効き目: 学習の分類の行（正解）は変えず、その行から作った記録を重ねて全体を測り直す
-        val memory = runner.learnFrom(queries.filter { it.category == EvalSet.LEARNING_CATEGORY })
-        val learned = EvalReport(EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji, learning = memory).run(queries))
+        val report = evaluation.plain
+        val learned = evaluation.learned
 
         val dir = File(System.getProperty(REPORT_DIR_PROPERTY) ?: "build/reports/eval").apply { mkdirs() }
         val baseline = System.getProperty(BASELINE_PROPERTY)?.let(::File)?.takeIf { it.isFile }
@@ -39,6 +34,28 @@ class EvalRunTest {
 
         assertEquals(emptyList<String>(), report.failures(), "評価セットが合格の目安に届かない。${dir.absolutePath}/eval.md を見る")
         assertEquals(emptyList<String>(), learned.learnedFailures(report), "学習の目安に届かない。${dir.absolutePath}/eval.md を見る")
+    }
+
+    @Test
+    fun `学習の後の比べから外すのは、教えた語そのものを打った行だけ`() {
+        val outcomes = evaluation.learned.outcomes.associateBy { it.query.query to it.query.category }
+
+        fun taught(
+            query: String,
+            category: String,
+        ) = outcomes.getValue(query to category).taught
+        // 教えた「ぎんこう」を、かな・漢字・ローマ字・打ちかけの形で打った行
+        assertTrue(taught("ぎんこう", "ジャンル"))
+        assertTrue(taught("銀行", "漢字の検索語"))
+        assertTrue(taught("ginkou", "ローマ字"))
+        assertTrue(taught("ginko", "ローマ字"))
+        assertTrue(taught("ぎんk", "途中まで"))
+        // 教えた「しんかんせんよやく」「らくてんしょうけん」「あまぞんぷらいむ」の頭にあたる別の語。学習の副作用を見たいので比べる
+        assertFalse(taught("shinkansen", "ローマ字"))
+        assertFalse(taught("sinkansen", "ローマ字"))
+        assertFalse(taught("shinnkannsenn", "ローマ字"))
+        assertFalse(taught("rakuten", "ローマ字"))
+        assertFalse(taught("amazon", "英字のブランド"))
     }
 
     @Test
@@ -149,7 +166,24 @@ class EvalRunTest {
             taught,
         )
 
+    /** 評価セットを学習のない状態と学習の後で測った結果。 */
+    private class Evaluation(
+        val plain: EvalReport,
+        val learned: EvalReport,
+    )
+
     private companion object {
+        // 辞書の読み込みと全件の照合に数秒かかるので、テストのメソッドの間で 1 回だけ測る
+        val evaluation: Evaluation by lazy {
+            val apps = EvalSet.apps(EvalSet.parse(EvalSet.resource("apps.tsv")))
+            val queries = EvalSet.queries(EvalSet.parse(EvalSet.resource("queries.tsv")))
+            val runner = EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji)
+            // 学習の効き目: 学習の分類の行（正解）は変えず、その行から作った記録を重ねて全体を測り直す
+            val memory = runner.learnFrom(queries.filter { it.category == EvalSet.LEARNING_CATEGORY })
+            val learned = EvalRunner(apps, TestAnalyzers.generator, TestAnalyzers.kuromoji, learning = memory)
+            Evaluation(EvalReport(runner.run(queries)), EvalReport(learned.run(queries)))
+        }
+
         const val REPORT_DIR_PROPERTY = "eval.reportDir"
         const val BASELINE_PROPERTY = "eval.baseline"
     }
