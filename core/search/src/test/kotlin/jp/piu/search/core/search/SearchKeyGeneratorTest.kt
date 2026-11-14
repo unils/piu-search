@@ -39,6 +39,8 @@ class SearchKeyGeneratorTest {
             GENRE weather []
             READING ~やふてんき [2]
             ROMAJI ~yahotenki [4]
+            PACKAGE_NAME ~やふ []
+            PACKAGE_NAME ~うえざ []
             """,
             app("Yahoo!天気", "jp.co.yahoo.android.weather.type1", genres = listOf("weather")),
         )
@@ -58,6 +60,7 @@ class SearchKeyGeneratorTest {
             NAME ~じよるだん乗換案内 [5, 7]
             READING ~じよるだんのりかえあんない [5, 9]
             ROMAJI ~zyorudanorikaeanai [7, 14]
+            PACKAGE_NAME ~じよるだん []
             """,
             app("ジョルダン乗換案内", "jp.co.jorudan.nrkj"),
         )
@@ -78,6 +81,8 @@ class SearchKeyGeneratorTest {
             PACKAGE_NAME ほっとぺっぱー []
             NAME ~ほつとぺつぱぐるめ []
             ROMAJI ~hotopepagurume []
+            PACKAGE_NAME ~りくると []
+            PACKAGE_NAME ~ほつとぺつぱ []
             """,
             app("ホットペッパーグルメ", "jp.co.recruit.mtl.android.hotpepper"),
         )
@@ -119,6 +124,7 @@ class SearchKeyGeneratorTest {
             PACKAGE_NAME disneyplus []
             PACKAGE_NAME でぃずにー []
             READING ~でいずにぷらす [4]
+            PACKAGE_NAME ~でいずに []
             """,
             app("Disney+", "com.disney.disneyplus"),
         )
@@ -163,6 +169,7 @@ class SearchKeyGeneratorTest {
             ROMAJI ~mapu []
             READING ~まつぷす []
             ROMAJI ~mapusu []
+            PACKAGE_NAME ~ぐぐる []
             """,
             app("Google マップ", "com.google.android.apps.maps", localized = listOf("Maps", "Google マップ"), genres = listOf("maps")),
         )
@@ -303,7 +310,7 @@ class SearchKeyGeneratorTest {
     @Test
     fun `表示名と同じ別の言語の名前と、空の名前からはキーを作らない`() {
         assertEquals(
-            listOf("NAME てんき []", "ROMAJI tenki []", "PACKAGE_NAME weather []", "PACKAGE_NAME うぇざー []"),
+            listOf("NAME てんき []", "ROMAJI tenki []", "PACKAGE_NAME weather []", "PACKAGE_NAME うぇざー []", "PACKAGE_NAME ~うえざ []"),
             generator.generate(app("てんき", "x.weather", localized = listOf("テンキ", "", "!!"))).map(::describe),
         )
         assertEquals(emptyList<String>(), generator.generate(app("", "x")).map(::describe))

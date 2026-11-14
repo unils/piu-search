@@ -115,7 +115,7 @@ private class GenreWord(
         if (romaji != null && romajiPrefix != null && romaji.startsWith(romajiPrefix)) {
             return if (forms.romajiIsStrict) KeyForm.STRICT else KeyForm.LOOSE
         }
-        if (loose.startsWith(forms.loose)) return KeyForm.LOOSE
+        if (forms.loose.isNotEmpty() && loose.startsWith(forms.loose)) return KeyForm.LOOSE
         val romajiLoosePrefix = forms.romajiLoose
         if (romajiLoose != null && romajiLoosePrefix != null && romajiLoose.startsWith(romajiLoosePrefix)) return KeyForm.LOOSE
         return null
