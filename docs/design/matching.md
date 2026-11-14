@@ -36,7 +36,7 @@ YomiLauncher は英単語の読みの辞書（約 6.7 万語）を持つが、�
 
 細則（M1-03、2026-10-28）:
 
-- 表は `core/search/src/main/resources/jp/piu/search/core/search/brands.tsv`（408 語）。列は「綴り・読み・メモ」。書式は `tools:dict` の `checkBrandTable` が `check` で確かめる
+- 表は `core/search/src/main/resources/jp/piu/search/core/search/brands.tsv`。列は「綴り・読み・メモ」。書式は `tools:dict` の `checkBrandTable` が `check` で確かめる
 - 略語として 1 字ずつ読むのは、NFKC の後が A〜Z と記号だけの語（1 字の大文字を含む。数字・小文字を含む語は除く）。1 字の読みは 1 通り（組み合わせが増えすぎないため）
 - 1 字ずつ読むと誤る大文字の語（GO・AWA・OPPO・ATOK・BASE・PAY など）は表に書いて読みを決める
 - アプリ名によく出る一般語（maps・pay・plus・on・with など）も表に入れた。短い語は誤って当たる元になりうるので、評価セットで見る

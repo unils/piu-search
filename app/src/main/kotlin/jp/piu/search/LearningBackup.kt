@@ -114,7 +114,9 @@ object LearningBackup {
     ): String {
         val records = JSONArray()
         // 並びを決めておく（同じ学習なら同じファイルになり、差分を見やすい）
+        // 自分の番号でも今ある仕事用の番号でもない記録（消し損ねた行など）は、仕事用と取り違えないよう書かない
         memory.records.values
+            .filter { it.app.profileSerial == profiles.own || it.app.profileSerial in profiles.work }
             .sortedWith(compareBy({ it.query.value }, { it.app.packageName }, { it.app.activityName }, { it.app.profileSerial }))
             .forEach { record ->
                 records.put(

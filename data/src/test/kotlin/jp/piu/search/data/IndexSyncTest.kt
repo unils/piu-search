@@ -446,6 +446,30 @@ class IndexSyncTest {
     }
 
     @Test
+    fun syncGivesUpWhenTheDeviceKeepsChangingDuringCalculation() {
+        device.install(TRANSIT)
+        var calculations = 0
+        val restless =
+            object : DeviceApps by device {
+                override fun locales(): String = "ja-JP-$calculations"
+
+                override fun changedPackages(sequence: Int): PackageChanges {
+                    calculations++
+                    return device.changedPackages(sequence)
+                }
+            }
+        val sync = newSync(source = restless)
+
+        org.junit.Assert.assertThrows(SyncNotSettledException::class.java) { sync.sync() }
+        assertEquals(MAX_SYNC_ATTEMPTS, calculations)
+        assertEquals(SyncFailure.SYNC, sync.status.failure)
+        assertTrue(sync.labels().isEmpty())
+
+        // 落ち着けば次の要求で保存する
+        assertEquals(1, newSync().sync().rebuiltApps)
+    }
+
+    @Test
     fun onlySequenceProgressIsSavedWithoutRebuilding() {
         device.install(TRANSIT)
         val sync = newSync()

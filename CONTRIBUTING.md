@@ -126,6 +126,13 @@ adb shell am start-user 10
 adb shell cmd package install-existing --user 10 <パッケージ名>
 ```
 
+### CI が確かめる範囲と、手で確かめる範囲
+
+- 計器テストは CI で自動では回らない（手動で起動したときだけ）。仕事用プロファイルの計器テストは、端末にプロファイルがないと黙って飛ぶ
+- `:release-test` と `:benchmark` は `check` で組み立てない。変えたら上の 2 つ目のコマンドを手で回す
+- セカンダリユーザーとプライベートスペースでの振る舞いは、端末で確かめていない
+- 再現可能なビルド（同じソースから同じ APK ができること）は確かめていない。確かめ方は F-Droid の配布の準備で書く
+
 ### R8 を通した版の計器テスト
 
 release でだけ起きる誤り（R8 がクラスの名前を変えて、同梱の資源が見つからなくなるなど）は、debug の計器テストでは見つからない。app の `benchmarkRelease` を端末に入れ、`:release-test` がアプリの外から（UiAutomator と shell で）試す。`benchmarkRelease` は Baseline Profile の Gradle プラグイン（下）が release から作る build type で、release と同じく R8 を通し、debug の鍵で署名する。

@@ -76,6 +76,7 @@ public data class SyncReport(
  * 端末と保存した索引を合わせ、失敗しても最後の正常な写しを保つ。
  * 個人用は変更番号、仕事用は毎回の APK 指紋と入口一覧で変更を見つける。
  * ジャンルは APK によらず全体を判定する。計算は書き手の外、保存と反映は書き手で行う。
+ * 何を読み直し何を消すかの規則は [SyncPlanner] にあり、ここは端末の読み取り・キーの生成・保存・知らせの消費を受け持つ。
  * Callback の登録は Application が所有し、背景では通知だけを溜める。
  * [sync] は完了を待つため、画面のスレッドや書き手から呼ばない。
  */
@@ -291,7 +292,7 @@ public class IndexSync internal constructor(
         val started = SystemClock.elapsedRealtime()
         val removedProfiles = HashSet<Long>()
         var analyzerMillis = 0L
-        while (true) {
+        repeat(MAX_SYNC_ATTEMPTS) {
             val before =
                 writer.run {
                     removedProfiles += profiles?.reconcile().orEmpty()
@@ -305,10 +306,9 @@ public class IndexSync internal constructor(
                     if (revision == before.revision) publish(restoredIndex)
                 }
             }
-            val bootCount = device.bootCount()
-            val locales = device.locales()
-            val buildFingerprint = device.buildFingerprint()
-            val plan = plan(before, bootCount, locales, buildFingerprint, notifications.keys)
+            val deviceState = readDeviceState()
+            val round = plan(before, deviceState, notifications.keys)
+            val plan = round.sync
             analyzerMillis += warmUpIfNeeded(plan.rebuild)
             val failed = plan.failedPackages.toMutableSet()
             val built = build(plan.rebuild, failed)
@@ -339,7 +339,8 @@ public class IndexSync internal constructor(
                 }
             val changed = next != before.apps
             val nextIndex = if (changed) searchIndex(next) else null
-            if (device.bootCount() != bootCount || device.locales() != locales || device.buildFingerprint() != buildFingerprint) continue
+            // 計算中に端末の前提が変わった計画は保存せず、計算し直す
+            if (readDeviceState() != deviceState) return@repeat
             val report =
                 writer.run {
                     removedProfiles += profiles?.reconcile().orEmpty()
@@ -357,7 +358,7 @@ public class IndexSync internal constructor(
                     if (nextIndex != null) publish(nextIndex)
                     synchronized(requestLock) {
                         notifications.forEach { (request, generation) ->
-                            val targets = plan.requestTargets[request]
+                            val targets = round.requestTargets[request]
                             val completed =
                                 !targets.isNullOrEmpty() &&
                                     targets.all { key ->
@@ -374,7 +375,7 @@ public class IndexSync internal constructor(
                         analyzerLoadMillis = analyzerMillis,
                         totalMillis = SystemClock.elapsedRealtime() - started,
                         indexSize = apps.size,
-                        genreMillis = plan.genreMillis,
+                        genreMillis = round.genreMillis,
                         genreFailed = plan.genres == null,
                         failedPackages = failed.size,
                         failedProfiles = plan.failedProfiles,
@@ -382,7 +383,11 @@ public class IndexSync internal constructor(
                 }
             if (report != null) return report
         }
+        // 前提が変わり続けて保存できない。知らせは残るので、次の要求で最初からやり直す
+        throw SyncNotSettledException()
     }
+
+    private fun readDeviceState(): DeviceState = DeviceState(device.bootCount(), device.locales(), device.buildFingerprint())
 
     /**
      * Application の部品から Callback を登録する。背景では通知を保持し、前面でのみ同期を頼む。
@@ -455,126 +460,54 @@ public class IndexSync internal constructor(
         return true
     }
 
+    // 端末の読み取りと SyncPlanner の段を交互に行う。読む範囲は前の段の結果で決まる
     private fun plan(
         snapshot: Snapshot,
-        bootCount: Int?,
-        locales: String,
-        buildFingerprint: String,
+        deviceState: DeviceState,
         requested: Set<PackageRequest>,
     ): Plan {
-        val previous = snapshot.state
-        val full = previous == null || previous.locales != locales || previous.buildFingerprint != buildFingerprint
-        val sequenceUsable = !full && bootCount != null && previous.bootCount == bootCount && previous.changeSequence != null
-        val changes = device.changedPackages(if (sequenceUsable) checkNotNull(previous.changeSequence) else 0)
-        val profiles = device.stampProfiles(withUpdateTime = !sequenceUsable)
-        val readable = profiles.filterValues { it.status == ProfileReadStatus.COMPLETE }.keys
-        val stamps =
-            profiles.values.flatMap { it.items }.filter {
-                it.id.profileSerial in readable &&
-                    snapshot.isPresent(it.id.profileSerial)
-            }
-        val listed = stamps.groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
-        val stored = snapshot.apps.groupBy { it.key }
-        val knownProfiles = profiles.keys + stored.keys.map { it.profileSerial }
-        val requestTargets =
-            requested
-                .mapNotNull { request ->
-                    val serials =
-                        if (request.user == null) {
-                            knownProfiles
-                        } else {
-                            (request.profileSerial ?: readProfileSerial(request.user))?.let(::setOf) ?: return@mapNotNull null
-                        }
-                    request to serials.mapTo(HashSet()) { PackageKey(it, request.packageName) }
-                }.toMap()
-        val forced = requestTargets.values.flatten().toHashSet()
-
-        val dirty =
-            (stored.keys + listed.keys).filterTo(HashSet()) { key ->
-                val old = stored[key]
-                val now = listed[key]
-                if (key.profileSerial !in readable || !snapshot.isPresent(key.profileSerial)) {
-                    false
-                } else if (full || old == null || now == null) {
-                    true
-                } else {
-                    val stamp = now.first()
-                    val fingerprintChanged =
-                        !stamp.isCurrentProfile &&
-                            (stamp.apkFingerprint == null || old.first().apkFingerprint != stamp.apkFingerprint)
-                    val timeChanged =
-                        !sequenceUsable &&
-                            (stamp.packageUpdatedAt == 0L || old.first().packageUpdatedAt != stamp.packageUpdatedAt)
-                    key in forced || (sequenceUsable && key.packageName in changes.packages) ||
-                        old.any { it.apkFingerprint == null } || fingerprintChanged || timeChanged ||
-                        old.mapTo(HashSet()) { it.app.id } != now.mapTo(HashSet()) { it.id }
-                }
-            }
+        val scope = SyncPlanner.scope(snapshot.state, deviceState)
+        val changes = device.changedPackages(scope.since)
+        val profiles = device.stampProfiles(withUpdateTime = !scope.sequenceUsable)
+        val requestTargets = requestTargets(requested, profiles.keys + snapshot.apps.map { it.app.id.profileSerial })
+        val targets =
+            SyncPlanner.targets(
+                scope,
+                snapshot.apps,
+                snapshot::isPresent,
+                profiles,
+                changes.packages,
+                requestTargets.values.flatten().toHashSet(),
+            )
         val genreStarted = SystemClock.elapsedRealtime()
         val genres =
             try {
-                device.genres(stamps)
+                device.genres(targets.stamps)
             } catch (_: RuntimeException) {
                 null
             }
         val genreMillis = SystemClock.elapsedRealtime() - genreStarted
-        val candidates = if (dirty.isEmpty()) emptyMap() else device.readProfiles(dirty.mapTo(HashSet()) { it.packageName })
-        val completed =
-            if (dirty.isEmpty()) {
-                readable
-            } else {
-                readable intersect
-                    candidates.filterValues { it.status == ProfileReadStatus.COMPLETE }.keys
-            }
-        val failed = HashSet<PackageKey>()
-        candidates.forEach { (serial, result) ->
-            result.failedPackages.forEach { failed += PackageKey(serial, it) }
-            result.items.filter { !it.complete || it.apkFingerprint == null }.forEach { failed += it.key }
-        }
-        dirty.filterTo(failed) { it.profileSerial in readable && it.profileSerial !in completed }
-        val read =
-            candidates.values
-                .flatMap { it.items }
-                .filter { it.key in dirty && it.entry.id.profileSerial in completed && snapshot.isPresent(it.entry.id.profileSerial) }
-                .map { app ->
-                    val fingerprint = listed[app.key]?.firstOrNull()?.apkFingerprint
-                    if (fingerprint != null && app.apkFingerprint != fingerprint) {
-                        failed += app.key
-                        app.copy(apkFingerprint = null, complete = false)
-                    } else {
-                        app
-                    }
-                }
-        val present = read.mapTo(HashSet()) { it.key }
-        // 一覧にあった入口が詳細で消えた場合は競合かもしれず、正常な削除と決めない
-        dirty.filterTo(failed) { it in listed && it !in present }
-        val removed = dirty.filterTo(HashSet()) { it !in listed && it.profileSerial in completed && it !in failed }
-        val newState = SyncState(changes.sequence, bootCount, locales, buildFingerprint)
-        return Plan(
-            if (full) {
-                SyncMode.FULL_REBUILD
-            } else if (sequenceUsable) {
-                SyncMode.CHANGES
-            } else {
-                SyncMode.FULL_REVIEW
-            },
-            // 読めなかった入口は指紋なしで保存され、再開後に作り直される。前の言語・ビルドを残すと、
-            // 再開までの同期がすべて全件の作り直しになり、読めたプロファイルを毎回作り直してしまう。
-            newState,
-            read,
-            removed,
-            completed,
-            failed,
-            requestTargets,
-            dirty.mapTo(HashSet()) { it.packageName },
-            genres,
-            genreMillis,
-            (
-                profiles.filterValues { it.status == ProfileReadStatus.FAILED }.keys +
-                    candidates.filterValues { it.status == ProfileReadStatus.FAILED }.keys
-            ).size,
-        )
+        val candidates = if (targets.dirty.isEmpty()) emptyMap() else device.readProfiles(targets.dirtyPackages)
+        val plan = SyncPlanner.plan(scope, deviceState, targets, snapshot::isPresent, changes.sequence, genres, candidates)
+        return Plan(plan, requestTargets, genreMillis)
     }
+
+    // 知らせごとの対象の組。通知元のないものは、一覧か索引にあるすべてのプロファイルを指す。
+    // 番号を解決できない知らせは対象を持たず、消費されずに次の同期へ残る
+    private fun requestTargets(
+        requested: Set<PackageRequest>,
+        knownProfiles: Set<Long>,
+    ): Map<PackageRequest, Set<PackageKey>> =
+        requested
+            .mapNotNull { request ->
+                val serials =
+                    if (request.user == null) {
+                        knownProfiles
+                    } else {
+                        (request.profileSerial ?: readProfileSerial(request.user))?.let(::setOf) ?: return@mapNotNull null
+                    }
+                request to serials.mapTo(HashSet()) { PackageKey(it, request.packageName) }
+            }.toMap()
 
     private fun warmUpIfNeeded(rebuild: List<InstalledApp>?): Long {
         if (rebuild.isNullOrEmpty() || analyzer !is KuromojiReadingAnalyzer || analyzer.isLoaded) return 0
@@ -605,7 +538,7 @@ public class IndexSync internal constructor(
 
     private fun save(
         before: List<StoredApp>,
-        plan: Plan,
+        plan: SyncPlan,
         next: List<StoredApp>,
     ) {
         if (state == null) {
@@ -660,18 +593,11 @@ public class IndexSync internal constructor(
         val profileSerial: Long?,
     )
 
+    /** 計画と、知らせの消費・記録に使う付随の値。 */
     private class Plan(
-        val mode: SyncMode,
-        val state: SyncState,
-        val rebuild: List<InstalledApp>,
-        val removedPackages: Set<PackageKey>,
-        val readable: Set<Long>,
-        val failedPackages: Set<PackageKey>,
+        val sync: SyncPlan,
         val requestTargets: Map<PackageRequest, Set<PackageKey>>,
-        val changedPackages: Set<String>,
-        val genres: Map<jp.piu.search.core.search.AppId, List<jp.piu.search.core.search.GenreId>>?,
         val genreMillis: Long,
-        val failedProfiles: Int,
     )
 
     private companion object {
@@ -679,9 +605,15 @@ public class IndexSync internal constructor(
     }
 }
 
-private val InstalledApp.key: PackageKey get() = PackageKey(entry.id.profileSerial, entry.id.packageName)
+/**
+ * 同期 1 回で計算し直す上限。計算し直すのは、計算中に端末の言語・ビルド・再起動の回数が変わったとき、
+ * 書き手で索引かプロファイルが変わったとき（削除・プロファイルの削除）、保存先の版や状態が変わって読み直すとき。
+ * どれも 1 回の出来事なので普段は 1〜2 回で終わる。1 回が全件の作り直しで数秒かかり得るので、重なりへの余裕を見て 5 回で打ち切る。
+ */
+internal const val MAX_SYNC_ATTEMPTS = 5
 
-private val StoredApp.key: PackageKey get() = PackageKey(app.id.profileSerial, app.id.packageName)
+/** [MAX_SYNC_ATTEMPTS] 回計算しても前提が落ち着かず、保存できなかった。状態は [SyncFailure.SYNC] になる。 */
+internal class SyncNotSettledException : IllegalStateException("同期の前提が変わり続け、保存できなかった")
 
 /** 利用者に詳細な識別子を出さずに知らせる同期の失敗。 */
 public enum class SyncFailure {
