@@ -53,7 +53,7 @@ internal class EvalReport(
         return result
     }
 
-    /** Markdown の報告。[extra] は末尾に足す節（学習の後・前回との差。なければ null）。 */
+    /** Markdown の報告。[extra] は末尾に足す節（学習の後・基準との差。なければ null）。 */
     fun markdown(extra: String? = null): String =
         buildString {
             appendLine("# 評価セットの結果")
@@ -107,7 +107,7 @@ internal class EvalReport(
             }
         }
 
-    /** 検索語ごとの結果の TSV。次の回に前回の結果として渡し、差を出す（[diffAgainst]）。 */
+    /** 検索語ごとの結果の TSV（順位と上位の表示名）。基準（[EvalBaseline]）と違い、手で見比べるための報告。 */
     fun tsv(): String =
         buildString {
             appendLine(TSV_HEADER)
@@ -123,46 +123,6 @@ internal class EvalReport(
                 )
             }
         }
-
-    /**
-     * 前回の [tsv] の中身 [previous] との差の Markdown。検索語と分類の組で突き合わせる。
-     */
-    fun diffAgainst(previous: String): String {
-        val before =
-            previous
-                .lines()
-                .drop(1)
-                .filter { it.isNotBlank() }
-                .map { it.split('\t') }
-                .associate { (it[0] to it[1]) to it }
-        val gained = mutableListOf<String>()
-        val lost = mutableListOf<String>()
-        val moved = mutableListOf<String>()
-        for (o in outcomes) {
-            val old = before[o.query.query to o.query.category] ?: continue
-            val oldTop3 = old[TSV_TOP3] == "1"
-            val oldRank = old[TSV_RANK]
-            val newRank = o.effectiveRank?.toString() ?: "-"
-            val line = "${o.query.query}（${o.query.category}）: $oldRank → $newRank"
-            when {
-                !oldTop3 && o.isTop3 -> gained += line
-                oldTop3 && !o.isTop3 -> lost += line
-                oldRank != newRank -> moved += line
-            }
-        }
-        return buildString {
-            appendLine("## 前回との差")
-            appendLine()
-            appendLine("順位は指標に使う順位（`-` は当たらない）。")
-            appendLine()
-            appendLine("- 新たに 3 位以内に入った: ${gained.size} 件")
-            gained.forEach { appendLine("  - $it") }
-            appendLine("- 新たに 3 位以内から外れた: ${lost.size} 件")
-            lost.forEach { appendLine("  - $it") }
-            appendLine("- 順位だけ変わった: ${moved.size} 件")
-            moved.forEach { appendLine("  - $it") }
-        }
-    }
 
     /** 「学習」の分類の 3 位以内の正解率。学習の効き目の物差し（M4-01）。 */
     val learningTop3Rate: Double = EvalMetrics(outcomes.filter { it.query.category == EvalSet.LEARNING_CATEGORY }).top3Rate()
@@ -326,8 +286,6 @@ internal class EvalReport(
             listOf("表記ゆれ", "送り仮名", "ローマ字", "英字のブランド", "略語", "ジャンル", "漢字の検索語", "途中まで", "短い語", "学習")
 
         private const val TSV_HEADER = "検索語\t分類\t順位\t3位以内\t上位"
-        private const val TSV_RANK = 2
-        private const val TSV_TOP3 = 3
 
         fun percent(rate: Double): String = "%.1f%%".format(Locale.ROOT, rate * 100)
 

@@ -194,7 +194,11 @@ public fun withReading(analyzer: ReadingAnalyzer): SearchQuery
 ### テスト
 
 - 新しい処理にはテストを書く。不具合を直すときは、その不具合を再現するテストを先に足す
-- 照合を変えたら、評価セット（`core/search/src/test/resources/eval/`）の結果が下がっていないことを確かめる（[docs/design/testing.md](docs/design/testing.md#評価セット)）
+- 照合を変えたら、評価セット（`core/search/src/test/resources/eval/`）の結果が下がっていないことを確かめる（[docs/design/testing.md](docs/design/testing.md#評価セット)）。`check` は、検索語ごとの順位が基準（`eval/baseline.tsv`）より 1 件でも下がると落ちる。意図して変えたとき（照合の調整で一部の語が下がるのを受け入れる・評価セットに行を足す）は、基準を書き直し、`baseline.tsv` の差分を pull request に載せて理由を書く
+
+  ```bash
+  ./gradlew :core:search:updateEvalBaseline
+  ```
 - 網羅率の数値を上げるためだけのテストは書かない
 - `core:*` は Android に依存させない（照合と学習を JVM だけで速くテストするため。[docs/design/architecture.md](docs/design/architecture.md)）
 - 画面を変えてスクリーンショットの正解（`app/src/test/screenshots/`）が変わったら、`./gradlew :app:recordRoborazziDebug` で撮り直し、差分を pull request に書く

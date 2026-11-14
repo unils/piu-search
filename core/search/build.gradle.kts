@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -43,15 +44,33 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
+// 評価セットの報告（EvalRunTest）の置き場所。作業ディレクトリに頼らず、ビルドの出力に置く
+val evalReportDir = layout.buildDirectory.dir("reports/eval")
+
 tasks.test {
     useJUnitPlatform()
-    // 評価セットの報告（EvalRunTest）の置き場所。作業ディレクトリに頼らず、ビルドの出力に置く
-    val evalReportDir = layout.buildDirectory.dir("reports/eval")
+    // 評価セットが基準より下がったとき、どの検索語が下がったかを失敗の文に書くので、CI の記録でも読めるよう文を出す
+    testLogging {
+        exceptionFormat = TestExceptionFormat.FULL
+        showStackTraces = false
+    }
     outputs.dir(evalReportDir)
     systemProperty("eval.reportDir", evalReportDir.get().asFile.absolutePath)
-    // 前回の results.tsv を -PevalBaseline=<パス> で渡すと、報告に差を足す
-    providers.gradleProperty("evalBaseline").orNull?.let {
-        systemProperty("eval.baseline", file(it).absolutePath)
-        inputs.file(it)
-    }
+}
+
+// 評価セットの基準（src/test/resources/eval/baseline.tsv）を今の結果で書き直す。照合や評価セットを意図して変えたときに回し、
+// 差分をレビューに出す。check には入れない（書き直しは人が決める）
+tasks.register<Test>("updateEvalBaseline") {
+    description = "評価セットの基準（eval/baseline.tsv）を今の結果で書き直す"
+    group = "verification"
+    val test = sourceSets.test.get()
+    testClassesDirs = test.output.classesDirs
+    classpath = test.runtimeClasspath
+    useJUnitPlatform()
+    filter.includeTestsMatching("jp.piu.search.core.search.EvalRunTest")
+    systemProperty("eval.reportDir", evalReportDir.get().asFile.absolutePath)
+    systemProperty("eval.updateBaseline", file("src/test/resources/eval/baseline.tsv").absolutePath)
+    // 書き直しは結果がキャッシュから出ても意味がないので、毎回回す
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
 }

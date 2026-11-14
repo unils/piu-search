@@ -119,10 +119,10 @@ internal object EvalSet {
     // Java のパッケージ名の文法。大文字（com.Slack）と _ を許す
     private val PACKAGE_NAME = Regex("""[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+""")
 
-    fun resource(name: String): String =
-        requireNotNull(EvalSet::class.java.getResourceAsStream("/eval/$name")) {
-            "資源がない: eval/$name"
-        }.use { it.readBytes().toString(Charsets.UTF_8) }
+    fun resourceOrNull(name: String): String? =
+        EvalSet::class.java.getResourceAsStream("/eval/$name")?.use { it.readBytes().toString(Charsets.UTF_8) }
+
+    fun resource(name: String): String = requireNotNull(resourceOrNull(name)) { "資源がない: eval/$name" }
 
     fun parse(text: String): TsvTable {
         val lines =
