@@ -131,7 +131,7 @@ adb shell cmd package install-existing --user 10 <パッケージ名>
 - 計器テストは CI で自動では回らない（手動で起動したときだけ）。仕事用プロファイルの計器テストは、端末にプロファイルがないと黙って飛ぶ
 - `:release-test` と `:benchmark` は `check` で組み立てない。変えたら上の 2 つ目のコマンドを手で回す
 - セカンダリユーザーとプライベートスペースでの振る舞いは、端末で確かめていない
-- 再現可能なビルド（同じソースから同じ APK ができること）は確かめていない。確かめ方は F-Droid の配布の準備で書く
+- 再現可能なビルド（同じソースから同じ APK ができること）は CI で確かめていない。版を出すときに `tools/reproducible-build/check.sh` で手で確かめる（[docs/release.md](docs/release.md)）
 
 ### R8 を通した版の計器テスト
 
@@ -221,7 +221,7 @@ public fun withReading(analyzer: ReadingAnalyzer): SearchQuery
 ### 文書
 
 - 決めたことは [docs/decisions.md](docs/decisions.md) に、理由と一緒に足す
-- 利用者に見える変更は、[CHANGELOG.md](CHANGELOG.md) の `[Unreleased]` に足す。版を出すときは、その版の説明を `fastlane/metadata/android/ja-JP/changelogs/<versionCode>.txt` にも書く（500 バイトまで。IzzyOnDroid の上限）
+- 利用者に見える変更は、[CHANGELOG.md](CHANGELOG.md) の `[Unreleased]` に足す。版を出すときは、その版の説明を `fastlane/metadata/android/{ja-JP,en-US}/changelogs/<versionCode>.txt` にも書く（500 字まで。F-Droid の上限）。版の出し方は [docs/release.md](docs/release.md)
 - 調べたこと（[docs/research/](docs/research/)）には、日付と出典を付ける。一次資料（Android Developers の文書・AOSP のソース・ライブラリの公式の文書とソース）に当たり、確かめられなかったことは「未確認」と書く
 
 ## コミットの書き方

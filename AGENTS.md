@@ -4,7 +4,7 @@ AI のコーディングエージェント向けの要点。人向けの決ま�
 
 ## このリポジトリ
 
-Android の端末に入っているアプリを、日本語の読み・表記ゆれ・ジャンルで探す検索アプリ。Kotlin と Jetpack Compose で書いている。設計は [docs/design/](docs/design/)、決めたことは [docs/decisions.md](docs/decisions.md)。
+Android の端末に入っているアプリを、日本語の読み・表記ゆれ・ジャンルで探す検索アプリ。Kotlin と Jetpack Compose で書いている。設計は [docs/design/](docs/design/)、決めたことは [docs/decisions.md](docs/decisions.md)、版の出し方は [docs/release.md](docs/release.md)。
 
 - `core/{text,reading,search}`: 正規化・読み・照合と学習。Android に依存しない Kotlin（JVM だけでテストする）
 - `data`: 端末のアプリの索引とデータベース（Android ライブラリ）
