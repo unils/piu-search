@@ -21,6 +21,7 @@ import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -29,6 +30,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 // 画面を作り直しても（向きの変更など）、まだ出していない知らせを失わない（M5-02）
 @RunWith(AndroidJUnit4::class)
@@ -47,33 +49,56 @@ class RecreationTest {
     }
 
     @Test
+    @Config(sdk = [28, 37])
     fun rotationDuringSavingLeavesTheNoticeForTheNextSearchEvenAfterSixSeconds() {
         val app = AppId("io.example.paypay", "Main", 0)
         val pair = LearnedPair(NormalizedText("おかね"), app)
         val release = CountDownLatch(1)
+        val indexStarted = CountDownLatch(1)
+        val releaseIndex = CountDownLatch(1)
         compose.mainClock.autoAdvance = false
         try {
             ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
                 container.learning.awaitIdle()
+                // 索引が未完成の順序を必ず試すため、検索語と一覧の変更が済むまで生成を止める
+                container.derivedIndexExecutor.execute {
+                    indexStarted.countDown()
+                    check(releaseIndex.await(10, TimeUnit.SECONDS))
+                }
+                check(indexStarted.await(10, TimeUnit.SECONDS))
                 scenario.onActivity { activity ->
                     controller(activity).onIndexChanged(SearchIndex(listOf(IndexedApp(app, "PayPay", emptyList()))))
                     controller(activity).onQueryChange("おかね")
                     controller(activity).showAllApps(true)
                 }
-                compose.waitUntil { controllerOf(scenario).content is SearchContent.AllApps }
-                container.learning.runAfterPending { release.await() }
-                scenario.onActivity { activity ->
-                    SearchActivity::class.java
-                        .getDeclaredMethod("open", OpenRequest::class.java)
-                        .apply { isAccessible = true }
-                        .invoke(activity, controller(activity).openRequest(app))
+                releaseIndex.countDown()
+                // AllApps という型だけでは、索引を待つ空の一覧も通る。実在する行の準備と描画を待って選ぶ
+                compose.waitUntil {
+                    (controllerOf(scenario).content as? SearchContent.AllApps)
+                        ?.rows
+                        ?.any { it.app == app && it.label == "PayPay" } == true
                 }
+                compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+                container.learning.runAfterPending { release.await() }
+                compose.onNodeWithText("PayPay").performClick()
                 scenario.recreate()
                 release.countDown()
                 container.learning.awaitIdle()
+                assertEquals(
+                    "PayPay",
+                    container.learning.pendingNotices
+                        .single()
+                        .label,
+                )
                 compose.waitForIdle()
                 compose.mainClock.advanceTimeBy(7_000)
                 compose.onNodeWithText("取り消す").assertDoesNotExist()
+                assertTrue(
+                    container.learning.memory.records
+                        .getValue(pair)
+                        .rescued,
+                )
+                assertEquals(listOf(pair), container.learning.pendingNotices.map { it.pair })
                 scenario.onActivity(Activity::finish)
             }
             ActivityScenario.launch(SearchActivity::class.java).use {
@@ -84,6 +109,7 @@ class RecreationTest {
                 assertEquals(null, container.learning.memory.records[pair])
             }
         } finally {
+            releaseIndex.countDown()
             release.countDown()
         }
     }
