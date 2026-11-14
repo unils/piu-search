@@ -34,7 +34,7 @@ internal class InstallationGuard(
                 // 古い版には印がなく、元の端末か移行先か区別できない。その場合も安全側に倒す。
                 db.execSQL("DELETE FROM app")
                 db.execSQL("DELETE FROM meta")
-                // 自分の番号は主ユーザーでなければ 0 でない（別のユーザーなど）。ほかの番号は、移行先の同じ番号の仕事用に取り違えないよう捨てる。
+                // 自分の番号は、別のユーザーに入れた場合 0 でない。ほかの番号は、移行先の同じ番号の仕事用に取り違えないよう捨てる。
                 val own = arrayOf<Any>(ownSerial())
                 db.execSQL("DELETE FROM learned WHERE profile_serial != ?", own)
                 db.execSQL("DELETE FROM launch_stat WHERE profile_serial != ?", own)
