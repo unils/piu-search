@@ -9,10 +9,12 @@ import jp.piu.search.core.text.NormalizedText
  *
  * 並べ方:
  *
- * 1. 段階（[MatchStage]。完全一致 → 前方一致 → 語の頭からの一致 → ジャンル → 部分一致 → 頭文字・飛ばし一致 → 提供元）
- * 2. 同じ段階の中で、厳密形の一致を先に、緩い形の一致を直後に
- * 3. 点（キーの種類の重み ＋ 学習の加点 ＋ 起動の回数と新しさの加点）の高い順
- * 4. 表示名の順（同じ点でも毎回同じ順になるように）
+ * 1. 段階（[MatchStage]。完全一致 → 前方一致 → 語の頭からの一致 → ジャンル → 部分一致 → 頭文字・飛ばし一致 → 提供元）。
+ *    学習で段階を上げたアプリ（[RankingSignals.stageLift]、learning.md の R6）は、元の段階から上げた幅だけ上の段階に置く
+ * 2. 同じ段階の中で、学習で上げたアプリを先に。上げたアプリどうしは元の段階の上のほうを先に
+ * 3. 同じ段階の中で、厳密形の一致を先に、緩い形の一致を直後に
+ * 4. 点（キーの種類の重み ＋ 学習の加点 ＋ 起動の回数と新しさの加点）の高い順
+ * 5. 表示名の順（同じ点でも毎回同じ順になるように）
  *
  * アプリ 1 つに複数のキーが当たったら、最も上に並ぶ当たり方を 1 つ選び、それを出た理由にする。
  *
@@ -219,12 +221,18 @@ public class SearchEngine(
         val suppressed = index.suppressedFor(query.strict.value)
         for (app in 0 until index.size) if (best.stage[app] != NO_MATCH && app !in suppressed) matched.add(app)
         val score = IntArray(index.size)
+        val lift = IntArray(index.size)
         for (app in matched) {
             val id = index.apps[app].id
             score[app] = best.weight[app] + signals.learnedBoost(query, id) + signals.usageBoost(id)
+            lift[app] = signals.stageLift(query, id).coerceIn(0, best.stage[app])
         }
+        // 上げた幅が元の段階の差に届けば、その段階のアプリより先に並ぶ（差が 2 段なら 2 段上げて逆転する）。
+        // 学習のない検索語は lift が 0 なので、並びは段階 → 形 → 点のまま
         matched.sortWith(
-            compareBy<Int> { best.stage[it] }
+            compareBy<Int> { best.stage[it] - lift[it] }
+                .thenBy { if (lift[it] > 0) 0 else 1 }
+                .thenBy { best.stage[it] }
                 .thenBy { best.form[it] }
                 .thenByDescending { score[it] }
                 .thenBy { index.labelRank[it] },
@@ -247,7 +255,7 @@ public class SearchEngine(
                     genre = best.genre[app],
                     viaQueryReading = best.viaReading[app],
                 )
-            results.add(SearchResult(entry.id, entry.label, reason, score[app]))
+            results.add(SearchResult(entry.id, entry.label, reason, score[app], lift[app]))
         }
         return results
     }

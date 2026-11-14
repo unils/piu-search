@@ -190,6 +190,42 @@ chizu       | Google マップ        | GENRE       | GENRE
     }
 
     @Test
+    fun `段階を上げる幅が元の段階の差に届いたアプリだけが、その段階の先頭に並ぶ`() {
+        // 「のりかえ」: 完全一致（段階 1）・前方一致（段階 2）・語の頭からの一致（段階 3）
+        val names = listOf("のりかえ", "のりかえ港", "ジョルダンのりかえ", "ジョルダンのりかえ駅")
+
+        fun ranked(lift: Map<String, Int>): List<String> {
+            val signals =
+                object : RankingSignals {
+                    override fun learnedBoost(
+                        query: SearchQuery,
+                        app: AppId,
+                    ): Int = 0
+
+                    override fun usageBoost(app: AppId): Int = 0
+
+                    override fun stageLift(
+                        query: SearchQuery,
+                        app: AppId,
+                    ): Int = lift[app.activityName.removePrefix("x.")] ?: 0
+                }
+            return SearchEngine(indexOf(names), signals = signals).search(query("のりかえ")).map { it.label }
+        }
+        val plain = ranked(emptyMap())
+        assertEquals(listOf("のりかえ", "のりかえ港", "ジョルダンのりかえ", "ジョルダンのりかえ駅"), plain)
+        // 1 段: 段階 3 の「ジョルダンのりかえ駅」が段階 2 の先頭へ。完全一致は越えない
+        assertEquals(listOf("のりかえ", "ジョルダンのりかえ駅", "のりかえ港", "ジョルダンのりかえ"), ranked(mapOf("ジョルダンのりかえ駅" to 1)))
+        // 2 段: 完全一致より上へ。差より大きくても最上段で止まる
+        assertEquals(listOf("ジョルダンのりかえ駅", "のりかえ", "のりかえ港", "ジョルダンのりかえ"), ranked(mapOf("ジョルダンのりかえ駅" to 2)))
+        assertEquals(ranked(mapOf("ジョルダンのりかえ駅" to 2)), ranked(mapOf("ジョルダンのりかえ駅" to 9)))
+        // 同じ段階に上がったアプリどうしは、元の段階の上のほうを先に
+        assertEquals(
+            listOf("のりかえ港", "ジョルダンのりかえ駅", "のりかえ", "ジョルダンのりかえ"),
+            ranked(mapOf("ジョルダンのりかえ駅" to 2, "のりかえ港" to 1)),
+        )
+    }
+
+    @Test
     fun `種類の重みは同じ段階の中で効く`() {
         // 「map」: 英語名（別の言語の名前）の前方一致と、パッケージ名の語の前方一致。既定の重みでは名前の側が上
         val apps =

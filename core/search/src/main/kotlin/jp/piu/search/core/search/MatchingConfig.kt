@@ -71,7 +71,8 @@ public data class MatchingConfig(
 /**
  * 学習と起動の記録による加点（matching.md の「照合の段階と順位」、learning.md の R3）。
  *
- * 同じ段階の中の順位にだけ効き、段階を越えない。学習の加点は [LearnedMemory.learnedBoost]、起動の加点は [LaunchHistory.usageBoost] が決める。
+ * 加点は同じ段階の中の順位にだけ効く。学習の加点は [LearnedMemory.learnedBoost]、起動の加点は [LaunchHistory.usageBoost] が決める。
+ * 段階をまたぐのは [stageLift] だけ（learning.md の R6）。
  * 照合の中で結果のアプリごとに呼ぶので、記録は前もってメモリに読んでおき、ここでは引くだけにする。
  */
 public interface RankingSignals {
@@ -85,6 +86,15 @@ public interface RankingSignals {
 
     /** [app] の起動の回数と新しさによる加点。 */
     public fun usageBoost(app: AppId): Int
+
+    /**
+     * [query] で [app] を学習で上げる段階の数（learning.md の R6、[LearnedMemory.stageLift]）。0 なら元の段階のまま。
+     * 起動の記録は段階を上げない（検索語に結びつかないため）。
+     */
+    public fun stageLift(
+        query: SearchQuery,
+        app: AppId,
+    ): Int = 0
 
     /** 定数。 */
     public companion object {

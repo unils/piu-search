@@ -73,6 +73,11 @@ public class LaunchHistory(
             ): Int = learning.learnedBoost(query, app)
 
             override fun usageBoost(app: AppId): Int = this@LaunchHistory.usageBoost(app, now)
+
+            override fun stageLift(
+                query: SearchQuery,
+                app: AppId,
+            ): Int = learning.stageLift(query, app, now)
         }
 
     /**

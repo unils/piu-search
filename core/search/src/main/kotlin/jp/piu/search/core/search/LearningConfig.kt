@@ -14,6 +14,9 @@ package jp.piu.search.core.search
  * @property boostPerUse 学習の記録 1 回あたりの加点（R3）
  * @property maxBoost 学習の加点の上限（R3。何十回開いても同じ段階の中で少し上がるだけにする）
  * @property forgetAfterMillis 最後に使ってから記録を消すまでの時間（ミリ秒。R5 の 180 日）
+ * @property freeSelections 段階を上げる幅（R6）に数えない選択の回数。1 回の選択は誤って押したものかもしれないため
+ * @property rescueStageLift 救済になったことのある記録が段階を上げる幅に足す段数（R6）
+ * @property staleStageLiftMillis 最後に使ってからこの時間がたった記録は、段階を上げる幅を 1 段減らす（ミリ秒。R6 の 30 日）
  */
 public data class LearningConfig(
     val minVisibleResults: Int = 5,
@@ -22,10 +25,14 @@ public data class LearningConfig(
     val boostPerUse: Int = 5,
     val maxBoost: Int = 20,
     val forgetAfterMillis: Long = 180 * DAY_MILLIS,
+    val freeSelections: Int = 1,
+    val rescueStageLift: Int = 1,
+    val staleStageLiftMillis: Long = 30 * DAY_MILLIS,
 ) {
     init {
         require(minVisibleResults >= 1) { "見えていたとみなす件数は 1 以上: $minVisibleResults" }
         require(boostPerUse >= 0 && maxBoost >= 0) { "加点は 0 以上: $boostPerUse, $maxBoost" }
+        require(freeSelections >= 0 && rescueStageLift >= 0) { "段階を上げる幅の数値は 0 以上: $freeSelections, $rescueStageLift" }
     }
 
     /**

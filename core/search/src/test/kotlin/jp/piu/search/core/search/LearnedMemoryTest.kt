@@ -137,13 +137,100 @@ class LearnedMemoryTest {
     }
 
     @Test
-    fun `学習の加点は段階を越えない`() {
-        // 「ちず」: 地図（読みの完全一致）が、何度選んでもジャンルで出る Google マップより上
+    fun `段階を上げる幅は、回数から 1 回分を引き、救済なら 1 段足したもの`() {
+        fun lift(
+            selections: Int,
+            rescued: Boolean = false,
+        ): Int {
+            var memory = LearnedMemory.EMPTY
+            if (rescued) memory = memory.recorded(LearningDecision(null, listOf(pair("めーる", MAIL))), NOW)
+            repeat(selections) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+            return memory.stageLift(SearchQuery.of("めーる"), MAIL, NOW)
+        }
+        // 1 回の選択（誤って押したかもしれない）では段階をまたがない
+        assertEquals(0, lift(0))
+        assertEquals(0, lift(1))
+        assertEquals(1, lift(2))
+        assertEquals(2, lift(3))
+        // 救済は、見えなかったアプリを自分で探して開いた記録なので、1 回で 1 段上げる
+        assertEquals(1, lift(0, rescued = true))
+        assertEquals(2, lift(1, rescued = true))
+        // 上げる幅は段階の数で頭を打つ
+        assertEquals(MatchStage.entries.size - 1, lift(100))
+    }
+
+    @Test
+    fun `段階を上げるのは、検索語が記録の語と同じか、英字で最後の 1 音を打ちかけた形のときだけ`() {
         var memory = LearnedMemory.EMPTY
-        repeat(50) { memory = memory.recorded(LearningDecision(pair("ちず", MAPS), emptyList()), NOW) }
-        val results = engineWith(memory).search(SearchQuery.of("ちず"))
-        assertEquals("地図", results.first().label)
-        assertTrue(results.any { it.label == "Google マップ" })
+        repeat(3) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+
+        fun lift(raw: String) = memory.stageLift(SearchQuery.of(raw), MAIL, NOW)
+        assertEquals(2, lift("めーる"))
+        assertEquals(2, lift("めーr"))
+        assertEquals(2, lift("meru"))
+        assertEquals(2, lift("mer"))
+        // 最後の 1 音に入る前の形・かなだけの途中の形・長い語・別の語では上げない（加点は同じ段階の中でだけ効く）
+        assertEquals(0, lift("me"))
+        assertEquals(0, lift("めー"))
+        assertEquals(0, lift("めーるあぷり"))
+        assertEquals(0, lift("めもり"))
+        assertEquals(0, lift(""))
+        assertEquals(0, memory.stageLift(SearchQuery.of("めーる"), MAPS, NOW))
+    }
+
+    @Test
+    fun `30 日使わなかった記録は、段階を上げる幅を 1 段減らす`() {
+        var memory = LearnedMemory.EMPTY
+        repeat(3) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+        assertEquals(2, memory.stageLift(SearchQuery.of("めーる"), MAIL, NOW + 29 * DAY))
+        assertEquals(1, memory.stageLift(SearchQuery.of("めーる"), MAIL, NOW + 30 * DAY))
+        // 1 回の救済は、古くなれば段階をまたがない
+        val rescued = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(pair("めーる", MAIL))), NOW)
+        assertEquals(0, rescued.stageLift(SearchQuery.of("めーる"), MAIL, NOW + 30 * DAY))
+    }
+
+    @Test
+    fun `選び続けたアプリは段階をまたいで上がり、元の段階の差が大きいほど多くの選択が要る`() {
+        // 「めーる」: メルカリ（ローマ字の緩い形の前方一致、段階 2）がメールのアプリ（ジャンル、段階 4）より上
+        fun top(times: Int): String {
+            var memory = LearnedMemory.EMPTY
+            repeat(times) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+            return labels(engineWith(memory), "めーる").first()
+        }
+        assertEquals("メルカリ", top(0))
+        assertEquals("メルカリ", top(2))
+        assertEquals("Gmail", top(3))
+
+        // 「ちず」: 地図（読みの完全一致、段階 1）とジャンルの Google マップ（段階 4）は差が 3 段
+        fun topChizu(times: Int): String {
+            var memory = LearnedMemory.EMPTY
+            repeat(times) { memory = memory.recorded(LearningDecision(pair("ちず", MAPS), emptyList()), NOW) }
+            return labels(engineWith(memory), "ちず").first()
+        }
+        assertEquals("地図", topChizu(3))
+        assertEquals("Google マップ", topChizu(4))
+    }
+
+    @Test
+    fun `段階を上げたアプリの出た理由は元の当たり方のまま`() {
+        var memory = LearnedMemory.EMPTY
+        repeat(3) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+        val first = engineWith(memory).search(SearchQuery.of("めーr")).first()
+        assertEquals("Gmail", first.label)
+        assertEquals(MatchStage.GENRE, first.reason.stage)
+        assertEquals(2, first.stageLift)
+    }
+
+    @Test
+    fun `印を付けた組は、選び続けた記録があっても段階を上げず、出さない`() {
+        var memory = LearnedMemory.EMPTY
+        repeat(5) { memory = memory.recorded(LearningDecision(pair("めーる", MAIL), emptyList()), NOW) }
+        val marked = memory.suppressed(pair("めーる", MAIL), NOW)
+        assertEquals(0, marked.stageLift(SearchQuery.of("めーる"), MAIL, NOW))
+        assertFalse(labels(engineWith(marked), "めーる").contains("Gmail"))
+        // 印はその検索語の厳密形だけに効く。打ちかけの形では、印のない記録はないので上げない
+        assertEquals(0, marked.stageLift(SearchQuery.of("めーr"), MAIL, NOW))
+        assertEquals("メルカリ", labels(engineWith(marked), "めーr").first())
     }
 
     @Test
@@ -423,6 +510,8 @@ class LearnedMemoryTest {
         val MAPS = AppId("io.example.maps", "Main", 0)
         val YAHOO_MAP = AppId("io.example.yahoomap", "Main", 0)
         val CHIZU = AppId("io.example.chizu", "Main", 0)
+        val MAIL = AppId("io.example.gmail", "Main", 0)
+        val MERCARI = AppId("io.example.mercari", "Main", 0)
 
         val BASE: SearchIndex by lazy {
             SearchIndex.build(
@@ -432,6 +521,8 @@ class LearnedMemoryTest {
                     AppEntry(MAPS, "Google マップ", genres = listOf(GenreId("maps"))),
                     AppEntry(YAHOO_MAP, "Yahoo!マップ", genres = listOf(GenreId("maps"))),
                     AppEntry(CHIZU, "地図"),
+                    AppEntry(MAIL, "Gmail", genres = listOf(GenreId("email"))),
+                    AppEntry(MERCARI, "メルカリ"),
                 ),
                 TestAnalyzers.generator,
             )
