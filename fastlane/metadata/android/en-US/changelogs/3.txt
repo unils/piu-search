@@ -1,0 +1,1 @@
+First public release. Find installed apps by Japanese reading, spelling variants, genre and developer. No internet permission; everything runs on the device.

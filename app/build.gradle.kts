@@ -76,8 +76,8 @@ android {
         applicationId = "jp.piu.search"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 2
-        versionName = "0.0.2"
+        versionCode = 3
+        versionName = "0.1.0"
         // ソースの置き場（設定画面の「このアプリについて」）。公開前の仮の値。公開の場所が決まったら（M7）ここだけを差し替える
         buildConfigField("String", "SOURCE_URL", "\"https://github.com/unils/piu-search\"")
 
@@ -91,7 +91,17 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // release の鍵はビルドの設定に入れない（リポジトリの外に置き、組み立てた後に署名する）。
             // そのため Baseline Profile のプラグインが作る benchmarkRelease・nonMinifiedRelease は debug の鍵で署名される
+            // git のリモートの URL とコミットを META-INF/version-control-info.textproto に入れない。
+            // 組み立てる場所（clone の仕方）で中身が変わり、F-Droid の組み立てと APK が一致しなくなるため
+            vcsInfo.include = false
         }
+    }
+
+    // 依存の一覧を APK の署名ブロックと AAB に入れない。Google Play 向けの暗号化された情報で、
+    // F-Droid のスキャナーが中身を確かめられない物として扱う
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
