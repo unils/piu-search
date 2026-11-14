@@ -3,6 +3,8 @@
 package jp.piu.search.data
 
 import android.content.Context
+import android.os.Process
+import android.os.UserManager
 import android.util.AtomicFile
 import android.util.Log
 import androidx.room.RoomDatabase
@@ -16,6 +18,7 @@ import java.util.UUID
  *
  * noBackupFilesDir の乱数はバックアップも端末間転送もされない。DB 内の印だけが移るので、
  * BOOT_COUNT やプロファイル番号が偶然同じでも移行を検出できる。端末の識別子は使わない。
+ * 学習と起動の記録は、このアプリが動いているユーザーのシリアル番号のものだけを残す。
  */
 internal class InstallationGuard(
     private val context: Context,
@@ -31,9 +34,10 @@ internal class InstallationGuard(
                 // 古い版には印がなく、元の端末か移行先か区別できない。その場合も安全側に倒す。
                 db.execSQL("DELETE FROM app")
                 db.execSQL("DELETE FROM meta")
-                // 主ユーザーの serial は 0。ほかの番号は、移行先の同じ番号の仕事用に取り違えないよう捨てる。
-                db.execSQL("DELETE FROM learned WHERE profile_serial != 0")
-                db.execSQL("DELETE FROM launch_stat WHERE profile_serial != 0")
+                // 自分の番号は、別のユーザーに入れた場合 0 でない。ほかの番号は、移行先の同じ番号の仕事用に取り違えないよう捨てる。
+                val own = arrayOf<Any>(ownSerial())
+                db.execSQL("DELETE FROM learned WHERE profile_serial != ?", own)
+                db.execSQL("DELETE FROM launch_stat WHERE profile_serial != ?", own)
                 // 消去と印の更新を同時に確定し、中断後に未処理の DB を同じインストールだと扱わない。
                 db.execSQL("INSERT OR REPLACE INTO installation (id, token) VALUES (0, ?)", arrayOf(installationId))
             }
@@ -47,6 +51,12 @@ internal class InstallationGuard(
         db: SupportSQLiteDatabase,
         token: String,
     ): Boolean = db.query("SELECT token FROM installation WHERE id = 0").use { it.moveToFirst() && it.getString(0) == token }
+
+    private fun ownSerial(): Long {
+        val serial = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
+        // 負は自分のユーザーが見つからない場合で、実際には起きないはず。全件を消すより、主ユーザー（0）として扱った以前の振る舞いに倒す。
+        return if (serial >= 0) serial else 0
+    }
 
     private fun installationId(): String =
         synchronized(InstallationGuard::class.java) {

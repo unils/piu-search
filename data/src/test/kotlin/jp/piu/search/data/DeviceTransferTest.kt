@@ -3,6 +3,8 @@
 package jp.piu.search.data
 
 import android.content.Context
+import android.os.Process
+import android.os.UserManager
 import android.util.AtomicFile
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -26,6 +28,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
@@ -94,6 +97,37 @@ class DeviceTransferTest {
         assertEquals(
             setOf(PERSONAL_PAIR),
             reopened.learned
+                .load()
+                .records.keys,
+        )
+    }
+
+    @Test
+    fun cleanupKeepsTheRecordsOfTheUserTheAppRunsInEvenIfItIsNotTheMainUser() {
+        // 別のユーザー（主ユーザー以外）に入れた場合。自分の番号は 0 でなく、主ユーザーの番号 0 は他人のものになる。
+        shadowOf(context.getSystemService(UserManager::class.java)).setSerialNumberForUser(Process.myUserHandle(), SECONDARY)
+        val own = AppId("io.example.own", "Main", SECONDARY)
+        val ownPair = LearnedPair(NormalizedText("よみ"), own)
+        val original = open()
+        listOf(own, PERSONAL_APP, WORK_APP).forEachIndexed { i, app -> original.launchStats.record(app, 100L + i) }
+        original.learned.save(
+            LearnedMemory.EMPTY,
+            LearnedMemory.EMPTY.recorded(LearningDecision(ownPair, listOf(PERSONAL_PAIR, WORK_PAIR)), 300),
+        )
+        original.close()
+        opened.remove(original)
+        // 印の破損は別のユーザーでも起きる。整理が走っても、自分の記録を仕事用と取り違えて消さない。
+        File(context.noBackupFilesDir, "installation-id").writeText("")
+        val restored = open()
+        assertEquals(
+            setOf(own),
+            restored.launchStats
+                .load()
+                .records.keys,
+        )
+        assertEquals(
+            setOf(ownPair),
+            restored.learned
                 .load()
                 .records.keys,
         )
@@ -397,6 +431,9 @@ class DeviceTransferTest {
 
     private companion object {
         const val FILE = "device-transfer-test.db"
+
+        // 主ユーザーのあとに作ったユーザーの番号。主ユーザー（0）と仕事用（WORK）のどちらとも違う。
+        const val SECONDARY = 10L
         val PERSONAL_APP = AppId("io.example.personal", "Main", PERSONAL)
         val WORK_APP = AppId("io.example.work", "Main", WORK)
         val PERSONAL_PAIR = LearnedPair(NormalizedText("よみ"), PERSONAL_APP)
