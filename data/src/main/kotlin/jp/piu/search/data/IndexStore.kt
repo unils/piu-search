@@ -15,7 +15,7 @@ import jp.piu.search.data.db.SearchKeyRow
 /**
  * 保存する入口 1 つ: 索引のアプリと、パッケージの最後の更新の時刻。
  *
- * @property apkFingerprint base と split のパスと時刻。不完全な材料なら null にして次回に読み直す
+ * @property apkFingerprint base と split のパスと時刻。材料が不完全か旧版で作った索引なら null にして次回に読み直す
  * @property app 識別子・表示名・検索キー
  * @property packageUpdatedAt パッケージの最後の更新の時刻（`PackageInfo.lastUpdateTime`、ミリ秒）。全件の見直しで、作り直すアプリを選ぶのに使う
  */
@@ -55,7 +55,7 @@ public data class PackageKey(
  * 保存した索引を読み出したもの。
  *
  * @property apps 保存した入口。保存した順に並ぶ
- * @property state 索引を作ったときの状態。索引をまだ作っていない、または索引の版が変わって空にしたなら null
+ * @property state 索引を作ったときの状態。索引をまだ作っていない、または索引の版が変わって作り直しが要るなら null
  */
 public data class StoredIndex(
     val apps: List<StoredApp>,
@@ -69,9 +69,9 @@ public data class StoredIndex(
  * 索引の表（`app`・`search_key`・`meta`）の読み書き。[LocalDatabase.index] で得る。
  *
  * 書き込みはどれも 1 つのトランザクションで行うので、途中で落ちても半端な索引は残らない。
- * 学習の表には触れない（索引の作り直しで学習を消さないため）。
+ * 学習と起動の記録の表には触れない（索引の作り直しで記録を消さないため）。
  *
- * @property indexVersion 今の索引の版（`SearchIndexVersion.CURRENT`）。保存した索引の版と違えば、読むときに索引の表を空にする
+ * @property indexVersion 今の索引の版（`SearchIndexVersion.CURRENT`）。保存した索引の版と違えば、読むときに同期の状態と APK 指紋を無効にする
  */
 public class IndexStore internal constructor(
     private val database: PiuRoomDatabase,
@@ -80,19 +80,22 @@ public class IndexStore internal constructor(
     private val dao = database.indexDao()
 
     /**
-     * 保存した索引を読む。索引の版が今の版と違えば、索引の表だけを空にして、空の索引（[StoredIndex.state] が null）を返す。
-     * 空の索引を受け取った側（M2-04 の同期）が全件を作り直す。
+     * 保存した索引を読む。索引の版が違えば、状態を null にし、全件の APK 指紋を無効にして作り直しを要求する。
+     * 入口とキーは保ち、一時停止などで読めないプロファイルも、読み直せるまで旧索引で検索できる。
      */
     public fun load(): StoredIndex =
         database.runInTransaction<StoredIndex> {
             val meta = dao.meta()
-            if (meta == null || meta.indexVersion != indexVersion) {
-                clearIndexTables()
-                return@runInTransaction StoredIndex(emptyList(), null)
-            }
+            val needsRebuild = meta == null || meta.indexVersion != indexVersion
+            // 状態を先に無効にしておき、同期前にプロセスが終わっても全件の作り直しを忘れない。
+            // 読めない旧索引は同期時に指紋なしで保存され、再開後は版の値が更新済みでも作り直す
+            if (needsRebuild) dao.deleteMeta()
             val keysByApp = dao.keys().groupBy({ it.appId }, { it.toSearchKey() })
             val apps = dao.apps().map { it.toStoredApp(keysByApp[it.id].orEmpty()) }
-            StoredIndex(apps, meta.toSyncState())
+            StoredIndex(
+                if (needsRebuild) apps.map { it.copy(apkFingerprint = null) } else apps,
+                if (needsRebuild) null else meta.toSyncState(),
+            )
         }
 
     /** 索引をすべて [apps] に置き換え、状態を [state] にする。 */
@@ -111,7 +114,7 @@ public class IndexStore internal constructor(
      * 索引の一部を置き換える。[removedProfiles] のプロファイルと [removedPackages] のパッケージの入口を消し、
      * [apps] を入れる（同じプロファイルとパッケージの古い入口は消してから入れる）。状態を [state] にする。
      *
-     * 今の版の索引があるときだけ呼べる（先に [load] か [replaceAll] を呼ぶ）。なければ [IllegalStateException]。
+     * 今の版で保存済みの索引があるときだけ呼べる（先に [replaceAll] を呼ぶ）。なければ [IllegalStateException]。
      */
     public fun update(
         apps: List<StoredApp>,
@@ -120,7 +123,7 @@ public class IndexStore internal constructor(
         state: SyncState,
     ) {
         database.runInTransaction {
-            // 版の違う索引に一部だけ書き足すと、古いキーと新しいキーが混ざるため
+            // 作り直しを始める前に差分だけ保存すると、版変更を忘れて旧索引を確定してしまうため
             check(dao.meta()?.indexVersion == indexVersion) { "今の版（$indexVersion）の索引がない" }
             removedProfiles.forEach(dao::deleteProfile)
             val replaced = apps.mapTo(LinkedHashSet()) { PackageKey(it.app.id.profileSerial, it.app.id.packageName) }
@@ -175,11 +178,6 @@ public class IndexStore internal constructor(
                 ),
             )
         dao.insertKeys(stored.app.keys.mapIndexed { position, key -> key.toRow(appId, position) })
-    }
-
-    private fun clearIndexTables() {
-        dao.deleteAllApps()
-        dao.deleteMeta()
     }
 
     private fun SyncState.toMetaRow(): MetaRow =

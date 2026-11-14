@@ -30,6 +30,9 @@ class TestAppsInstalledInstrumentedTest {
         // mail の SecondTestActivity は mailto: だけを受け、LAUNCHER ではない。nolauncher は LAUNCHER を持たない
         val expected =
             mapOf(
+                "browser" to listOf("TestActivity"),
+                "browsersecondary" to listOf("TestActivity"),
+                "camera" to listOf("TestActivity"),
                 "game" to listOf("TestActivity"),
                 "mail" to listOf("TestActivity"),
                 "maps" to listOf("TestActivity"),

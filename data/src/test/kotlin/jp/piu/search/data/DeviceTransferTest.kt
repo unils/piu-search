@@ -232,12 +232,15 @@ class DeviceTransferTest {
         original.close()
         opened.remove(original)
         val upgraded = LocalDatabase.open(context, FILE, SearchIndexVersion.CURRENT + 1, allowMainThread = true).also(opened::add)
-        assertTrue(
+        assertEquals(
+            setOf(PERSONAL_APP, WORK_APP),
             upgraded.index
                 .load()
                 .apps
-                .isEmpty(),
+                .map { it.app.id }
+                .toSet(),
         )
+        assertNull(upgraded.index.load().state)
         upgraded.close()
         opened.remove(upgraded)
         val reopened = open()

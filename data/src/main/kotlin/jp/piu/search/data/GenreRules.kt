@@ -5,6 +5,7 @@ package jp.piu.search.data
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
@@ -22,6 +23,10 @@ internal class GenreRule(
     val intent: IntentSpec,
     /** この版より前の端末では問い合わせない。定数が OS にないので、宣言するアプリもない。 */
     val minSdk: Int = 0,
+    /** 既定ブラウザによる絞り込みなど、問い合わせごとの OS の条件を変える。 */
+    val queryFlags: Int = 0,
+    /** カメラの暗黙の問い合わせではシステムアプリしか返らないため、入口を持つパッケージごとに問う。 */
+    val perPackage: Boolean = false,
 )
 
 /**
@@ -79,7 +84,7 @@ internal val GENRE_RULES: List<GenreRule> =
         GenreRule(Genres.PHONE, IntentSpec(Intent.ACTION_DIAL, data = "tel:")),
         GenreRule(Genres.MESSAGING, IntentSpec(Intent.ACTION_SENDTO, data = "smsto:")),
         GenreRule(Genres.MESSAGING, mainWith(Intent.CATEGORY_APP_MESSAGING)),
-        GenreRule(Genres.CAMERA, IntentSpec(MediaStore.ACTION_IMAGE_CAPTURE)),
+        GenreRule(Genres.CAMERA, IntentSpec(MediaStore.ACTION_IMAGE_CAPTURE), perPackage = true),
         GenreRule(Genres.PHOTOS, contentOf("image/*")),
         GenreRule(Genres.PHOTOS, mainWith(Intent.CATEGORY_APP_GALLERY)),
         GenreRule(Genres.VIDEO, contentOf("video/*")),
@@ -89,6 +94,7 @@ internal val GENRE_RULES: List<GenreRule> =
         GenreRule(
             Genres.BROWSER,
             IntentSpec(Intent.ACTION_VIEW, categories = setOf(Intent.CATEGORY_BROWSABLE), data = "https://example.org/"),
+            queryFlags = PackageManager.MATCH_ALL,
         ),
         GenreRule(Genres.BROWSER, mainWith(Intent.CATEGORY_APP_BROWSER)),
         GenreRule(Genres.CALENDAR, mainWith(Intent.CATEGORY_APP_CALENDAR)),

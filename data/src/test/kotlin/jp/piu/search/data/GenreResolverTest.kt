@@ -9,6 +9,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Process
+import android.provider.MediaStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
@@ -19,6 +20,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowApplicationPackageManager
 
 // 判定の表（GENRE_RULES・APP_CATEGORY_GENRES）と、手がかりを入口に結び付ける規則を、Robolectric の PackageManager で確かめる。
 // intent filter の照合は Android の IntentFilter.match（Robolectric が持つ本物のコード）が行う
@@ -174,7 +179,7 @@ class GenreResolverTest {
 
     @Suppress("DEPRECATION")
     @Test
-    fun defaultBrowserChangeIsQueriedAgainWithoutAnApkUpdate() {
+    fun handlerChangeIsQueriedAgainWithoutAnApkUpdate() {
         val first = install("test.browser.first")
         val second = install("test.browser.second")
         val intent = GENRE_RULES.first { it.genre == Genres.BROWSER }.intent.toIntent()
@@ -196,6 +201,69 @@ class GenreResolverTest {
         val updated = resolver.resolveStamps(stamps)
         assertEquals(null, updated[first.id])
         assertEquals(listOf(Genres.BROWSER), updated[second.id])
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [RestrictedPackageManager::class])
+    fun browserGenreIncludesNonDefaultBrowsersWithoutAMainCategory() {
+        val spec = GENRE_RULES.first { it.genre == Genres.BROWSER }.intent
+        val first = install("test.browser.first", handlers = mapOf("Viewer" to listOf(filterFor(spec))))
+        val second = install("test.browser.second", handlers = mapOf("Viewer" to listOf(filterFor(spec))))
+        val shadow = shadowOf(packageManager) as RestrictedPackageManager
+        for (default in listOf(first, second)) {
+            shadow.defaultBrowser = default.id.packageName
+            val genres = resolver().resolve(listOf(first, second))
+            assertEquals(listOf(Genres.BROWSER), genres[first.id])
+            assertEquals(listOf(Genres.BROWSER), genres[second.id])
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [RestrictedPackageManager::class])
+    fun cameraGenreIncludesInstalledCamerasAndQueriesEachPackageOnce() {
+        val spec = GENRE_RULES.first { it.genre == Genres.CAMERA }.intent
+        val (first, settings) =
+            installEntries(
+                "test.camera.first",
+                entries = mapOf("Main" to listOf(launcher()), "Settings" to listOf(launcher())),
+                handlers = mapOf("Capture" to listOf(filterFor(spec))),
+            )
+        val second = install("test.camera.second", handlers = mapOf("Capture" to listOf(filterFor(spec))))
+        val genres = resolver().resolve(listOf(first, settings, first.copyTo(10), second))
+        for (entry in listOf(first, settings, first.copyTo(10), second)) {
+            assertEquals(listOf(Genres.CAMERA), genres[entry.id])
+        }
+        assertEquals(
+            listOf(first.id.packageName, second.id.packageName),
+            (shadowOf(packageManager) as RestrictedPackageManager).cameraPackages,
+        )
+    }
+
+    /** Robolectric にない、AOSP の既定ブラウザと暗黙のカメラ問い合わせの制限を再現する。 */
+    @Implements(className = "android.app.ApplicationPackageManager")
+    class RestrictedPackageManager : ShadowApplicationPackageManager() {
+        var defaultBrowser: String? = null
+        val cameraPackages = ArrayList<String?>()
+
+        @Implementation
+        override fun queryIntentActivities(
+            intent: Intent,
+            flags: Int,
+        ): List<android.content.pm.ResolveInfo> {
+            val candidates = super.queryIntentActivities(intent, flags)
+            if (intent.action == MediaStore.ACTION_IMAGE_CAPTURE) {
+                cameraPackages += intent.`package`
+                return if (intent.`package` == null) {
+                    candidates.filter { it.activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
+                } else {
+                    candidates
+                }
+            }
+            if (intent.action == Intent.ACTION_VIEW && intent.scheme == "https" && flags and PackageManager.MATCH_ALL == 0) {
+                return candidates.filter { it.activityInfo.packageName == defaultBrowser }
+            }
+            return candidates
+        }
     }
 
     @Test

@@ -50,7 +50,7 @@
 ## Android の部分の確かめ方
 
 - `test-apps:*`: テスト専用の小さなアプリを数個作る。日本語の表示名（「乗換案内テスト」など）、英語の別名、`geo:` の intent filter、`CATEGORY_APP_MAPS` などを持たせる。エミュレータに入れて、索引・ジャンルの判定・起動を確かめる
-- テスト用のアプリの一覧は `settings.gradle.kts`、それぞれで確かめることは各アプリの `AndroidManifest.xml` の冒頭の説明にある（M2-01 で 7 つ: 乗換案内テスト・Test Map（既定が英語）・テストメール・将棋テスト（appCategory だけ）・Yahoo!テスト・ランチャーなしテスト・入口二つテスト）
+- テスト用のアプリの一覧は `settings.gradle.kts`、それぞれで確かめることは各アプリの `AndroidManifest.xml` の冒頭の説明にある（M2-01 の 7 つ: 乗換案内テスト・Test Map（既定が英語）・テストメール・将棋テスト（appCategory だけ）・Yahoo!テスト・ランチャーなしテスト・入口二つテスト。T7 でブラウザ 2 つとカメラを追加）
 - インストール・更新・削除のあとに、差分の同期（`getChangedPackages`）が効くこと。再起動（`BOOT_COUNT` の変化）のあとに全件を見直すこと
 - `QUERY_ALL_PACKAGES` なしで、テスト用のアプリがすべて見えること
 - 既定のデジタルアシスタントに設定でき、`ACTION_ASSIST` で検索画面が開くこと
@@ -58,6 +58,16 @@
 - 仕事用プロファイル: エミュレータに仕事用プロファイルを作り（`adb shell pm create-user --profileOf 0 --managed`）、そこのアプリが出て起動できること
 
 エミュレータの版: 最小 SDK の 28、29、33、最新の 37。CI の計器テストは 28 と 37 を手動のときに回す。
+
+### ジャンルと入口・索引の版の回帰テスト（T7）
+
+- `GenreResolverTest` は AOSP の制限を模した PackageManager を使い、既定を切り替えても両ブラウザが残ること、後から入れたカメラを拾うこと、同じパッケージの複数入口・プロファイルでカメラの問い合わせを重ねないことを API 28・37 で確かめる
+- `AppSourceTest` は合成の `android.app.AppDetailsActivity` を混ぜ、全件・パッケージ指定・差分用の一覧・詳細のどれにも入らないことを API 28・37 で確かめる。同じ末尾の通常の Activity は残す
+- `IndexStoreTest` と `IndexSyncTest` は版変更時の旧索引の保持、同期前の再オープン、一時停止中の仕事用と個人用の同期、再オープン後の再開を確かめる。APK と更新時刻が同じでも旧入口を作り直し、成功した個人用は繰り返し作り直さない。`DeviceTransferTest`・`LearnedStoreTest`・`LaunchStatStoreTest` はインストールの印と学習・起動の記録の保持も確かめる
+- `test-apps:browser`・`browser-secondary` は `APP_BROWSER` なしで http/https を受ける。`camera` は権限なしで `IMAGE_CAPTURE` を受ける。名前はジャンル語を含めず、通常のユーザーアプリとして入れる
+- `GenreResolverInstrumentedTest` は両ブラウザとカメラのジャンルを本物の OS で確かめる。API 31 以上では既定ブラウザを順番に替えて両方が残ることを確かめ、最後に元の設定へ戻す。それより古い OS では設定を替えずに判定する。`InstalledAppReaderInstrumentedTest` と app の導入確認にも 3 アプリを含める
+
+T7 の作業では計器テスト・エミュレータ・adb を実行していない。計器テストによる OS 上の確認と、カメラのパッケージ別問い合わせを含めた実機での時間の計測は未実施。
 
 ### 端末間転送と起動記録の回帰テスト
 
@@ -87,7 +97,7 @@
 
 - `IndexSyncTest`: 画面を閉じている間の仕事用更新、Callback の強制読み直しと失敗後の保持、成功した指定だけの消費、同期中に届いた新しい通知、OS・言語・索引の版の変更、読めないプロファイルの保持、不完全な材料の再試行
 - `MaterialReadTest`: base と split のパス・時刻の変化、ファイル不在・時刻 0、別言語名と署名の失敗を正常な空にしないこと。不完全なパッケージの指紋を保存せず、次の読み取りで回復すること
-- `GenreResolverTest` と `IndexSyncTest`: 偽の PackageManager の既定ブラウザ相当の問い合わせ結果を切り替える。APK と変更番号が同じでもジャンルが追従し、名前のキー・入口の行・形態素解析の呼び出し数が変わらないこと
+- `GenreResolverTest` と `IndexSyncTest`: 偽の PackageManager の intent 問い合わせ結果を切り替える。APK と変更番号が同じでもジャンルが追従し、名前のキー・入口の行・形態素解析の呼び出し数が変わらないこと
 - `IndexSyncConcurrencyTest`: 実行中に追加された 20 件の要求が 1 回の後続同期になり、二重に計算しないこと。計算中の記録保存とプロファイル削除の R3 の境界も維持すること
 - `DatabaseSchemaTest`: Room 4 → 5 の移行で学習・起動の記録・インストールの印を保つこと
 - `IndexLifecycleTest`・`AppIconsTest`・`SyncFailureScreenTest`: 背景では通知を保持し、次の検索で同期すること。更新したパッケージだけのアイコン失効、読み込みとの競合、表示中のアイコンの再読み込み、失敗の表示と回復

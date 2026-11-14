@@ -8,6 +8,9 @@
 
 | 日付 | 決定 | 理由 | 詳細 |
 |---|---|---|---|
+| 2026-11-14 | ブラウザの問い合わせに `MATCH_ALL`、カメラにパッケージ指定を使う（AI） | 既定以外のブラウザと後から入れたカメラをジャンルから落とさない（T7、#12） | [matching.md](design/matching.md#intent-filter-とカテゴリによるジャンル) |
+| 2026-11-14 | AOSP が合成する `android.app.AppDetailsActivity` の入口を索引に入れない（AI） | アプリを起動する入口ではなく設定へ転送するため。クラス名の完全一致で除く（T7、#24） | [architecture.md](design/architecture.md#何を読み直すか) |
+| 2026-11-14 | 索引の版変更でも入口とキーを残し、状態と APK 指紋を無効にして読めるものから作り直す（AI） | 一時停止中の仕事用を消さず、再開後の作り直しを再起動をまたいで保証する（T7） | [architecture.md](design/architecture.md#読めなかったとき) |
 | 2026-11-14 | 学習と起動の記録は、読み込みの確認・変更の計算・保存・写しの反映・知らせと取り消し材料の更新を 1 つの仕事にし、成功・失敗を返す（AI） | 保存失敗で表示だけが進むのを防ぐ。保存処理は当面 1 本の Executor を使う（R1） | [architecture.md](design/architecture.md#保存の順序と書き手) |
 | 2026-11-14 | 読み込み状態を `NotLoaded`・`Loading`・`Ready`・`Failed` で持ち、読み直しにも失敗したら書き込まない。最後に読めた写しは保つ（AI） | 空の学習で保存済みの記録を上書きしない（R1） | [architecture.md](design/architecture.md#保存の順序と書き手) |
 | 2026-11-14 | 索引・学習・起動の記録は共通の `DatabaseWriter` に並べ、プロファイルの削除は 1 つのトランザクションで行う。重い索引の計算は書き手の外に置く（AI） | 削除と遅い保存の順序をそろえ、起動前の記録を待たせない（R3） | [architecture.md](design/architecture.md#同期の実行と保存) |

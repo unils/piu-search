@@ -86,6 +86,7 @@ YomiLauncher は英単語の読みの辞書（約 6.7 万語）を持つが、�
 | SNS | えすえぬえす・SNS | `category=SOCIAL` |
 
 - ジャンルの付け方（M2-02、2026-10-28）: 依頼を受けた Activity がアプリの入口なら、その入口だけに付ける（電話と連絡先の入口を持つアプリでジャンルが混ざらないように）。入口でない Activity なら、そのアプリの全部の入口に付ける。`category` はアプリ単位なので全部の入口に付ける
+- ブラウザの https 問い合わせには `MATCH_ALL` を付ける。既定のブラウザに絞らず、`CATEGORY_APP_BROWSER` を宣言しないブラウザも拾う。カメラは、入口を持つパッケージごとに `setPackage` して `ACTION_IMAGE_CAPTURE` を問い合わせる。暗黙のカメラ問い合わせがシステムアプリだけになる OS でも、後から入れたカメラを拾う。`MATCH_DEFAULT_ONLY` は使わず、`CATEGORY_DEFAULT` のない入口のカテゴリも拾う。
 - 仕事用プロファイルのアプリ: `queryIntentActivities` は自分のプロファイルしか見ないので、主プロファイルに同じパッケージがあればその結果を使い、なければ `category` だけで判定する（intent によるジャンルは取れない）
 - 型で問う依頼（写真・動画・音楽・PDF）は `content:` の URI を添えて問う。型だけでは `scheme="content"` を書いた filter に当たらない
 - ジャンルの id（評価セットと実装で使う。M1-06a で決めた）: `maps email phone messaging camera photos video music browser calendar contacts calculator clock files weather translate store pdf game news social`（表の順）
@@ -94,6 +95,10 @@ YomiLauncher は英単語の読みの辞書（約 6.7 万語）を持つが、�
 - `<queries>` は `MAIN`＋`LAUNCHER` だけにする（M2-04）。入口のあるパッケージが見えれば、ジャンルの intent の問い合わせにも出るので、ジャンルごとの宣言は足さない。
 - 未確認: 日本のアプリ（Yahoo!マップ・ジョルダンなど）が `geo:` やカテゴリを実際に宣言しているか。実機で `adb shell cmd package query-activities -a android.intent.action.VIEW -d geo:0,0` を試せば確かめられる。実機の試験（M6）の項目に入れる。
 - 天気・乗換・銀行のように、OS の情報に出ないジャンルは学習で埋める。
+
+問い合わせの条件の根拠（2026-11-14 確認）: AOSP android14-release の [CrossProfileIntentResolverEngine のブラウザ選択](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/CrossProfileIntentResolverEngine.java#L568)、[ComputerEngine のカメラ判定](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/ComputerEngine.java#L2248) 、[Intent のパッケージ・部品未指定の判定](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/content/Intent.java#L12240) と [MATCH_SYSTEM_ONLY の追加](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/ComputerEngine.java#L2693)。
+
+この変更では索引の版を上げない。ジャンルは毎回判定し、合成の入口も毎回の一覧との比較で削除されるため、既存の索引にも次の同期で反映される。
 
 ## 3. 暗黙の学習
 

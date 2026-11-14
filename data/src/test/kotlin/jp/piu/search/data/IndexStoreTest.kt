@@ -19,7 +19,6 @@ import jp.piu.search.core.search.SearchQuery
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -73,26 +72,25 @@ class IndexStoreTest {
     }
 
     @Test
-    fun indexVersionChangeClearsOnlyTheIndexTables() {
+    fun indexVersionChangeKeepsOldKeysAndInvalidatesFingerprintsUntilRebuilt() {
         val database = open(indexVersion = 4)
-        database.index.replaceAll(listOf(stored(APPS[0])), STATE)
+        val original = stored(APPS[0]).copy(apkFingerprint = "unchanged-apk")
+        database.index.replaceAll(listOf(original), STATE)
 
         val newer = reopen(database, indexVersion = 5)
         val loaded = newer.index.load()
 
-        assertEquals(emptyList<StoredApp>(), loaded.apps)
+        assertEquals(listOf(original.copy(apkFingerprint = null)), loaded.apps)
         assertNull("作り直しが要ることを同期に伝える", loaded.state)
-        assertSame(SearchIndex.EMPTY, loaded.toSearchIndex())
-        assertEquals(0, newer.count("app"))
-        assertEquals(0, newer.count("search_key"))
+        assertEquals(1, newer.count("app"))
+        assertEquals(original.app.keys.size, newer.count("search_key"))
         assertEquals(0, newer.count("meta"))
-
-        // 古い版に戻しても、消した索引は戻らない（隠したのではなく消した）
-        assertEquals(emptyList<StoredApp>(), reopen(newer, indexVersion = 4).index.load().apps)
+        // 同期前にプロセスが終わっても、旧索引を保ち、作り直しの印を失わない
+        assertEquals(loaded, reopen(newer, indexVersion = 5).index.load())
     }
 
     @Test
-    fun indexIsRebuiltWithTheNewVersionAfterClearing() {
+    fun indexIsRebuiltWithTheNewVersionAfterInvalidation() {
         val database = open(indexVersion = 4)
         database.index.replaceAll(listOf(stored(APPS[0])), STATE)
         val newer = reopen(database, indexVersion = 5)

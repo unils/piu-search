@@ -157,7 +157,7 @@ public class AppSource(
                         val infos =
                             launcherApps
                                 .getActivityList(null, profile.user)
-                                .filter { packages == null || it.componentName.packageName in packages }
+                                .filter { isAppEntry(it) && (packages == null || it.componentName.packageName in packages) }
                         if (!isReadable(profile)) {
                             ProfileRead(ProfileReadStatus.UNAVAILABLE)
                         } else {
@@ -197,8 +197,12 @@ public class AppSource(
                 } else {
                     packages.sorted().flatMap { launcherApps.getActivityList(it, profile.user) }
                 }
-            infos.map { it to profile }
+            infos.filter(::isAppEntry).map { it to profile }
         }
+
+    // AOSP LauncherAppsService.getHiddenAppActivityInfo（android14-release）は、対象パッケージにこのクラスの入口を合成する。
+    // アプリを開く入口ではなく設定のアプリ情報へ転送するため、名前やアイコンを読まずに除く（根拠は architecture.md）
+    private fun isAppEntry(info: LauncherActivityInfo): Boolean = info.componentName.className != "android.app.AppDetailsActivity"
 
     // 自分のプロファイルは PackageInfo.lastUpdateTime（architecture.md の「データの保存」）。
     // 仕事用プロファイルのパッケージは PackageManager から引けないので、APK のファイルの更新の時刻を使う。

@@ -270,6 +270,31 @@ class IndexSyncTest {
     }
 
     @Test
+    @Config(sdk = [28, 37])
+    fun indexVersionChangeKeepsPausedWorkIndexAndRebuildsItAfterReopeningAndResuming() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        newSync(indexVersion = 4).sync()
+        opened.forEach(LocalDatabase::close)
+        opened.clear()
+        device.unavailable += WORK
+        val upgraded = newSync(indexVersion = 5)
+        assertEquals(1, upgraded.sync().rebuiltApps)
+        assertEquals(WORK_TRANSIT.entry.label, upgraded.index.labelOf(WORK_TRANSIT.entry.id))
+        assertEquals(0, upgraded.sync().rebuiltApps)
+        opened.forEach(LocalDatabase::close)
+        opened.clear()
+
+        val reopened = newSync(indexVersion = 5)
+        assertEquals(0, reopened.sync().rebuiltApps)
+        assertEquals(WORK_TRANSIT.entry.label, reopened.index.labelOf(WORK_TRANSIT.entry.id))
+        device.unavailable.clear()
+        // APK の指紋も更新時刻も同じでも、旧版で作った入口は再開後に作り直す
+        assertEquals(1, reopened.sync().rebuiltApps)
+        assertEquals(setOf(PERSONAL, WORK), reopened.index.profiles())
+        assertEquals(0, reopened.sync().rebuiltApps)
+    }
+
+    @Test
     fun removedProfileIsDropped() {
         device.install(TRANSIT, WORK_TRANSIT)
         val sync = newSync()
@@ -520,7 +545,7 @@ class IndexSyncTest {
 
     @Suppress("DEPRECATION")
     @Test
-    fun defaultBrowserChangeUpdatesOnlyGenreRowsWithTheSameApk() {
+    fun intentHandlerChangeUpdatesOnlyGenreRowsWithTheSameApk() {
         device.install(TRANSIT, MAPS)
         val manager = context.packageManager
         val resolver = GenreResolver(manager)
