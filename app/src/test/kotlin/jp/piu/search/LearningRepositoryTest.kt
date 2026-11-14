@@ -54,8 +54,9 @@ class LearningRepositoryTest {
         repository.awaitIdle()
 
         assertEquals(listOf(RescueNotice(OKANE, "乗換案内", null, NOW + 1)), notices)
-        assertEquals(notices, repository.takeNotices())
-        assertEquals(emptyList<RescueNotice>(), repository.takeNotices())
+        assertEquals(notices, repository.pendingNotices)
+        notices.forEach(repository::consumeNotice)
+        assertEquals(emptyList<RescueNotice>(), repository.pendingNotices)
         val record =
             onDb { database.learned.load() }
                 .records
@@ -136,7 +137,7 @@ class LearningRepositoryTest {
         repository.clear()
         repository.awaitIdle()
         assertEquals(emptyMap<LearnedPair, LearnedRecord>(), repository.memory.records)
-        assertEquals(emptyList<RescueNotice>(), repository.takeNotices())
+        assertEquals(emptyList<RescueNotice>(), repository.pendingNotices)
         assertEquals(emptyMap<LearnedPair, LearnedRecord>(), onDb { database.learned.load() }.records)
 
         var imported: BackupReadResult? = null
@@ -256,10 +257,10 @@ class LearningRepositoryTest {
     fun usingAnExistingLearnedKeyUpdatesTheDatabaseWithoutARescueNotice() {
         repository.record(LearningDecision(null, listOf(OKANE)), NOW) { null }
         repository.awaitIdle()
-        repository.takeNotices()
+        repository.pendingNotices.forEach(repository::consumeNotice)
         repository.record(LearningDecision(null, emptyList(), used = OKANE), NOW + 1) { null }
         repository.awaitIdle()
-        assertEquals(emptyList<RescueNotice>(), repository.takeNotices())
+        assertEquals(emptyList<RescueNotice>(), repository.pendingNotices)
         val record = onDb { database.learned.load() }.records.getValue(OKANE)
         assertEquals(1, record.count)
         assertEquals(NOW + 1, record.lastUsedAt)

@@ -37,6 +37,9 @@ class AppContainer(
     /** 漢字の検索語に読みを付けるスレッド。索引の作り直しを待たずに読みを付けられるよう、同期とは分ける。 */
     val queryExecutor: ExecutorService = backgroundThread("piu-query-reading")
 
+    /** 学習とプロファイルを重ねた索引を組み立てるスレッド。入力の読みと保存を待たせないため分ける。 */
+    val derivedIndexExecutor: ExecutorService = backgroundThread("piu-derived-index")
+
     /** 索引・学習・起動の記録に共通の書き手。削除と遅い記録の順序もここで決める。 */
     val writer: DatabaseWriter = DatabaseWriter()
 

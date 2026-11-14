@@ -14,9 +14,11 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
+import jp.piu.search.core.search.IndexedApp
 import jp.piu.search.core.search.LearnedMemory
 import jp.piu.search.core.search.LearnedPair
 import jp.piu.search.core.search.LearningDecision
+import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -30,7 +32,7 @@ import java.util.concurrent.CountDownLatch
 
 // 画面を作り直しても（向きの変更など）、まだ出していない知らせを失わない（M5-02）
 @RunWith(AndroidJUnit4::class)
-@Config(qualifiers = "ja-rJP")
+@Config(qualifiers = "ja-rJP", shadows = [OpenFlowTest.LauncherShadow::class])
 class RecreationTest {
     @get:Rule
     val compose = createEmptyComposeRule()
@@ -41,7 +43,62 @@ class RecreationTest {
     @Before
     fun closeOnboarding() {
         SettingsStore(context).dismissOnboarding()
+        OpenFlowTest.LauncherShadow.onLaunch = {}
     }
+
+    @Test
+    fun rotationDuringSavingLeavesTheNoticeForTheNextSearchEvenAfterSixSeconds() {
+        val app = AppId("io.example.paypay", "Main", 0)
+        val pair = LearnedPair(NormalizedText("おかね"), app)
+        val release = CountDownLatch(1)
+        compose.mainClock.autoAdvance = false
+        try {
+            ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
+                container.learning.awaitIdle()
+                scenario.onActivity { activity ->
+                    controller(activity).onIndexChanged(SearchIndex(listOf(IndexedApp(app, "PayPay", emptyList()))))
+                    controller(activity).onQueryChange("おかね")
+                    controller(activity).showAllApps(true)
+                }
+                compose.waitUntil { controllerOf(scenario).content is SearchContent.AllApps }
+                container.learning.runAfterPending { release.await() }
+                scenario.onActivity { activity ->
+                    SearchActivity::class.java
+                        .getDeclaredMethod("open", OpenRequest::class.java)
+                        .apply { isAccessible = true }
+                        .invoke(activity, controller(activity).openRequest(app))
+                }
+                scenario.recreate()
+                release.countDown()
+                container.learning.awaitIdle()
+                compose.waitForIdle()
+                compose.mainClock.advanceTimeBy(7_000)
+                compose.onNodeWithText("取り消す").assertDoesNotExist()
+                scenario.onActivity(Activity::finish)
+            }
+            ActivityScenario.launch(SearchActivity::class.java).use {
+                compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
+                compose.onNodeWithText("「おかね」で PayPay を出すようにしました", substring = true).assertExists()
+                compose.onNodeWithText("取り消す").performClick()
+                container.learning.awaitIdle()
+                assertEquals(null, container.learning.memory.records[pair])
+            }
+        } finally {
+            release.countDown()
+        }
+    }
+
+    private fun controllerOf(scenario: ActivityScenario<SearchActivity>): SearchController {
+        lateinit var result: SearchController
+        scenario.onActivity { result = controller(it) }
+        return result
+    }
+
+    private fun controller(activity: SearchActivity): SearchController =
+        SearchActivity::class.java
+            .getDeclaredField("controller")
+            .apply { isAccessible = true }
+            .get(activity) as SearchController
 
     @Test
     fun rescueNoticeSurvivesRecreation() {
@@ -60,7 +117,7 @@ class RecreationTest {
             // 出し終えた知らせは、次に開いたときには出さない
             compose.onNodeWithText("取り消す").performClick()
             compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
-            assertEquals(emptyList<RescueNotice>(), container.learning.takeNotices())
+            assertEquals(emptyList<RescueNotice>(), container.learning.pendingNotices)
             container.learning.awaitIdle()
             assertEquals(LearnedMemory.EMPTY.records, container.learning.memory.records)
         }
@@ -129,7 +186,7 @@ class RecreationTest {
         // アプリを開いたときと同じく、閉じる（作り直さない）。出しかけの知らせは戻さない
         scenario.onActivity(Activity::finish)
         scenario.close()
-        assertEquals(emptyList<RescueNotice>(), container.learning.takeNotices())
+        assertEquals(emptyList<RescueNotice>(), container.learning.pendingNotices)
     }
 
     @Test

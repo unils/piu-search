@@ -37,16 +37,16 @@ class RepositoryFailureTest {
         learned.onRead = { assertEquals(LoadState.Loading, repository.loadState) }
         learned.onWrite = {
             assertTrue(repository.memory.records.isEmpty())
-            assertTrue(repository.takeNotices().isEmpty())
+            assertTrue(repository.pendingNotices.isEmpty())
         }
         repository.addListener { snapshot ->
             assertEquals(learned.memory.records, snapshot.records)
-            assertTrue(repository.takeNotices().isEmpty())
+            assertTrue(repository.pendingNotices.isEmpty())
         }
         var completed = false
         repository.record(RESCUE, 1, onDone = {
             assertTrue(it is StorageResult.Success)
-            assertEquals(1, repository.takeNotices().size)
+            assertEquals(1, repository.pendingNotices.size)
             completed = true
         }) { "アプリ" }
         assertEquals(1, queue.size)
@@ -65,12 +65,12 @@ class RepositoryFailureTest {
         var result: StorageResult<List<RescueNotice>>? = null
         learned.failWrite = true
         repository.record(RESCUE, 2, onDone = { result = it }) { "アプリ" }
-        assertTrue(repository.takeNotices().isEmpty())
+        assertTrue(repository.pendingNotices.isEmpty())
         drain()
         assertTrue(result is StorageResult.Failure)
         assertSame(before, repository.memory)
         assertEquals(0, heard)
-        assertTrue(repository.takeNotices().isEmpty())
+        assertTrue(repository.pendingNotices.isEmpty())
         learned.failWrite = false
         repository.record(RESCUE, 3, onDone = { result = it }) { "アプリ" }
         drain()
@@ -81,7 +81,7 @@ class RepositoryFailureTest {
                 .getValue(PAIR)
                 .count,
         )
-        assertEquals(1, repository.takeNotices().size)
+        assertEquals(1, repository.pendingNotices.size)
         assertEquals(repository.memory.records, learned.memory.records)
     }
 
@@ -115,15 +115,14 @@ class RepositoryFailureTest {
         record()
         repository.record(RESCUE, 2) { "アプリ" }
         drain()
-        val notice = repository.takeNotices().single()
-        repository.returnNotices(listOf(notice))
+        val notice = repository.pendingNotices.single()
         val before = repository.memory
         learned.failWrite = true
         var result: StorageResult<Unit>? = null
         repository.clear { result = it }
         drain()
         assertTrue(result is StorageResult.Failure)
-        assertEquals(listOf(notice), repository.takeNotices())
+        assertEquals(listOf(notice), repository.pendingNotices)
         repository.undo(notice) { result = it }
         drain()
         assertTrue(result is StorageResult.Failure)
@@ -149,12 +148,11 @@ class RepositoryFailureTest {
     fun failedUndoThenNewSelectionKeepsTheNewRecordWhenOldUndoIsRetried() {
         repository.record(RESCUE, 1) { "アプリ" }
         drain()
-        val notice = repository.takeNotices().single()
+        val notice = repository.pendingNotices.single()
         learned.failWrite = true
         var undone: StorageResult<Unit>? = null
         repository.undo(notice) {
             undone = it
-            if (it is StorageResult.Failure) repository.returnNotices(listOf(notice))
         }
         drain()
         assertTrue(undone is StorageResult.Failure)
@@ -175,17 +173,15 @@ class RepositoryFailureTest {
         assertSame(saved, repository.memory)
         assertEquals(saved.records, learned.memory.records)
         assertEquals(savedWrites, learned.writes)
-        assertTrue(repository.takeNotices().isEmpty())
-        // 遅れて届いた失敗のコールバックや、向きの変更でも古い知らせを戻せないことを確かめる
-        repository.returnNotices(listOf(notice))
-        assertTrue(repository.takeNotices().isEmpty())
+        assertTrue(repository.pendingNotices.isEmpty())
+        assertFalse(repository.canUndo(notice))
     }
 
     @Test
     fun failedNewSelectionKeepsTheOldUndoAvailable() {
         repository.record(RESCUE, 1) { "アプリ" }
         drain()
-        val notice = repository.takeNotices().single()
+        val notice = repository.pendingNotices.single()
         learned.failWrite = true
         var result: StorageResult<Unit>? = null
         repository.undo(notice) { result = it }
@@ -195,8 +191,7 @@ class RepositoryFailureTest {
         repository.record(SELECTION, 3, onDone = { recorded = it }) { "アプリ" }
         drain()
         assertTrue(recorded is StorageResult.Failure)
-        repository.returnNotices(listOf(notice))
-        assertEquals(listOf(notice), repository.takeNotices())
+        assertEquals(listOf(notice), repository.pendingNotices)
         learned.failWrite = false
 
         repository.undo(notice) { result = it }
@@ -211,7 +206,7 @@ class RepositoryFailureTest {
     fun aSuccessfulRecordForAnotherPairDoesNotInvalidateTheOldUndo() {
         repository.record(RESCUE, 1) { "アプリ" }
         drain()
-        val notice = repository.takeNotices().single()
+        val notice = repository.pendingNotices.single()
         learned.failWrite = true
         var result: StorageResult<Unit>? = null
         repository.undo(notice) { result = it }
@@ -221,8 +216,7 @@ class RepositoryFailureTest {
         val other = LearnedPair(NormalizedText("べつ"), APP)
         repository.record(LearningDecision(other, emptyList()), 3) { "アプリ" }
         drain()
-        repository.returnNotices(listOf(notice))
-        assertEquals(listOf(notice), repository.takeNotices())
+        assertEquals(listOf(notice), repository.pendingNotices)
 
         repository.undo(notice) { result = it }
         drain()
@@ -246,13 +240,12 @@ class RepositoryFailureTest {
             repository.clear()
             repository.record(RESCUE, 1) { "アプリ" }
             drain()
-            val notice = repository.takeNotices().single()
+            val notice = repository.pendingNotices.single()
             learned.failWrite = true
             var undone: StorageResult<Unit>? = null
             repository.undo(notice) { undone = it }
             drain()
             assertTrue(undone is StorageResult.Failure)
-            repository.returnNotices(listOf(notice))
             learned.failWrite = false
 
             val previousWrites = learned.writes
@@ -268,9 +261,8 @@ class RepositoryFailureTest {
             assertSame(saved, repository.memory)
             assertEquals(saved.records, learned.memory.records)
             assertEquals(savedWrites, learned.writes)
-            assertTrue(repository.takeNotices().isEmpty())
-            repository.returnNotices(listOf(notice))
-            assertTrue(repository.takeNotices().isEmpty())
+            assertTrue(repository.pendingNotices.isEmpty())
+            assertFalse(repository.canUndo(notice))
         }
     }
 
@@ -281,10 +273,10 @@ class RepositoryFailureTest {
             repository.clear()
             repository.record(RESCUE, 1) { "アプリ" }
             drain()
-            val oldNotice = repository.takeNotices().single()
+            val oldNotice = repository.pendingNotices.single()
             repository.record(RESCUE, at) { "アプリ" }
             drain()
-            val newNotice = repository.takeNotices().single()
+            val newNotice = repository.pendingNotices.single()
             val saved = repository.memory
 
             repository.undo(oldNotice)

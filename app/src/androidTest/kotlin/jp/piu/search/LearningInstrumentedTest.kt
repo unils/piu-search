@@ -56,7 +56,7 @@ class LearningInstrumentedTest {
             .filter { it.query.value == QUERY }
             .forEach(learning::remove)
         learning.awaitIdle()
-        learning.takeNotices()
+        learning.pendingNotices.forEach(learning::consumeNotice)
     }
 
     @Test
@@ -115,8 +115,7 @@ class LearningInstrumentedTest {
     @Test
     fun deletingFromTheLearnedListHidesTheAppForTheQuery() {
         learnByOpeningFromAllApps()
-        learning.takeNotices()
-
+        learning.pendingNotices.forEach(learning::consumeNotice)
         ActivityScenario.launch(SearchActivity::class.java).use {
             compose.onNodeWithTag(SEARCH_FIELD_TAG).performTextInput(QUERY)
             compose.waitUntilAtLeastOneExists(hasText(transit), DeviceShell.TIMEOUT_MILLIS)

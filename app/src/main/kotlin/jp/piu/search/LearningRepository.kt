@@ -51,7 +51,7 @@ data class RescueNotice(
  * 読み込みと書き込みは [executor] の 1 本のスレッドで順に行う。読み込みが先に済んでから記録を足すので、
  * 読み込む前にアプリを開いても、記録が読み込みで上書きされて消えることはない。
  *
- * 救済の知らせは、アプリを開くと検索の画面がすぐ閉じるので、次に画面を開いたときに［取り消す］つきで出す（[takeNotices]）。
+ * 救済の知らせは、アプリを開くと検索の画面がすぐ閉じるので、次に画面を開いたときに［取り消す］つきで出す（[pendingNotices]）。
  * 知らせはメモリにだけ持つ（プロセスが終わると、取り消しの機会だけがなくなる。学習は残る）。
  */
 class LearningRepository(
@@ -147,21 +147,12 @@ class LearningRepository(
         }
     }
 
-    /** まだ出していない救済の知らせを取り出す（取り出したものは二度と返さない）。 */
-    fun takeNotices(): List<RescueNotice> =
-        synchronized(notices) {
-            notices.toList().also { notices.clear() }
-        }
+    /** まだ出し終えていない知らせの写し。読むだけでは消費せず、構成の変更でも取り消す機会を保つ。 */
+    val pendingNotices: List<RescueNotice> get() = synchronized(notices) { notices.toList() }
 
-    /**
-     * 取り出したが出し終えていない知らせ [unshown] を戻す。次の [takeNotices] で、ほかの知らせより先に返す。
-     * 向きの変更などで画面を作り直すときに使う。後の保存で取り消せなくなった知らせは戻さない。
-     */
-    fun returnNotices(unshown: List<RescueNotice>) {
-        if (unshown.isEmpty()) return
-        synchronized(notices) {
-            notices.addAll(0, unshown.filter { notice -> beforeRescue.containsKey(notice) && notices.none { it === notice } })
-        }
+    /** [notice] を出し終えた。取り消しの保存とは別の操作なので、取り消し材料は保存の完了まで保つ。 */
+    fun consumeNotice(notice: RescueNotice) {
+        synchronized(notices) { notices.removeAll { it === notice } }
     }
 
     /**

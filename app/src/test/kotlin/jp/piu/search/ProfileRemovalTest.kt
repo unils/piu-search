@@ -49,7 +49,7 @@ class ProfileRemovalTest {
     fun deletionRejectsQueuedRecordsSuppressionsImportsAndOldUndo() {
         record()
         drain()
-        val notice = learning.takeNotices().single()
+        val notice = learning.pendingNotices.single()
         val file = LearningBackup.encode(learning.memory, BackupProfiles(0, setOf(11)), 1)
         existing = setOf(0)
         writer.execute {
@@ -66,17 +66,15 @@ class ProfileRemovalTest {
         assertTrue(storage.history.records.isEmpty())
         assertTrue(learning.memory.records.isEmpty())
         assertTrue(launches.history.records.isEmpty())
-        assertTrue(learning.takeNotices().isEmpty())
+        assertTrue(learning.pendingNotices.isEmpty())
         assertFalse(learning.canUndo(notice))
-        learning.returnNotices(listOf(notice))
-        assertTrue(learning.takeNotices().isEmpty())
     }
 
     @Test
     fun snapshotsAndUndoChangeOnlyAfterSuccessfulDeletion() {
         record()
         drain()
-        val notice = learning.takeNotices().single()
+        val notice = learning.pendingNotices.single()
         storage.onDelete = {
             assertEquals(storage.memory.records, learning.memory.records)
             assertEquals(storage.history.records, launches.history.records)
@@ -117,7 +115,7 @@ class ProfileRemovalTest {
         drain()
         assertTrue(storage.memory.records.isEmpty())
         assertTrue(storage.history.records.isEmpty())
-        assertTrue(learning.takeNotices().isEmpty())
+        assertTrue(learning.pendingNotices.isEmpty())
     }
 
     @Test

@@ -22,6 +22,7 @@ import jp.piu.search.core.search.SearchQuery
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 import java.util.concurrent.Executor
 
@@ -65,6 +66,113 @@ class SearchControllerTest {
         pending.removeAt(0).run()
 
         assertEquals(listOf("地図テスト", "道テスト"), controller.labels())
+    }
+
+    @Test
+    fun obsoleteReadingsAreDiscardedBeforeAnalysisAndOnlyTheLatestIsQueued() {
+        val analyzed = ArrayList<String>()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                indexBackground = direct,
+            )
+        controller.onQueryChange("古い")
+        controller.onQueryChange("新しい")
+        controller.onQueryChange("最新")
+        assertEquals(1, pending.size)
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(listOf("最新"), analyzed)
+    }
+
+    @Test
+    fun closingTheSessionInvalidatesAnUnstartedReading() {
+        val analyzed = ArrayList<String>()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                indexBackground = direct,
+            )
+        controller.onQueryChange("未開始")
+        controller.endSession()
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(emptyList<String>(), analyzed)
+    }
+
+    @Test
+    fun requestsArrivingDuringAnalysisKeepOnlyTheLatestAndDiscardTheOldResult() {
+        val analyzed = ArrayList<String>()
+        lateinit var controller: SearchController
+        val reading =
+            ReadingAnalyzer { text ->
+                analyzed += text
+                if (text == "開始") {
+                    controller.onQueryChange("中間")
+                    controller.onQueryChange("最新")
+                }
+                emptyList()
+            }
+        controller = SearchController(reading, deferred, direct, INDEX, indexBackground = direct)
+        controller.onQueryChange("開始")
+        pending.removeAt(0).run()
+        assertEquals(listOf("開始", "最新"), analyzed)
+        assertEquals("最新", controller.query)
+        assertEquals(SearchContent.NoMatch(), controller.content)
+        assertEquals(0, pending.size)
+    }
+
+    @Test
+    fun aLateIndexBuildDoesNotRestartReadingOrRecordInputAfterClosing() {
+        val analyzed = ArrayList<String>()
+        val tracker = SessionTracker()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                tracker = tracker,
+            )
+        controller.onQueryChange("未開始")
+        controller.endSession()
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(emptyList<String>(), analyzed)
+        assertEquals(0, tracker.size)
+    }
+
+    @Test
+    fun historyChangesAndRepeatedSnapshotsReuseBothProfileIndexes() {
+        val controller = SearchController(analyzer, direct, direct, PROFILE_INDEX, clock = { NOW })
+        controller.onWorkProfileChanged(WorkProfileState(setOf(WORK_SERIAL), paused = false))
+
+        fun index(name: String): Any? =
+            SearchController::class.java
+                .getDeclaredField(name)
+                .apply { isAccessible = true }
+                .get(controller)
+        val personal = index("personalIndex")
+        val work = index("workIndex")
+        controller.onHistoryChanged(LaunchHistory.EMPTY.recorded(MAPS_WORK, NOW))
+        controller.onIndexChanged(PROFILE_INDEX)
+        controller.onLearningChanged(LearnedMemory.EMPTY)
+        assertSame(personal, index("personalIndex"))
+        assertSame(work, index("workIndex"))
+        controller.selectProfile(ProfileTab.WORK)
+        assertEquals(listOf(MAPS_WORK), (controller.content as SearchContent.Suggestions).recent.map { it.app })
     }
 
     @Test
@@ -263,7 +371,7 @@ class SearchControllerTest {
 
     @Test
     fun workHintWaitsForTheReadingOfKanjiQueries() {
-        val controller = SearchController(analyzer, deferred, direct, PROFILE_INDEX, clock = { NOW })
+        val controller = SearchController(analyzer, deferred, direct, PROFILE_INDEX, clock = { NOW }, indexBackground = direct)
         controller.onWorkProfileChanged(WorkProfileState(setOf(WORK_SERIAL), paused = true))
         // 漢字を含む検索語は、読みを待つ間は「見つかりません」も件数も出さず、読みを付けてから数える（「道」はどちらにもない）
         controller.onQueryChange("道")
@@ -473,7 +581,9 @@ class SearchControllerTest {
         tracker: SessionTracker = SessionTracker(),
         config: LearningConfig = LearningConfig.DEFAULT,
     ): SearchController =
-        SearchController(analyzer, background, direct, INDEX, history, clock = { NOW }, tracker = tracker, learningConfig = config)
+        SearchController(analyzer, background, direct, INDEX, history, clock = {
+            NOW
+        }, tracker = tracker, learningConfig = config, indexBackground = direct)
 
     private fun SearchController.rows(): List<ResultRow> = (content as? SearchContent.Results)?.rows.orEmpty()
 

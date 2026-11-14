@@ -22,6 +22,7 @@ import jp.piu.search.core.text.NormalizedText
 import jp.piu.search.data.LocalDatabase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -126,7 +127,7 @@ class OpenFlowTest {
             assertEquals(
                 "アプリ",
                 container.learning
-                    .takeNotices()
+                    .pendingNotices
                     .single()
                     .label,
             )
@@ -144,6 +145,26 @@ class OpenFlowTest {
             drain()
             scenario.onActivity { assertFalse(it.isFinishing) }
             assertEquals(1, launches)
+            assertTrue(
+                container.learning.memory.records
+                    .getValue(PAIR)
+                    .rescued,
+            )
+        }
+    }
+
+    @Test
+    fun rotationKeepsTheQueryAndSessionAndRecordsTheEarlierFailedAttempt() {
+        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
+            ready(scenario)
+            val before = controller(scenario.get())
+            before.showAllApps(false)
+            before.onQueryChange("paypay")
+            scenario.recreate()
+            assertSame(before, controller(scenario.get()))
+            assertEquals("paypay", controller(scenario.get()).query)
+            open(scenario.get(), OpenRequest(APP, OpenRoute.SEARCH_RESULT, "paypay"))
+            drain()
             assertTrue(
                 container.learning.memory.records
                     .getValue(PAIR)
@@ -296,7 +317,7 @@ class OpenFlowTest {
         val learned = PAIR.copy(app = work)
         container.learning.record(LearningDecision(null, listOf(learned)), System.currentTimeMillis() - 1_000) { "仕事用アプリ" }
         container.learning.awaitIdle()
-        container.learning.takeNotices()
+        container.learning.pendingNotices.forEach(container.learning::consumeNotice)
         val before = container.learning.memory.records
         Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
             ready(scenario)
@@ -402,7 +423,7 @@ class OpenFlowTest {
                     assertEquals(
                         PAIR,
                         container.learning
-                            .takeNotices()
+                            .pendingNotices
                             .single()
                             .pair,
                     )
@@ -438,6 +459,8 @@ class OpenFlowTest {
         scenario.onActivity {
             controller(it).onIndexChanged(SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()))))
         }
+        shadowOf(Looper.getMainLooper()).idle()
+        container.derivedIndexExecutor.submit {}.get(10, TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle()
         scenario.onActivity {
             controller(it).onQueryChange("おかね")
