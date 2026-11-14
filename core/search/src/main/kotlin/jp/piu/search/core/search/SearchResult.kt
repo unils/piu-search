@@ -57,10 +57,12 @@ public data class MatchReason(
  * @property label 表示名
  * @property reason 出た理由
  * @property score 同じ段階・同じ形の中で並べる点（キーの種類の重みと、学習・起動の加点の和）
+ * @property stageLift 学習で段階を上げた幅（learning.md の R6）。[reason] の段階は元の当たり方のまま
  */
 public data class SearchResult(
     val app: AppId,
     val label: String,
     val reason: MatchReason,
     val score: Int,
+    val stageLift: Int = 0,
 )

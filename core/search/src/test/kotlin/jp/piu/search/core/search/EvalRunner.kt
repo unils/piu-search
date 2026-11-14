@@ -106,6 +106,8 @@ internal class EvalRunner(
 
     /**
      * [queries] の検索語ごとに「正解のアプリをすべてのアプリの一覧から 1 回開いた」セッションを [policy] に通し、記録をまとめて返す（M4-01）。
+     * 正解が見えていたら、一覧ではなく検索の結果から [SELECTIONS_WHEN_VISIBLE] 回選んだセッションにする（R1 の選択。見えているアプリを
+     * 一覧から探す人はいないため。一覧から開くと、見えていたので救済にも選択にもならない）。
      *
      * 見えていた結果は、この runner（ふつうは学習のない状態）の結果の上位 [LearningConfig.minVisibleResults] 件。
      * 開くアプリは、any なら最初の正解、all なら正解ごとに 1 セッション（すべて出るには、すべてを 1 回ずつ開く必要がある）。
@@ -123,14 +125,28 @@ internal class EvalRunner(
             val visible = results(query.query).take(visibleCount).map { it.app }
             val targets = if (query.judge == Judge.ALL) query.answers else query.answers.take(1)
             for (answer in targets) {
-                val events =
-                    listOf(
-                        SessionEvent.QueryChanged(time, query.query, visible),
-                        SessionEvent.AllAppsShown(time + SECOND),
-                        SessionEvent.AppOpened(time + SESSION_MILLIS, ids.getValue(answer), LaunchRoute.ALL_APPS, query.query),
-                    )
-                memory = memory.recorded(policy.decide(events), time)
-                time += SESSION_MILLIS
+                val app = ids.getValue(answer)
+                val sessions =
+                    if (app in visible) {
+                        List(SELECTIONS_WHEN_VISIBLE) {
+                            listOf(
+                                SessionEvent.QueryChanged(time, query.query, visible),
+                                SessionEvent.AppOpened(time + SECOND, app, LaunchRoute.SEARCH_RESULT, query.query),
+                            )
+                        }
+                    } else {
+                        listOf(
+                            listOf(
+                                SessionEvent.QueryChanged(time, query.query, visible),
+                                SessionEvent.AllAppsShown(time + SECOND),
+                                SessionEvent.AppOpened(time + SESSION_MILLIS, app, LaunchRoute.ALL_APPS, query.query),
+                            ),
+                        )
+                    }
+                for (events in sessions) {
+                    memory = memory.recorded(policy.decide(events), time)
+                    time += SESSION_MILLIS
+                }
             }
         }
         return memory
@@ -182,6 +198,12 @@ internal class EvalRunner(
         const val TOP_SHOWN = 5
 
         private const val SECOND = 1_000L
+
+        /**
+         * 正解が見えていたときに、検索の結果から選ぶ回数。選び続けた状態をまねる。
+         * 1 回目は段階を上げる幅に数えないので（R6）、3 回で 2 段上がり、「めーる」のメルカリ（段階 2）とメールのアプリ（段階 4）が入れ替わる
+         */
+        private const val SELECTIONS_WHEN_VISIBLE = 3
 
         /** 学習のセッション 1 つの長さ。一覧から探して開くまで。救済の 60 秒以内に収める。 */
         private const val SESSION_MILLIS = 10 * SECOND

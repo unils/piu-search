@@ -3,6 +3,9 @@
 package jp.piu.search.core.search
 
 import jp.piu.search.core.text.NormalizedText
+import jp.piu.search.core.text.RomajiConverter
+import jp.piu.search.core.text.RomajiMode
+import jp.piu.search.core.text.containsLatin
 
 /**
  * 学習した組 1 つの記録（learning.md の「何を覚えるか」）。
@@ -36,6 +39,7 @@ public data class LearnedRecord(
  *
  * - 学習のキーと印: [SearchIndex.withLearning] で索引に重ねる（照合の中で平たい配列として比べるため）
  * - 加点: [learnedBoost]。[LaunchHistory.asRankingSignals] から照合に渡す
+ * - 段階を上げる幅: [stageLift]（R6）。加点と同じく照合に渡す
  *
  * 記録は索引の表とつながず、アプリを識別子の組で持つ。索引にない（消えた）アプリの記録も残る。
  *
@@ -54,6 +58,11 @@ public class LearnedMemory(
         this.records.values
             .filterNot { it.suppressed }
             .groupBy { it.app }
+
+    // 段階を上げる判定（R6）で比べる記録の語のローマ字。照合の中で毎回変換しないよう、初めて使うときに作る
+    private val liftKeysByApp: Map<AppId, List<LiftKey>> by lazy {
+        activeByApp.mapValues { (_, list) -> list.map(::LiftKey) }
+    }
 
     /**
      * [decision] を時刻 [at] に記録したもの。使用した学習のキーは時刻だけ更新する。長すぎる語と印のある組は変えない（ユーザーが出さないと決めた組を、学習で戻さない）。
@@ -191,9 +200,74 @@ public class LearnedMemory(
         return minOf(maxCount.toLong() * config.boostPerUse, config.maxBoost.toLong()).toInt()
     }
 
+    /**
+     * 検索語 [query] で [app] を学習で上げる段階の数（R6）。時刻 [now] から見た新しさを使う。
+     *
+     * 記録の語が検索語と同じか、英字を含む検索語が記録の語の最後の 1 音を打ちかけた形（「めーる」に対する「めーr」・`mer`・`meru`）のときだけ効く。
+     * 語の頭だけを打った検索語（「めー」）では上げない。短い語で、別の語の学習が段階の並びを崩さないようにするため（加点は同じ段階の中で効く）。
+     *
+     * 幅は、回数から [LearningConfig.freeSelections] を引き、救済になったことがあれば [LearningConfig.rescueStageLift] を足し、
+     * 最後に使ってから [LearningConfig.staleStageLiftMillis] たっていれば 1 段減らしたもの。当たる記録が複数あれば大きいほう。
+     * 段階の数で頭を打つ。印のある組は上げない（[SearchEngine] がその検索語では出さない）。
+     */
+    public fun stageLift(
+        query: SearchQuery,
+        app: AppId,
+        now: Long,
+    ): Int {
+        val keys = liftKeysByApp[app] ?: return 0
+        val q = query.strict
+        if (q.isEmpty) return 0
+        // 英字を含む検索語だけ、ローマ字で比べる。かなだけの途中の形（「めー」）は、語の頭を打っただけとみなす
+        val typed = if (q.value.containsLatin()) RomajiConverter.toStandard(q, RomajiMode.PREFIX).value else null
+        var best = 0
+        for (key in keys) {
+            if (!key.matches(q.value, typed)) continue
+            val record = key.record
+            var lift = record.count.toLong() - config.freeSelections + if (record.rescued) config.rescueStageLift else 0
+            if (now - record.lastUsedAt >= config.staleStageLiftMillis) lift--
+            best = maxOf(best, lift.coerceIn(0L, MAX_STAGE_LIFT.toLong()).toInt())
+        }
+        return best
+    }
+
+    /**
+     * [stageLift] で比べる記録 1 件。ローマ字は、記録の語の全体（[full]）と、最後の 1 字を除いた頭（[head]）。
+     * どちらかが英数字だけの形にならない語（漢字を含む）は、ローマ字では比べない。
+     */
+    private class LiftKey(
+        val record: LearnedRecord,
+    ) {
+        private val full: String?
+        private val head: String?
+
+        init {
+            val word = record.query.value
+            val lastStart = if (word.isEmpty()) 0 else word.offsetByCodePoints(word.length, -1)
+            full = RomajiConverter.toStandard(record.query, RomajiMode.COMPLETE).value.takeIf { it.isRomajiOnly() }
+            head = RomajiConverter.toStandard(NormalizedText(word.substring(0, lastStart)), RomajiMode.COMPLETE).value
+        }
+
+        /**
+         * 厳密形 [strict] が記録の語と同じか、英字を含む検索語のローマ字 [typed] が、最後の 1 字の音に入っていて記録の語のローマ字の頭にあたるか。
+         * 「めー」の `me` で止まる形（`me`）は、最後の音を打ち始めていないので数えない。
+         */
+        fun matches(
+            strict: String,
+            typed: String?,
+        ): Boolean {
+            if (strict == record.query.value) return true
+            if (typed == null || full == null || head == null) return false
+            return typed.length > head.length && full.startsWith(typed)
+        }
+    }
+
     /** 定数。 */
     public companion object {
         /** 記録のない状態。 */
         public val EMPTY: LearnedMemory = LearnedMemory(emptyList())
+
+        // 最上段（完全一致）から最下段（提供元）までの差。これより上げても並びは変わらない
+        private val MAX_STAGE_LIFT = MatchStage.entries.size - 1
     }
 }
