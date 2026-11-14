@@ -2,6 +2,7 @@
 
 package jp.piu.search.core.text
 
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -10,6 +11,51 @@ import org.junit.jupiter.params.provider.CsvSource
 import kotlin.random.Random
 
 class RomajiConverterTest {
+    @Test
+    fun `接頭辞の長さは各語を変換した結果と同じ（促音、拗音、先読み、補助漢字も含む）`() {
+        val random = Random(32)
+        val pieces =
+            listOf(
+                "あ",
+                "き",
+                "ゃ",
+                "っ",
+                "ー",
+                "n",
+                "s",
+                "h",
+                "i",
+                "c",
+                "t",
+                "a",
+                "f",
+                "u",
+                "é",
+                "𠮷",
+                "1",
+                "ふ",
+                "ぇ",
+                "し",
+                "ち",
+                "て",
+                "ぃ",
+                "じ",
+            ) +
+                ('a'..'z').map { it.toString() }
+        val words =
+            listOf("", "っーーnna", "cccha", "nnnna", "きゃっしゅ", "é𠮷っ") +
+                List(500) { buildString { repeat(64) { append(pieces.random(random)) } } }
+        for (word in words) {
+            val text = TextNormalizer.strict(word)
+            val expected =
+                IntArray(text.value.codePointCount(0, text.value.length)) { i ->
+                    val end = text.value.offsetByCodePoints(0, i + 1)
+                    RomajiConverter.toStandard(NormalizedText(text.value.substring(0, end))).value.length
+                }
+            assertArrayEquals(expected, RomajiConverter.prefixLengths(text), word)
+        }
+    }
+
     private fun romaji(
         raw: String,
         mode: RomajiMode = RomajiMode.COMPLETE,

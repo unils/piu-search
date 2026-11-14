@@ -28,6 +28,9 @@ public class LocalDatabase internal constructor(
     /** 学習の表。 */
     public val learned: LearnedStore = LearnedStore(room)
 
+    /** 索引・学習・起動の記録をまとめたプロファイル単位の整理。 */
+    public val profiles: ProfileStore = ProfileStore(room)
+
     override fun close() {
         room.close()
     }
@@ -58,6 +61,7 @@ public class LocalDatabase internal constructor(
                     Room.databaseBuilder(appContext, PiuRoomDatabase::class.java, name)
                 }
             builder.addMigrations(*PiuRoomDatabase.MIGRATIONS)
+            if (name != null) builder.addCallback(InstallationGuard(appContext))
             if (allowMainThread) builder.allowMainThreadQueries()
             return LocalDatabase(builder.build(), indexVersion)
         }

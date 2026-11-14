@@ -13,8 +13,10 @@ public object SearchIndexVersion {
      * 履歴: 1 = M1-04 の最初の版。2 = 名前の「+」を「ぷらす」と読む（M1-05）。
      * 3 = 評価セットで外れた語をブランド表に足す（M1-06b）。4 = 形態素解析器の読みの補い（[ReadingSupplements]）を足す（M1-06b）。
      * 5 = パッケージ名の語の読み・除く語の広げ・提供元のキー・「Y!」の読み（M6-01）。
+     * 6 = APK 指紋と OS のビルドを保存し、不完全な材料を再試行する（R4）。
+     * 7 = 英数字のブランドの読み、パッケージ名と提供元の緩い形（T5）。
      *
      * ブランド表と読みの補いを変えて上げ忘れないよう、表の中身と版の組をテスト（`SearchIndexVersionTest`）で固定している。
      */
-    public const val CURRENT: Int = 5
+    public const val CURRENT: Int = 7
 }

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -79,8 +80,18 @@ class SettingsInstrumentedTest {
         )
         // アプリ情報の画面の「アプリ内の設定」（新しい版は行、古い版は見出しの歯車）を、画面の木から探して押す
         var target: String? = null
+        var expanded = false
         device.waitFor("アプリ情報にアプリ内の設定の入口が出る") {
             target = findAppSettingsEntry()
+            // Android 9 の AOSP の Settings は、アプリ情報の行を先頭の 6 つだけ見せ（app_info_settings.xml の
+            // initialExpandedChildrenCount="6"）、残りを「Advanced」の行に畳む。入口の行（app_settings_link）は畳まれた側にあり、
+            // 畳んだ行の要約に名前だけが並ぶので、その行を一度押して開く
+            if (target == null && !expanded) {
+                findCollapsedGroupWithEntry()?.let {
+                    device.shell("input tap $it")
+                    expanded = true
+                }
+            }
             target != null
         }
         Log.i(TAG, "アプリ内の設定の入口: $target")
@@ -94,16 +105,27 @@ class SettingsInstrumentedTest {
      * 前面の窓の画面の木（アクセシビリティのノード）から入口を探し、押す位置（"x y"）を返す。なければ null。
      * `uiautomator dump` は、テストが UiAutomation をつないでいる間は使えないので、同じ UiAutomation で木を読む。
      */
-    private fun findAppSettingsEntry(): String? {
+    private fun findAppSettingsEntry(): String? =
+        findVisible { node ->
+            node.text?.toString() in ENTRY_TEXTS ||
+                node.contentDescription?.toString() in ENTRY_TEXTS ||
+                (node.className == IMAGE_BUTTON && ENTRY_IDS.any { node.viewIdResourceName.orEmpty().endsWith(it) })
+        }
+
+    /** 畳んだ行（要約が「Battery, Open by default, Additional settings in the app」のように、入口の名前を含むが一致はしない）の位置。 */
+    private fun findCollapsedGroupWithEntry(): String? =
+        findVisible { node ->
+            val text = node.text?.toString() ?: return@findVisible false
+            text !in ENTRY_TEXTS && ENTRY_TEXTS.any { text.contains(it) }
+        }
+
+    /** 前面の窓の画面の木を幅優先でたどり、条件に合う見えているノードの中心（"x y"）を返す。 */
+    private fun findVisible(predicate: (AccessibilityNodeInfo) -> Boolean): String? {
         val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
         val queue = ArrayDeque(listOf(root))
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
-            val matches =
-                node.text?.toString() in ENTRY_TEXTS ||
-                    node.contentDescription?.toString() in ENTRY_TEXTS ||
-                    (node.className == IMAGE_BUTTON && ENTRY_IDS.any { node.viewIdResourceName.orEmpty().endsWith(it) })
-            if (matches && node.isVisibleToUser) {
+            if (predicate(node) && node.isVisibleToUser) {
                 val bounds = Rect().also(node::getBoundsInScreen)
                 return "${bounds.centerX()} ${bounds.centerY()}"
             }

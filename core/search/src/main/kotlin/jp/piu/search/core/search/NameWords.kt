@@ -42,24 +42,26 @@ internal data class NameWord(
  *   ブランド表の綴りはこの単位で書く約束（`brands.tsv` の頭の説明）なので、表を引く単位とここの語をそろえる。
  *   ただし英字に挟まれたアポストロフィは語の中に含める（`McDonald's` → 1 語。表の綴りは `mcdonalds`）。
  *   Kuromoji は記号で英字を分けるのでほぼ同じになるが、アポストロフィと、読みのない語の扱いを形態素解析器に依らず決めるため自前で分ける
- * - 英字と数字の境、かなと英字の境でも分ける（`モバイルSuica` → モバイル・Suica）
+ * - 英字と数字の境、かなと英字の境でも分ける（`モバイルSuica` → モバイル・Suica）。
+ *   ただし [latinReader] が読める英数字の連なり（`Qoo10`）は、ブランド表の綴りを失わないよう 1 語にする
  *
  * 形態素解析器が読みを付けなかった日本語の部分（辞書にない漢字、[jp.piu.search.core.reading.NoReadingAnalyzer] の結果）も、文字の種類で分ける。
  */
 internal fun splitNameWords(
     nfkc: String,
     tokens: List<ReadingToken>,
+    latinReader: LatinWordReader? = null,
 ): List<NameWord> {
     val words = ArrayList<NameWord>()
     var pos = 0
     for (token in tokens.sortedBy { it.start }) {
         val reading = token.reading
         if (token.start < pos || token.end > nfkc.length || reading == null || !token.surface.hasJapanese()) continue
-        splitByCharClass(nfkc, pos, token.start, words)
+        splitByCharClass(nfkc, pos, token.start, words, latinReader)
         words.add(NameWord(token.surface, WordKind.JAPANESE, reading))
         pos = token.end
     }
-    splitByCharClass(nfkc, pos, nfkc.length, words)
+    splitByCharClass(nfkc, pos, nfkc.length, words, latinReader)
     return words
 }
 
@@ -100,6 +102,7 @@ private fun splitByCharClass(
     start: Int,
     end: Int,
     out: MutableList<NameWord>,
+    latinReader: LatinWordReader?,
 ) {
     var runStart = -1
     var runClass = CharClass.SEPARATOR
@@ -114,6 +117,15 @@ private fun splitByCharClass(
         val cp = text.codePointAt(i)
         val next = i + Character.charCount(cp)
         var cls = classOf(cp)
+        if (runStart < 0 || (runClass != CharClass.LATIN && runClass != CharClass.DIGIT)) {
+            val brandEnd = alphanumericBrandEnd(text, i, end, latinReader)
+            if (brandEnd > i) {
+                close(i)
+                out.add(NameWord(text.substring(i, brandEnd), WordKind.LATIN))
+                i = brandEnd
+                continue
+            }
+        }
         if (cls == CharClass.MARK && runStart >= 0) cls = runClass
         if (runClass == CharClass.LATIN && runStart >= 0 && isApostrophe(cp) && next < end &&
             classOf(text.codePointAt(next)) == CharClass.LATIN
@@ -134,6 +146,29 @@ private fun splitByCharClass(
         i = next
     }
     close(end)
+}
+
+/** 表にある英数字のブランドだけをまとめ、数字の読みのない LINE2 などは従来どおり区切る。 */
+private fun alphanumericBrandEnd(
+    text: String,
+    start: Int,
+    end: Int,
+    latinReader: LatinWordReader?,
+): Int {
+    if (latinReader == null) return start
+    var at = start
+    var hasLatin = false
+    var hasDigit = false
+    while (at < end) {
+        val cp = text.codePointAt(at)
+        when (classOf(cp)) {
+            CharClass.LATIN -> hasLatin = true
+            CharClass.DIGIT -> hasDigit = true
+            else -> break
+        }
+        at += Character.charCount(cp)
+    }
+    return if (hasLatin && hasDigit && latinReader.readings(text.substring(start, at)).isNotEmpty()) at else start
 }
 
 private fun wordKindOf(cls: CharClass): WordKind =

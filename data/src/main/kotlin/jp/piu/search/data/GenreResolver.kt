@@ -35,8 +35,20 @@ public class GenreResolver internal constructor(
      * [activities] の各入口のジャンル。ジャンルのない入口は結果に入れない。
      * ジャンルは matching.md の表の順に並べる。
      */
-    public fun resolve(activities: List<LaunchableActivity>): Map<AppId, List<GenreId>> {
-        val handlers = queryHandlers()
+    public fun resolve(activities: List<LaunchableActivity>): Map<AppId, List<GenreId>> =
+        resolveEntries(activities.map { GenreEntry(it.id, it.applicationInfo.category) })
+
+    /** 名前や署名を読み直さず、毎回の一覧からジャンルだけを判定する。 */
+    public fun resolveStamps(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> =
+        resolveEntries(stamps.map { GenreEntry(it.id, it.category) })
+
+    private data class GenreEntry(
+        val id: AppId,
+        val category: Int,
+    )
+
+    private fun resolveEntries(activities: List<GenreEntry>): Map<AppId, List<GenreId>> {
+        val handlers = queryHandlers(activities.mapTo(LinkedHashSet()) { it.id.packageName })
         val result = LinkedHashMap<AppId, List<GenreId>>()
         for ((_, entries) in activities.groupBy { it.id.packageName to it.id.profileSerial }) {
             val packageName = entries.first().id.packageName
@@ -54,7 +66,7 @@ public class GenreResolver internal constructor(
                 }
             }
             for (entry in entries) {
-                APP_CATEGORY_GENRES[entry.applicationInfo.category]?.let { packageWide += it }
+                APP_CATEGORY_GENRES[entry.category]?.let { packageWide += it }
                 val genres = packageWide + perEntry[entry.id.activityName].orEmpty()
                 if (genres.isNotEmpty()) result[entry.id] = Genres.ORDER.filter { it in genres }
             }
@@ -62,23 +74,33 @@ public class GenreResolver internal constructor(
         return result
     }
 
-    /** 表の各行を 1 度ずつ問い合わせ、ジャンル → 受けられる Activity にまとめる。 */
-    private fun queryHandlers(): List<Pair<GenreId, Set<ComponentName>>> =
+    /** 全体への問い合わせを基本とし、カメラだけは重複を除いたパッケージごとに問う。 */
+    private fun queryHandlers(packages: Set<String>): List<Pair<GenreId, Set<ComponentName>>> =
         GENRE_RULES
             .filter { sdkInt >= it.minSdk }
             .map { rule ->
+                val intents =
+                    if (rule.perPackage) {
+                        packages.map { rule.intent.toIntent().setPackage(it) }
+                    } else {
+                        listOf(rule.intent.toIntent())
+                    }
                 rule.genre to
-                    query(rule.intent.toIntent())
+                    intents
+                        .flatMap { query(it, rule.queryFlags) }
                         .mapTo(HashSet()) { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
             }
 
-    // フラグは 0: MATCH_DEFAULT_ONLY を付けると、CATEGORY_DEFAULT を書いていない起動の入口（CATEGORY_APP_* を付けたもの）を
-    // 取りこぼす。ここで知りたいのは「受ける宣言があるか」で、実際に開けるかではない
-    private fun query(intent: Intent): List<ResolveInfo> =
+    // MATCH_DEFAULT_ONLY は付けない。CATEGORY_DEFAULT のない起動の入口も、宣言していればジャンルの材料になる。
+    // ブラウザは MATCH_ALL で既定以外も含める（AOSP CrossProfileIntentResolverEngine、android14-release）
+    private fun query(
+        intent: Intent,
+        flags: Int,
+    ): List<ResolveInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
+            packageManager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(flags.toLong()))
         } else {
             @Suppress("DEPRECATION")
-            packageManager.queryIntentActivities(intent, 0)
+            packageManager.queryIntentActivities(intent, flags)
         }
 }

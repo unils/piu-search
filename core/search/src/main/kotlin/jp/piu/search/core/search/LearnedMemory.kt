@@ -13,7 +13,7 @@ import jp.piu.search.core.text.NormalizedText
  * @property query 検索語の厳密形
  * @property app アプリ
  * @property count 記録した回数（1 つのセッションで選択と救済の両方になっても 1 回）
- * @property lastUsedAt 最後に記録した時刻（エポックからのミリ秒）。R5 の忘却に使う
+ * @property lastUsedAt 最後に記録したか、学習のキーで当たったアプリを開いた時刻（エポックからのミリ秒）。R5 の忘却に使う
  * @property rescued 救済になったことがあるか。あれば [query] がアプリの学習のキーになる（R3）
  * @property suppressed 「この語では出さない」の印（R4）。印があれば、この検索語ではアプリを出さず、忘却もしない
  */
@@ -47,7 +47,7 @@ public class LearnedMemory(
     private val config: LearningConfig = LearningConfig.DEFAULT,
 ) {
     /** 組 → 記録。 */
-    public val records: Map<LearnedPair, LearnedRecord> = records.associateBy { it.pair }
+    public val records: Map<LearnedPair, LearnedRecord> = records.filter { LearningLimits.accepts(it.query) }.associateBy { it.pair }
 
     // 照合の中で結果のアプリごとに引くので、アプリごとにまとめておく
     private val activeByApp: Map<AppId, List<LearnedRecord>> =
@@ -56,7 +56,7 @@ public class LearnedMemory(
             .groupBy { it.app }
 
     /**
-     * [decision] を時刻 [at] に記録したもの。印のある組は変えない（ユーザーが出さないと決めた組を、学習で戻さない）。
+     * [decision] を時刻 [at] に記録したもの。使用した学習のキーは時刻だけ更新する。長すぎる語と印のある組は変えない（ユーザーが出さないと決めた組を、学習で戻さない）。
      */
     public fun recorded(
         decision: LearningDecision,
@@ -67,16 +67,23 @@ public class LearnedMemory(
         val rescued = decision.rescues.toSet()
         val pairs = (listOfNotNull(decision.selection) + decision.rescues).distinct()
         for (pair in pairs) {
+            if (!LearningLimits.accepts(pair.query)) continue
             val old = next[pair]
             if (old?.suppressed == true) continue
             next[pair] =
                 LearnedRecord(
                     query = pair.query,
                     app = pair.app,
-                    count = (old?.count ?: 0) + 1,
+                    count = ((old?.count ?: 0).toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                     lastUsedAt = maxOf(at, old?.lastUsedAt ?: at),
                     rescued = (old?.rescued ?: false) || pair in rescued,
                 )
+        }
+        // 入力した語の選択（R1）と区別する。前方一致やローマ字で使った元の救済語の回数は増やさず、忘却の時刻だけ進める
+        decision.used?.let { pair ->
+            next[pair]?.takeIf { it.rescued && !it.suppressed }?.let { old ->
+                next[pair] = old.copy(lastUsedAt = maxOf(at, old.lastUsedAt))
+            }
         }
         return LearnedMemory(next.values, config)
     }
@@ -88,6 +95,7 @@ public class LearnedMemory(
         pair: LearnedPair,
         at: Long,
     ): LearnedMemory {
+        if (!LearningLimits.accepts(pair.query)) return this
         val old = records[pair]
         val marked = old?.copy(suppressed = true) ?: LearnedRecord(pair.query, pair.app, 0, at, rescued = false, suppressed = true)
         return LearnedMemory(records.values.filterNot { it.pair == pair } + marked, config)
@@ -126,6 +134,7 @@ public class LearnedMemory(
         if (imported.isEmpty()) return this
         val next = records.toMutableMap()
         for (record in imported) {
+            if (!LearningLimits.accepts(record.query)) continue
             val old = next[record.pair]
             next[record.pair] =
                 LearnedRecord(
@@ -179,7 +188,7 @@ public class LearnedMemory(
         for (record in list) {
             if (record.query.value.startsWith(q) && record.count > maxCount) maxCount = record.count
         }
-        return minOf(maxCount * config.boostPerUse, config.maxBoost)
+        return minOf(maxCount.toLong() * config.boostPerUse, config.maxBoost.toLong()).toInt()
     }
 
     /** 定数。 */

@@ -19,6 +19,7 @@ Android の端末に入っているアプリを、日本語の読み・表記ゆ
 ./gradlew check           # 書式・Lint・単体テスト・網羅率・KDoc・権限などの検査
 ./gradlew --console=plain --no-build-cache clean check :app:assembleDebug :app:assembleRelease assembleAndroidTest   # CI と同じ形
 ./gradlew :core:search:test --tests "jp.piu.search.core.search.BrandTableTest"   # 1 つのテストだけ
+./gradlew :core:search:updateEvalBaseline   # 評価セットの基準を書き直す（照合を意図して変えたときだけ。差分を pull request に載せる）
 ```
 
 計器テスト（`connectedDebugAndroidTest` など）は端末かエミュレータが要る。手順は CONTRIBUTING.md の「検査のコマンド」。

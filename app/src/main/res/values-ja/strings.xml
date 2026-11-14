@@ -98,7 +98,7 @@
     </plurals>
     <string name="learned_export_failed">ファイルに書けませんでした</string>
     <plurals name="learned_imported">
-        <item quantity="other">%d 件を読み込み、今の学習と合わせました</item>
+        <item quantity="other">%1$d 件を読み込み、今の学習と合わせました（読み込まなかった記録 %2$d 件）</item>
     </plurals>
     <string name="learned_import_unreadable">ファイルを読めませんでした。学習は変えていません</string>
     <string name="learned_import_too_large">学習の書き出しにしては大きすぎるファイルです。学習は変えていません</string>
@@ -139,4 +139,16 @@
     </plurals>
     <string name="licenses_notice">注意書き（NOTICE）</string>
     <string name="licenses_notice_intro">形態素解析器 Kuromoji と、その辞書 IPADIC の注意書き（奈良先端科学技術大学院大学と ICOT）を含みます。</string>
+    <string name="settings_clear_history">起動の記録を消す</string>
+    <string name="settings_clear_history_detail">空の検索語の一覧と、検索結果の並べ替えに使う記録を消します</string>
+    <string name="settings_clear_history_confirm">個人用と仕事用のアプリの起動回数と、最後に開いた時刻をすべて消します。学習と設定は残ります。この操作は取り消せません。</string>
+    <string name="settings_history_cleared">起動の記録を消しました</string>
+    <string name="settings_history_clear_failed">起動の記録を消せませんでした。もう一度お試しください</string>
+    <string name="learned_load_failed">保存した学習を読めませんでした。画面を開き直すと、もう一度試します</string>
+    <string name="learned_save_failed">変更を保存できませんでした。もう一度お試しください</string>
+    <string name="learned_import_save_failed">読み込んだ学習を保存できませんでした。もう一度お試しください</string>
+    <string name="search_record_failed">学習または起動の記録を保存できませんでした</string>
+    <string name="search_record_load_failed">学習または起動の記録を読めませんでした</string>
+    <string name="open_record_failed">前に選んだ記録を保存できなかった</string>
+    <string name="index_sync_failed">索引を更新できなかった</string>
 </resources>

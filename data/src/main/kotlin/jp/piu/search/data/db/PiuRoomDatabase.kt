@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * すべての表を消すので、起動の記録と学習まで消えるため。索引の表だけなら、移行の中で消して作り直してよい。
  */
 @Database(
-    entities = [AppRow::class, SearchKeyRow::class, MetaRow::class, LaunchStatRow::class, LearnedRow::class],
+    entities = [AppRow::class, SearchKeyRow::class, MetaRow::class, LaunchStatRow::class, LearnedRow::class, InstallationRow::class],
     version = PiuRoomDatabase.VERSION,
     exportSchema = true,
 )
@@ -25,12 +25,14 @@ internal abstract class PiuRoomDatabase : RoomDatabase() {
 
     abstract fun learnedDao(): LearnedDao
 
+    abstract fun profileDao(): ProfileDao
+
     companion object {
         /** 表の定義の版。 */
-        const val VERSION = 3
+        const val VERSION = 5
 
         /** 版の移行。古い版から開くときに順に当てる。 */
-        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3)
+        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3, Migration3To4, Migration4To5)
     }
 }
 
@@ -54,5 +56,20 @@ internal object Migration2To3 : Migration(2, 3) {
                 "`last_used_at` INTEGER NOT NULL, `rescued` INTEGER NOT NULL, `suppressed` INTEGER NOT NULL, " +
                 "PRIMARY KEY(`profile_serial`, `package_name`, `activity_name`, `query`))",
         )
+    }
+}
+
+/** 3 → 4: インストールの印を足す。移行直後の整理は、noBackupFilesDir を読める InstallationGuard で行う。 */
+internal object Migration3To4 : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `installation` (`id` INTEGER NOT NULL, `token` TEXT NOT NULL, PRIMARY KEY(`id`))")
+    }
+}
+
+/** 4 → 5: 索引の変更検出の材料を足す。利用者の学習・起動の記録・インストールの印は保つ。 */
+internal object Migration4To5 : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE app ADD COLUMN apk_fingerprint TEXT")
+        db.execSQL("ALTER TABLE meta ADD COLUMN build_fingerprint TEXT NOT NULL DEFAULT ''")
     }
 }

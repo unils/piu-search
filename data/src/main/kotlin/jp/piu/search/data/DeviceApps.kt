@@ -4,12 +4,23 @@ package jp.piu.search.data
 
 import android.content.Context
 import android.content.res.Resources
+import android.os.Build
+import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
+import jp.piu.search.core.search.AppId
+import jp.piu.search.core.search.GenreId
 
 /**
  * [IndexSync] が端末に問い合わせること。判断の部分を端末なしで（Robolectric と偽物で）テストできるよう分ける。
  */
 internal interface DeviceApps {
+    /** Callback の通知元を保存用のシリアル番号へ変える。分からなければ次の同期で再試行する。 */
+    fun profileSerial(user: UserHandle): Long? = null
+
+    /** OS のビルド。変われば資源も変わり得るため全件を作り直す。 */
+    fun buildFingerprint(): String = Build.FINGERPRINT
+
     /** 再起動の回数（`Settings.Global.BOOT_COUNT`）。取れなければ null。 */
     fun bootCount(): Int?
 
@@ -19,7 +30,7 @@ internal interface DeviceApps {
     /** [sequence] より後に変わったパッケージと、今の変更の番号（`PackageManager.getChangedPackages`）。 */
     fun changedPackages(sequence: Int): PackageChanges
 
-    /** 索引に入れるプロファイルのシリアル番号。 */
+    /** 今回読めるプロファイルのシリアル番号。一覧にないことは、ユーザーが消えたことを意味しない。 */
     fun profileSerials(): Set<Long>
 
     /** すべての入口の識別子。[withUpdateTime] が false なら時刻は 0。 */
@@ -27,6 +38,37 @@ internal interface DeviceApps {
 
     /** [packages] のパッケージの入口を、索引の材料にして読む（null ならすべて）。 */
     fun read(packages: Set<String>?): List<InstalledApp>
+
+    /** 一覧の完全性をプロファイルごとに保つ。 */
+    fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> {
+        val before = profileSerials()
+        val entries = stamps(withUpdateTime).groupBy { it.id.profileSerial }
+        val after = profileSerials()
+        return (before + after).associateWith { serial ->
+            if (serial in before && serial in after) {
+                ProfileRead(ProfileReadStatus.COMPLETE, entries[serial].orEmpty())
+            } else {
+                ProfileRead(ProfileReadStatus.UNAVAILABLE)
+            }
+        }
+    }
+
+    /** 詳細を読めなかったプロファイルを正常な空にしない。 */
+    fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> {
+        val before = profileSerials()
+        val entries = read(packages).groupBy { it.entry.id.profileSerial }
+        val after = profileSerials()
+        return (before + after).associateWith { serial ->
+            if (serial in before && serial in after) {
+                ProfileRead(ProfileReadStatus.COMPLETE, entries[serial].orEmpty())
+            } else {
+                ProfileRead(ProfileReadStatus.UNAVAILABLE)
+            }
+        }
+    }
+
+    /** APK の変化によらないジャンルの材料を毎回問い合わせる。 */
+    fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> = emptyMap()
 }
 
 /**
@@ -50,9 +92,13 @@ internal class AndroidDeviceApps(
     private val reader: InstalledAppReader = InstalledAppReader(context),
     private val bootCountOverride: (() -> Int?)? = null,
 ) : DeviceApps {
+    private val userManager = context.getSystemService(UserManager::class.java)
     private val resolver = context.contentResolver
     private val packageManager = context.packageManager
+    private val genreResolver = GenreResolver(context.packageManager)
     private val ownPackage = context.packageName
+
+    override fun profileSerial(user: UserHandle): Long? = userManager.getSerialNumberForUser(user).takeIf { it >= 0 }
 
     override fun bootCount(): Int? = bootCountOverride?.invoke() ?: systemBootCount()
 
@@ -76,10 +122,22 @@ internal class AndroidDeviceApps(
         return PackageChanges(changed.sequenceNumber, changed.packageNames.toSet())
     }
 
-    override fun profileSerials(): Set<Long> = reader.source.profiles().mapTo(LinkedHashSet()) { it.serial }
+    override fun profileSerials(): Set<Long> = reader.source.readableProfiles().mapTo(LinkedHashSet()) { it.serial }
 
     override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> =
         reader.source.stamps(withUpdateTime).filter { it.id.packageName != ownPackage }
+
+    override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
+        reader.source.stampProfiles(withUpdateTime).mapValues { (_, result) ->
+            result.copy(items = result.items.filter { it.id.packageName != ownPackage })
+        }
+
+    override fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> =
+        reader.readProfiles(packages?.minus(ownPackage)).mapValues { (_, result) ->
+            result.copy(items = result.items.filter { it.entry.id.packageName != ownPackage })
+        }
+
+    override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> = genreResolver.resolveStamps(stamps)
 
     override fun read(packages: Set<String>?): List<InstalledApp> =
         reader.read(packages?.minus(ownPackage)).filter { it.entry.id.packageName != ownPackage }

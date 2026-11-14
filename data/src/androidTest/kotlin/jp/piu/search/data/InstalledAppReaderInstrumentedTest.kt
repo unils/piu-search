@@ -26,6 +26,9 @@ class InstalledAppReaderInstrumentedTest {
     /** テスト用のアプリの入口ごとの、日本語と英語の名前とジャンル（test-apps/ の資源とマニフェスト）。 */
     private val expected =
         listOf(
+            Expected("browser", "TestActivity", ja = "閲覧テスト", en = "Web Probe", genres = listOf("browser")),
+            Expected("browsersecondary", "TestActivity", ja = "別の閲覧テスト", en = "Other Web Probe", genres = listOf("browser")),
+            Expected("camera", "TestActivity", ja = "撮影テスト", en = "Lens Probe", genres = listOf("camera")),
             Expected("game", "TestActivity", ja = "将棋テスト", en = "Shogi Test", genres = listOf("game")),
             Expected("mail", "TestActivity", ja = "テストメール", en = "Test Mail", genres = listOf("email")),
             Expected("maps", "TestActivity", ja = "テスト地図", en = "Test Map", genres = listOf("maps")),

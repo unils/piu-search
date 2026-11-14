@@ -2,13 +2,11 @@
 
 package jp.piu.search
 
-import android.util.Log
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LaunchHistory
-import jp.piu.search.data.LaunchStatStore
+import jp.piu.search.data.LaunchStatStorage
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** 起動の記録の受け取り手。記録が変わるたびに、記録のスレッドから呼ばれる。 */
 fun interface LaunchHistoryListener {
@@ -17,22 +15,25 @@ fun interface LaunchHistoryListener {
 }
 
 /**
- * 起動の記録（`launch_stat`）のメモリ上の写しと、データベースへの書き込み。
- *
- * 読み込みと書き込みは [executor] の 1 本のスレッドで順に行う。読み込みが先に済んでから記録を足すので、
- * 読み込む前に起動しても、記録が読み込みで上書きされて消えることはない。
+ * 起動の記録の写し。読み込み確認から保存・反映までを [executor] の 1 本のスレッドで順に行う。
+ * 保存に失敗した操作は写しに反映せず、[StorageResult.Failure] を返す。
  */
 class LaunchHistoryRepository(
-    private val store: () -> LaunchStatStore,
+    private val store: () -> LaunchStatStorage,
     private val executor: Executor,
+    private val isProfilePresent: (Long) -> Boolean = { true },
 ) {
-    private val loadRequested = AtomicBoolean(false)
     private val listeners = CopyOnWriteArrayList<LaunchHistoryListener>()
+    private val stored =
+        StoredSnapshot(LaunchHistory.EMPTY, "PiuLaunchHistory", { store().load() }) { next ->
+            listeners.forEach { it.onHistoryChanged(next) }
+        }
 
-    /** 今の記録。読み込む前は空。 */
-    @Volatile
-    var history: LaunchHistory = LaunchHistory.EMPTY
-        private set
+    /** 最後に読み込みまたは保存できた記録。読み込む前は空。 */
+    val history: LaunchHistory get() = stored.snapshot
+
+    /** 保存先の読み込み状態。保存失敗では Ready の写しを保つ。 */
+    val loadState: LoadState<LaunchHistory> get() = stored.state
 
     /** [listener] を足す。 */
     fun addListener(listener: LaunchHistoryListener) {
@@ -44,41 +45,41 @@ class LaunchHistoryRepository(
         listeners -= listener
     }
 
-    /** データベースから記録を読む。2 回目からは何もしない。 */
-    fun requestLoad() {
-        if (!loadRequested.compareAndSet(false, true)) return
-        executor.execute {
-            try {
-                publish(store().load())
-            } catch (e: RuntimeException) {
-                // 読めなくても、加点と空の検索語の一覧がないだけで検索はできる
-                Log.w(TAG, "起動の記録を読めなかった", e)
-            }
-        }
+    /** 未読・読み込み失敗なら読み直し、結果を記録のスレッドから [onDone] に返す。 */
+    fun requestLoad(onDone: (StorageResult<Unit>) -> Unit = {}) {
+        executor.execute { onDone(stored.ensureLoaded()) }
     }
 
-    /** [app] を時刻 [at] に起動したことを記録する。 */
+    /**
+     * [app] を時刻 [at] に開くために選んだ記録を保存し、結果を記録のスレッドから [onDone] に返す。
+     * 呼び出し元は OS へ渡す前に結果を待つ。一時停止の再開確認への要求は渡さない（learning.md）。
+     */
     fun record(
         app: AppId,
         at: Long,
+        onDone: (StorageResult<Unit>) -> Unit = {},
     ) {
-        requestLoad()
         executor.execute {
-            publish(history.recorded(app, at))
-            try {
-                store().record(app, at)
-            } catch (e: RuntimeException) {
-                Log.w(TAG, "起動を記録できなかった: $app", e)
+            if (!isProfilePresent(app.profileSerial)) {
+                onDone(StorageResult.Success(Unit))
+                return@execute
             }
+            val loaded = stored.ensureLoaded()
+            onDone(if (loaded is StorageResult.Failure) loaded else stored.save(history.recorded(app, at)) { store().record(app, at) })
         }
     }
 
-    private fun publish(next: LaunchHistory) {
-        history = next
-        listeners.forEach { it.onHistoryChanged(next) }
+    /** 全行を消してから写しを空にし、結果を記録のスレッドから [onDone] に返す。 */
+    fun clear(onDone: (StorageResult<Unit>) -> Unit) {
+        executor.execute {
+            val loaded = stored.ensureLoaded()
+            onDone(if (loaded is StorageResult.Failure) loaded else stored.save(LaunchHistory.EMPTY) { store().clear() })
+        }
     }
 
-    private companion object {
-        const val TAG = "PiuLaunchHistory"
+    /** 共通の書き手で削除が確定した後、写しだけを差し替える。未読なら次の読み込みで残りの行を読む。 */
+    internal fun profilesRemoved(serials: Set<Long>) {
+        val retained = history.records.filterKeys { it.profileSerial !in serials }
+        if (retained.size != history.records.size) stored.reflectSaved(LaunchHistory(retained))
     }
 }

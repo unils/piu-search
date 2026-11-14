@@ -21,13 +21,15 @@ public data class LearnedPair(
  *
  * @property selection 選択（R1）。アプリを開かなかった・検索の結果から開かなかった・検索語が空なら null
  * @property rescues 救済（R2）。見つかった順（古い試行が先）
+ * @property used アプリを出した学習のキーの組。回数を足さず、最後に使った時刻だけ進める（R5）
  */
 public data class LearningDecision(
     val selection: LearnedPair?,
     val rescues: List<LearnedPair>,
+    val used: LearnedPair? = null,
 ) {
     /** 記録するものがないか。 */
-    public val isEmpty: Boolean get() = selection == null && rescues.isEmpty()
+    public val isEmpty: Boolean get() = selection == null && rescues.isEmpty() && used == null
 
     /** 救済の知らせで「取り消す」を選んだとき（learning.md の R2）: [pair] の救済を除いたもの。選択は残す。 */
     public fun withoutRescue(pair: LearnedPair): LearningDecision = copy(rescues = rescues - pair)
@@ -101,12 +103,20 @@ public class LearningPolicy(
     ): LearningDecision {
         val query = TextNormalizer.strict(event.query)
         // すべてのアプリの一覧から開いたのは、結果で見つけて選んだのではないので選択にしない（learning.md の「例」の「ぎんこう」）
-        val selection = if (event.route == LaunchRoute.SEARCH_RESULT && !query.isEmpty) LearnedPair(query, event.app) else null
+        val selection =
+            if (event.route == LaunchRoute.SEARCH_RESULT &&
+                LearningLimits.accepts(query)
+            ) {
+                LearnedPair(query, event.app)
+            } else {
+                null
+            }
         val rescues =
             trials
                 .filter { trial ->
                     event.app !in trial.visible &&
-                        trial.representative.codePointCount(0, trial.representative.length) >= config.minRescueLength &&
+                        trial.representative.codePointCount(0, trial.representative.length) in
+                        config.minRescueLength..LearningLimits.MAX_QUERY_CODE_POINTS &&
                         event.at - trial.lastInputAt <= config.rescueWindowMillis &&
                         // 前の試行が開いたときの検索語の前の部分なら、打ち直しの途中にすぎない（R2 の 4 つ目）。
                         // 今の試行（検索語を残したまま一覧やスクロールで開いた）にはこの条件をかけない（「てんき」「ぎんこう」の例）

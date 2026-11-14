@@ -8,6 +8,33 @@
 
 | 日付 | 決定 | 理由 | 詳細 |
 |---|---|---|---|
+| 2026-11-14 | 読みの補いを漢字の検索語側にも使い、辞書の読みを先に残して 8 通りまで組み合わせる（AI） | かなだけの名前による追加評価 7 行で 3 位以内が 2/7 → 7/7。既存評価の順位を保った（T5、#19） | [testing.md](design/testing.md#照合の細部の回帰テストt5) |
+| 2026-11-14 | ブラウザの問い合わせに `MATCH_ALL`、カメラにパッケージ指定を使う（AI） | 既定以外のブラウザと後から入れたカメラをジャンルから落とさない（T7、#12） | [matching.md](design/matching.md#intent-filter-とカテゴリによるジャンル) |
+| 2026-11-14 | AOSP が合成する `android.app.AppDetailsActivity` の入口を索引に入れない（AI） | アプリを起動する入口ではなく設定へ転送するため。クラス名の完全一致で除く（T7、#24） | [architecture.md](design/architecture.md#何を読み直すか) |
+| 2026-11-14 | 索引の版変更でも入口とキーを残し、状態と APK 指紋を無効にして読めるものから作り直す（AI） | 一時停止中の仕事用を消さず、再開後の作り直しを再起動をまたいで保証する（T7） | [architecture.md](design/architecture.md#読めなかったとき) |
+| 2026-11-14 | 学習と起動の記録は、読み込みの確認・変更の計算・保存・写しの反映・知らせと取り消し材料の更新を 1 つの仕事にし、成功・失敗を返す（AI） | 保存失敗で表示だけが進むのを防ぐ。保存処理は当面 1 本の Executor を使う（R1） | [architecture.md](design/architecture.md#保存の順序と書き手) |
+| 2026-11-14 | 読み込み状態を `NotLoaded`・`Loading`・`Ready`・`Failed` で持ち、読み直しにも失敗したら書き込まない。最後に読めた写しは保つ（AI） | 空の学習で保存済みの記録を上書きしない（R1） | [architecture.md](design/architecture.md#保存の順序と書き手) |
+| 2026-11-14 | 索引・学習・起動の記録は共通の `DatabaseWriter` に並べ、プロファイルの削除は 1 つのトランザクションで行う。重い索引の計算は書き手の外に置く（AI） | 削除と遅い保存の順序をそろえ、起動前の記録を待たせない（R3） | [architecture.md](design/architecture.md#同期の実行と保存) |
+| 2026-11-14 | プロファイルの削除は UserManager で存在しないと確認できたときだけ。起動時にも索引・学習・起動の記録の番号の和集合と照合する（AI） | 一時停止や問い合わせ失敗で消さず、プロセス停止中の削除も拾う（R3） | [architecture.md](design/architecture.md#プロファイル) |
+| 2026-11-14 | 個人用の変更番号・仕事用の base/split APK 指紋・Callback・毎回のジャンル判定を併用する。OS・言語・索引の版の変更で全件を作り直す（AI） | 変更番号や APK 指紋だけでは拾えない変化がある（R4） | [architecture.md](design/architecture.md#何を読み直すか) |
+| 2026-11-14 | 同期の通知は成功した対象だけを消費し、失敗した材料は指紋なしで再試行する。同期は 1 つずつ実行し、追加要求をまとめる（AI） | 読み取り失敗を正常な空にせず、新しい通知も失わない（R4） | [architecture.md](design/architecture.md#読めなかったとき) |
+| 2026-11-14 | Callback・プロファイルの放送・忘却のきっかけは Application の部品が持つ。背景のパッケージ通知は溜め、アイコンも失効させる（AI） | 画面を閉じている間の変更も次の検索へ反映する（R4） | [architecture.md](design/architecture.md#更新のきっかけ) |
+| 2026-11-14 | 検索の状態とセッションは ViewModel、現在の検索語は SavedStateHandle に置く。救済の知らせと取り消し材料はプロセス内、学習一覧の結果の表示は専用の ViewModel が持つ（AI） | 回転で前の試行と操作結果を失わず、画面終了後の完了も受け取る（R5） | [architecture.md](design/architecture.md#状態の持ち主) |
+| 2026-11-14 | アプリを開く前に選択の学習と起動の記録を保存し、両方の成功と OS の受付後にだけ救済を Toast で知らせる。起動失敗でも保存済みの記録は残す（AI） | 開いた直後に保存が落ちるのを防ぎ、後の記録や消去を巻き戻さない（R2） | [learning.md](design/learning.md#アプリを開くときの保存r22026-11-14) |
+| 2026-11-14 | 一時停止中の仕事用アプリへの要求は、起動回数と学習（選択・救済・使用）に記録しない（AI） | OS の再開確認を取り消したか判別できない（R2、#26） | [learning.md](design/learning.md#アプリを開くときの保存r22026-11-14) |
+| 2026-11-14 | 起動中と救済の知らせの保留は別の印にする。旧画面が破棄済みでも完了時に起動中の印を解除し、セッションの再開は表示中か復帰時に限る（AI） | 回転後の再操作と次回の取り消しを保ち、非表示中に入力を記録しない（R5） | [ui.md](design/ui.md#回転とセッション) |
+| 2026-11-14 | 派生の索引は材料が変わったときだけ裏で作り、起動記録だけの変更では順位の信号を替える。漢字の読みは解析前にも古さを確かめる（AI） | 画面の仕事と、古い要求による無駄な解析を減らす（R5） | [architecture.md](design/architecture.md#画面の状態と派生の索引r5) |
+| 2026-11-14 | 読み込み・保存・同期の失敗を学習一覧や検索画面で知らせ、ログには操作と例外の型だけを残す。起動前の保存失敗は現在ログのみ（AI） | 失敗を把握できるようにし、アプリの識別子や URI をログへ出さない（R1・R4、#33） | [architecture.md](design/architecture.md#保存の順序と書き手) |
+| 2026-11-14 | 解析器の差し替えの境界（#45）は、今の結合を許す（AI） | interface と Kuromoji の同居、組み立てと辞書の準備の具体型への依存を、現状の境界として明記する | [architecture.md](design/architecture.md#モジュール) |
+| 2026-11-14 | 同じ組への学習の保存が成功したら、古い救済の取り消し材料と知らせを無効にする。保存失敗や別の組の変更では保つ（AI） | 古い取り消しで新しい学習を消さない（R1 のレビュー修正） | [learning.md](design/learning.md#規則) |
+| 2026-11-14 | 旧版の長すぎる学習は初回の読み込みで DB からも削除する。全消去はメモリの差分ではなく、学習のテーブル全行を削除する | メンテナの方針（T3 のレビュー修正）。メモリから除外した行が、一覧にも現れず消去もできないまま DB に残ることを防ぐ | [learning.md](design/learning.md#細則m4-012026-10-29) |
+| 2026-11-13 | 学習の語は正規化後 64 コードポイントまでとし、長すぎる語は記録・読み込みしない。読み込み先が一意に決まらない仕事用の記録も捨て、受け入れた件数と捨てた件数を知らせる | メンテナの判断（T3）。長い語による画面の停止と、別の端末のプロファイル番号の流用による誤った結び付けを防ぐ | [learning.md](design/learning.md#保存と持ち出し) |
+| 2026-11-13 | 学習の JSON は解析前に反復で入れ子を検査し、8 段を超えたら壊れたファイルとして何も変えずに拒む。書き出しにないコメント・単一引用符も拒む（AI） | T3。通常の書き出しの 3 段に余裕を持たせつつ、再帰する解析器のスタックが尽きる前に止める。字句の解釈の差で検査をすり抜けさせない | [SECURITY.md](../SECURITY.md#学習のファイルと記録の上限) |
+| 2026-11-13 | 学習のキーで当たったアプリを開いたら、前方一致やローマ字でも元の記録の時刻を進める。元の語と入力が違う場合、回数は入力した語の選択だけに足す。回数は `Int.MAX_VALUE` で飽和させる（AI） | T3。R1 の選択と R5 の使用を分け、毎日使う救済語が 180 日で消えないようにする。同じ組を二重に数えず、読み込める回数の上限でもあふれないようにする | [learning.md](design/learning.md#規則) |
+| 2026-11-13 | インストールの印が空・破損・読み取り不能なら作り直す。保存できない場合も新しい乱数で索引と仕事用の記録を整理して DB を開く | 印の初回作成の中断で、再起動しても検索を使えなくなることを防ぐ。印が信頼できない間は、移行の可能性を捨てずに毎回整理する | [architecture.md](design/architecture.md#データの保存) |
+| 2026-11-13 | Android 8（API 26・27）のサポートを終了し、最小 SDK を 28（Android 9）にする | メンテナの判断。利用者が少なく、バックアップの規則など古い版のための分岐が誤りのもとになった | [architecture.md](design/architecture.md#対応する端末) |
+| 2026-11-13 | 端末間の転送は DB と設定を対象とし、主ユーザー（シリアル番号 0）の学習・起動の記録を残す。索引は必ず作り直し、仕事用などの記録は捨てる（AI） | メンテナの方針では移行の維持は必須ではないが、Room のオープン時に一度整理すれば少ない変更で整合性を保てる。転送されないインストールの乱数と DB の印を比較し、整理と印の更新を一括して確定する。旧版に印がない場合も同じ整理を行い、通常の更新であっても仕事用の記録を捨てる | [architecture.md](design/architecture.md#データの保存) |
+| 2026-11-13 | 索引・学習・起動の記録・設定のすべてをクラウドへのバックアップから外す。起動の記録の保存内容・用途・削除方法を明記し、設定に削除の操作を置く | クラウドに送らない方針を維持する（メンテナの判断）。起動の記録も利用者が把握し、消せるようにする | [PRIVACY.md](../PRIVACY.md) |
 | 2026-10-27 | ホーム画面を置き換えない検索アプリにする | 検索のためにホームアプリを替えずに済むようにする。Pixel などでは、標準でないホームアプリを使うとジェスチャーと履歴画面の不都合が出る | [requirements.md](requirements.md) U5 |
 | 2026-10-27 | 実行時に Play ストアの情報を取得しない | 壊れやすく規約上グレーで、アプリの一覧が外に出る | [matching.md](design/matching.md#5-play-ストアの情報見送りの記録) |
 | 2026-10-27（暫定） | 照合は「形態素解析による読み ＋ OS の情報（intent filter など）＋ 暗黙の学習 ＋ 愛称の辞書」で始める | 手作りの辞書に頼らず、利用者の負担を下げる | [matching.md](design/matching.md) |
@@ -19,9 +46,9 @@
 | 2026-10-27 | 開発は AI に任せる。管理は Opus 5.5（エフォート超高）、実装は Opus 5.5（エフォート中）。メンテナは十分にできあがった段階で実機でテストする | メンテナの指示 | |
 | 2026-10-27 | 最終的に OSS として公開する。公開の前に履歴を作り直す。OSS として通用する設計・品質（自動テストを含む）にする | メンテナの指示 | M7 |
 | 2026-10-27 | 土台はゼロから作る（AI） | Material Search は漢字の読みと学習を持たず、作り直す部分が大半。YomiLauncher はライセンスがなく流用できない | |
-| 2026-10-27 | 形態素解析器は Kuromoji 0.9.0 ＋ IPADIC（AI） | 純 Java で Android での実績がある。13 MB。手元の試しで読みの質が十分。差し替えられるよう interface の向こうに置く | [reading-sources.md](research/reading-sources.md) |
+| 2026-10-27 | 形態素解析器は Kuromoji 0.9.0 ＋ IPADIC（AI） | 純 Java で Android での実績がある。13 MB。手元の試しで読みの質が十分。照合は interface を使う。モジュールと辞書の準備の結合は 2026-11-14 の決定を参照 | [reading-sources.md](research/reading-sources.md) |
 | 2026-10-27 | 英字のブランド名は、自前の読みの表と頭字語の規則で読む（AI） | Mozc の辞書にも英字のブランド名の読みはない | [matching.md](design/matching.md#英字のブランド名の読み) |
-| 2026-10-27 | 最小 SDK 26、target SDK 37（AI） | カテゴリと差分の検出の API が 26 から。AndroidX が 23 未満を切っている | [architecture.md](design/architecture.md#対応する端末) |
+| 2026-10-27 | ~~最小 SDK 26~~（2026-11-13 に 28 に変更）、target SDK 37（AI） | カテゴリと差分の検出の API が 26 から。AndroidX が 23 未満を切っている | [architecture.md](design/architecture.md#対応する端末) |
 | 2026-10-27 | `INTERNET` と `QUERY_ALL_PACKAGES` を持たない（AI。後者は M2 で確認） | A1。`<queries>` で足りる見込み | [architecture.md](design/architecture.md#権限とマニフェスト) |
 | 2026-10-27 | v1 の呼び出しは、アイコン・デジタルアシスタント・クイック設定タイル。ウィジェットは後（AI） | アシスタントの条件は `ACTION_ASSIST` の Activity だけで満たせる | [android-platform.md](research/android-platform.md) |
 | 2026-10-27 | 仕事用プロファイルのアプリも対象にする。プライベートスペースは対象外（AI） | 前者は `LauncherApps` で許される。後者は既定のホームアプリにしか許されない | [android-platform.md](research/android-platform.md#仕事用プロファイルとプライベートスペース) |
@@ -39,7 +66,7 @@
 | 2026-10-29 | アプリ内のライセンスの画面は、Licensee の一覧を APK に同梱して描く（AboutLibraries・Google の oss-licenses は使わない）（AI） | 依存を足さず、検査に使った一覧そのものを出せる。Google のものは Play Services に依存する | [testing.md](design/testing.md#静的な検査) |
 | 2026-10-29 | ソースの URL は仮（`app/build.gradle.kts` の `SOURCE_URL`）。M7 で差し替える | 公開先が未定 | 2026-11-07 に M7-01 で `https://github.com/unils/piu-search` に差し替えた |
 | 2026-11-07 | ライセンスは Apache-2.0 | メンテナの判断（緩くしたい）。APK に入る依存 105 個はすべて Apache-2.0、IPADIC は無保証の条項を添えれば自由に再配布できるので、妨げはない。閉じた改変版は止められなくなる | M7-01 |
-| 2026-11-07 | 公開は新しいリポジトリ `unils/piu-search` に、履歴を 1 から作って行う。作者は `unils <unils@piu.jp>`。開発の記録（作業の記録・タスクの計画・AI の設定）と個人の記録は入れない。説明は日本語だけ | メンテナの判断 | M7 |
+| 2026-11-07 | 公開は新しいリポジトリ `unils/piu-search` に、履歴を 1 から作って行う。開発の記録（作業の記録・タスクの計画・AI の設定）と個人の記録は入れない。説明は日本語だけ | メンテナの判断 | M7 |
 | 2026-11-07 | コードの書き方の決まりを、公開する CONTRIBUTING に整理して置く（AI） | 書くのが AI でも、決まりが文書にあることで出力がそろい、外の人がレビューと提案をできる | [CONTRIBUTING.md](../CONTRIBUTING.md#コードの書き方) |
 | 2026-11-07 | Gradle のモジュールの名前を、Gradle の勧め（小文字とハイフン）に合わせる: `releasetest` → `release-test`、`testapps` → `test-apps`（`nolauncher` → `no-launcher`、`twolaunchers` → `two-launchers`）。テスト用のアプリのパッケージ名はハイフンを除いて元のまま。`benchmark`・`tools/dict`・`config/detekt` は変えない（AI） | Gradle の文書（Multi-Project Builds の命名の勧め）。`benchmark` は Android Studio の Macrobenchmark のテンプレートの既定の名前で、公開のアプリでもいちばん多い。`config/detekt/detekt.yml` は detekt の Gradle プラグインが既定で読む場所。`tools/` は Now in Android などでも開発の道具の置き場 | [CONTRIBUTING.md](../CONTRIBUTING.md#書式) |
 | 2026-11-07 | 公開のリポジトリに、CHANGELOG（Keep a Changelog）・ストアの説明（`fastlane/metadata/android/ja-JP/`）・issue と pull request の様式・AGENTS.md・行動規範（Contributor Covenant 3.0 の公式の日本語訳）・SECURITY.md を置く。CODEOWNERS は置かない（AI） | F-Droid と IzzyOnDroid は fastlane の形から説明を読む。CODEOWNERS はメンテナが 1 人だと働きがなく、コードオーナーの承認を必須にすると、メンテナが自分の pull request を承認できず merge が止まる | [CHANGELOG.md](../CHANGELOG.md)・[SECURITY.md](../SECURITY.md) |

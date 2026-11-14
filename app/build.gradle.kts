@@ -163,6 +163,8 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
+    // activity・Compose が既に使う ViewModel と保存状態を直接参照するため明示する
+    implementation(libs.androidx.lifecycle.viewmodel.savedstate)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)

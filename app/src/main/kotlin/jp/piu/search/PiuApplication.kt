@@ -9,8 +9,14 @@ import android.content.Context
  * アプリのプロセス。部品の組み立て（[AppContainer]）を持つ。
  */
 class PiuApplication : Application() {
-    /** 部品。最初に使うときに作る。 */
+    /** 部品。プロセスの起動時に、画面に依存しないプロファイルの監視も始める。 */
     val container: AppContainer by lazy { AppContainer(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        container.profileLifecycle.start()
+        container.indexLifecycle.start()
+    }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)

@@ -3,7 +3,6 @@
 package jp.piu.search
 
 import android.content.pm.LauncherApps
-import android.os.Build
 import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
@@ -76,7 +75,6 @@ class WorkProfileInstrumentedTest {
         compose.waitUntilAtLeastOneExists(hasText(game), DeviceShell.TIMEOUT_MILLIS)
 
         // 一時停止の確かめには requestQuietModeEnabled（API 28 から）が要る
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return skip("API 28 未満では一時停止の操作を試せない")
         workUser = work
         setQuietMode(work, enabled = true)
         compose.waitUntilAtLeastOneExists(hasTestTag(WORK_PAUSED_TAG), DeviceShell.TIMEOUT_MILLIS)
@@ -124,7 +122,6 @@ class WorkProfileInstrumentedTest {
         user: UserHandle,
         enabled: Boolean,
     ) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
         // 一時停止の操作は既定のホームアプリか shell にしか許されない。テストの間だけ shell の権限を借りる
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         automation.adoptShellPermissionIdentity()

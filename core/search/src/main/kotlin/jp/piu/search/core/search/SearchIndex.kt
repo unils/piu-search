@@ -83,6 +83,7 @@ public class SearchIndex(
 
                     SearchKeyKind.PUBLISHER -> {
                         text.add(appIndex, key, providerTier = true)
+                        addProviderRomaji(romaji, appIndex, key)
                     }
 
                     SearchKeyKind.PACKAGE_NAME -> {
@@ -90,6 +91,7 @@ public class SearchIndex(
                         // 「まっぷ」でパッケージ名に map を持つアプリが、名前の語の頭で当たるアプリより上に出るため
                         val reading = !key.text.value.isRomajiOnly()
                         text.add(appIndex, key, providerTier = reading || key.text.value in commonPackageWords)
+                        if (reading) addProviderRomaji(romaji, appIndex, key)
                     }
 
                     else -> {
@@ -179,6 +181,22 @@ public class SearchIndex(
     }
 }
 
+/** 読みのかなからだけローマ字を作り、綴り（google）をローマ字として解釈し直す誤一致を避ける。 */
+private fun addProviderRomaji(
+    table: KeyTable.Builder,
+    appIndex: Int,
+    key: SearchKey,
+) {
+    if (key.form != KeyForm.STRICT || key.text.value.isRomajiOnly()) return
+    val romaji = RomajiConverter.toStandard(key.text, RomajiMode.COMPLETE)
+    if (!romaji.value.isRomajiOnly()) return
+    table.add(appIndex, SearchKey(romaji, key.kind), shown = key.text.value, providerTier = true)
+    val loose = RomajiConverter.loose(romaji)
+    if (loose != romaji && !loose.isEmpty) {
+        table.add(appIndex, SearchKey(loose, key.kind, form = KeyForm.LOOSE), shown = key.text.value, providerTier = true)
+    }
+}
+
 /**
  * 学習の語 [key] の標準形のローマ字のキーと、語の頭から i + 1 字（コードポイント）をローマ字にした長さの列。
  * 英字だけの語（そのまま英字の検索語と比べる）と、ローマ字にできない語（漢字が残る）は null。
@@ -191,19 +209,14 @@ private fun learnedRomaji(key: SearchKey): Pair<SearchKey, IntArray>? {
     if (text.isRomajiOnly()) return null
     val romaji = RomajiConverter.toStandard(key.text, RomajiMode.COMPLETE).value
     if (!romaji.isRomajiOnly()) return null
-    val count = text.codePointCount(0, text.length)
-    val lengths =
-        IntArray(count) { i ->
-            val end = text.offsetByCodePoints(0, i + 1)
-            RomajiConverter.toStandard(NormalizedText(text.substring(0, end)), RomajiMode.COMPLETE).value.length
-        }
+    val lengths = RomajiConverter.prefixLengths(key.text)
     return SearchKey(NormalizedText(romaji), SearchKeyKind.LEARNED) to lengths
 }
 
 /**
  * 比べる相手が同じキーを並べた平たい表。添え字 i が 1 つのキー。
  *
- * @property shown 出た理由に出す文字列。ふつうは [text] と同じで、ローマ字の表の学習のキーだけ、学習した語（かな）にする
+ * @property shown 出た理由に出す文字列。ふつうは [text] と同じで、ローマ字の表の学習・提供元の読みのキーは、元の語（かな）にする
  * @property prefixLengths ローマ字の表の学習のキーだけ: 学習した語の頭から i + 1 字をローマ字にした長さ。ほかのキーは空
  * @property latin 英字と数字だけのキーか（頭文字・飛ばし一致の相手。ローマ字の表では使わない）
  * @property providerTier 提供元の段（[MatchStage.PROVIDER]）にだけ当てるキーか。提供元のキーと、多くのアプリに共通するパッケージ名の語

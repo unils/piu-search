@@ -18,9 +18,11 @@ import jp.piu.search.core.search.LearningPolicy
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.search.SearchKeyGenerator
 import jp.piu.search.core.search.SearchKeyKind
+import jp.piu.search.core.search.SearchQuery
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 import java.util.concurrent.Executor
 
@@ -64,6 +66,113 @@ class SearchControllerTest {
         pending.removeAt(0).run()
 
         assertEquals(listOf("地図テスト", "道テスト"), controller.labels())
+    }
+
+    @Test
+    fun obsoleteReadingsAreDiscardedBeforeAnalysisAndOnlyTheLatestIsQueued() {
+        val analyzed = ArrayList<String>()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                indexBackground = direct,
+            )
+        controller.onQueryChange("古い")
+        controller.onQueryChange("新しい")
+        controller.onQueryChange("最新")
+        assertEquals(1, pending.size)
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(listOf("最新"), analyzed)
+    }
+
+    @Test
+    fun closingTheSessionInvalidatesAnUnstartedReading() {
+        val analyzed = ArrayList<String>()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                indexBackground = direct,
+            )
+        controller.onQueryChange("未開始")
+        controller.endSession()
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(emptyList<String>(), analyzed)
+    }
+
+    @Test
+    fun requestsArrivingDuringAnalysisKeepOnlyTheLatestAndDiscardTheOldResult() {
+        val analyzed = ArrayList<String>()
+        lateinit var controller: SearchController
+        val reading =
+            ReadingAnalyzer { text ->
+                analyzed += text
+                if (text == "開始") {
+                    controller.onQueryChange("中間")
+                    controller.onQueryChange("最新")
+                }
+                emptyList()
+            }
+        controller = SearchController(reading, deferred, direct, INDEX, indexBackground = direct)
+        controller.onQueryChange("開始")
+        pending.removeAt(0).run()
+        assertEquals(listOf("開始", "最新"), analyzed)
+        assertEquals("最新", controller.query)
+        assertEquals(SearchContent.NoMatch(), controller.content)
+        assertEquals(0, pending.size)
+    }
+
+    @Test
+    fun aLateIndexBuildDoesNotRestartReadingOrRecordInputAfterClosing() {
+        val analyzed = ArrayList<String>()
+        val tracker = SessionTracker()
+        val controller =
+            SearchController(
+                ReadingAnalyzer {
+                    analyzed += it
+                    emptyList()
+                },
+                deferred,
+                direct,
+                INDEX,
+                tracker = tracker,
+            )
+        controller.onQueryChange("未開始")
+        controller.endSession()
+        while (pending.isNotEmpty()) pending.removeAt(0).run()
+        assertEquals(emptyList<String>(), analyzed)
+        assertEquals(0, tracker.size)
+    }
+
+    @Test
+    fun historyChangesAndRepeatedSnapshotsReuseBothProfileIndexes() {
+        val controller = SearchController(analyzer, direct, direct, PROFILE_INDEX, clock = { NOW })
+        controller.onWorkProfileChanged(WorkProfileState(setOf(WORK_SERIAL), paused = false))
+
+        fun index(name: String): Any? =
+            SearchController::class.java
+                .getDeclaredField(name)
+                .apply { isAccessible = true }
+                .get(controller)
+        val personal = index("personalIndex")
+        val work = index("workIndex")
+        controller.onHistoryChanged(LaunchHistory.EMPTY.recorded(MAPS_WORK, NOW))
+        controller.onIndexChanged(PROFILE_INDEX)
+        controller.onLearningChanged(LearnedMemory.EMPTY)
+        assertSame(personal, index("personalIndex"))
+        assertSame(work, index("workIndex"))
+        controller.selectProfile(ProfileTab.WORK)
+        assertEquals(listOf(MAPS_WORK), (controller.content as SearchContent.Suggestions).recent.map { it.app })
     }
 
     @Test
@@ -220,6 +329,8 @@ class SearchControllerTest {
         // 両方にあるアプリは両方出る
         controller.onQueryChange("ちず")
         assertEquals(setOf(MAPS, MAPS_WORK), controller.rows().map { it.app }.toSet())
+        // 混ぜて出すときだけ、仕事用の行に印を付ける（読み上げで同名のアプリを区別するため）
+        assertEquals(setOf(MAPS to false, MAPS_WORK to true), controller.rows().map { it.app to it.isWork }.toSet())
         // 一致がなくても「仕事用に N 件」は出さない（もう混ぜて引いている）
         controller.onQueryChange("ぴざ")
         assertEquals(SearchContent.NoMatch(workMatches = 0), controller.content)
@@ -262,7 +373,7 @@ class SearchControllerTest {
 
     @Test
     fun workHintWaitsForTheReadingOfKanjiQueries() {
-        val controller = SearchController(analyzer, deferred, direct, PROFILE_INDEX, clock = { NOW })
+        val controller = SearchController(analyzer, deferred, direct, PROFILE_INDEX, clock = { NOW }, indexBackground = direct)
         controller.onWorkProfileChanged(WorkProfileState(setOf(WORK_SERIAL), paused = true))
         // 漢字を含む検索語は、読みを待つ間は「見つかりません」も件数も出さず、読みを付けてから数える（「道」はどちらにもない）
         controller.onQueryChange("道")
@@ -423,13 +534,58 @@ class SearchControllerTest {
         assertEquals(emptyList<LearnedPair>(), controller.finishSession(controller.openRequest(ROAD)).rescues)
     }
 
+    @Test
+    fun openingALearnedPrefixRefreshesTheOriginalRecordWithoutAddingAnotherUse() {
+        val learned = LearnedPair(NormalizedText("おかね"), ROAD)
+        for (query in listOf("おか", "oka", "おかn", "おかね")) {
+            val controller = controllerWithIndex()
+            val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+            controller.onLearningChanged(memory)
+            controller.onQueryChange(query)
+            assertEquals(learned, controller.learnedPairOf(controller.rows().single()))
+            val decision = controller.finishSession(controller.openRequest(ROAD))
+            val after = memory.recorded(decision, NOW)
+            val original = after.records.getValue(learned)
+            assertEquals(NOW, original.lastUsedAt)
+            assertEquals(if (query == "おかね") 2 else 1, original.count)
+            if (query != "おかね") assertEquals(1, after.records.getValue(LearnedPair(SearchQuery.of(query).strict, ROAD)).count)
+            assertEquals(after.records.keys, after.forgotten(NOW + LearningConfig.DEFAULT.forgetAfterMillis - 1).records.keys)
+        }
+    }
+
+    @Test
+    fun theMatchedLearnedPairIsKeptUntilOpeningFinishes() {
+        val learned = LearnedPair(NormalizedText("おかね"), ROAD)
+        val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+        val controller = controllerWithIndex()
+        controller.onLearningChanged(memory)
+        controller.onQueryChange("oka")
+        val request = controller.openRequest(ROAD)
+        controller.onQueryChange("ちず")
+        assertEquals(learned, controller.finishSession(request).used)
+    }
+
+    @Test
+    fun openingFromAllAppsOrWithAnotherMatchingKeyDoesNotRefreshTheLearnedPair() {
+        val learned = LearnedPair(NormalizedText("みちのり"), ROAD)
+        val memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW - 1)
+        val controller = controllerWithIndex()
+        controller.onLearningChanged(memory)
+        controller.onQueryChange("みち")
+        assertNull(controller.finishSession(controller.openRequest(ROAD)).used)
+        controller.showAllApps(true)
+        assertNull(controller.finishSession(controller.openRequest(ROAD)).used)
+    }
+
     private fun controllerWithIndex(
         background: Executor = direct,
         history: LaunchHistory = LaunchHistory.EMPTY,
         tracker: SessionTracker = SessionTracker(),
         config: LearningConfig = LearningConfig.DEFAULT,
     ): SearchController =
-        SearchController(analyzer, background, direct, INDEX, history, clock = { NOW }, tracker = tracker, learningConfig = config)
+        SearchController(analyzer, background, direct, INDEX, history, clock = {
+            NOW
+        }, tracker = tracker, learningConfig = config, indexBackground = direct)
 
     private fun SearchController.rows(): List<ResultRow> = (content as? SearchContent.Results)?.rows.orEmpty()
 

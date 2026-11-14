@@ -48,7 +48,7 @@ class AllAppsInstrumentedTest {
             .filter { it.query.value == QUERY }
             .forEach(learning::remove)
         learning.awaitIdle()
-        learning.takeNotices()
+        learning.pendingNotices.forEach(learning::consumeNotice)
     }
 
     @Test

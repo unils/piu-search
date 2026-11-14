@@ -42,10 +42,10 @@ class EntrySetup(
                 activity.startActivity(Intent(action))
                 return true
             } catch (e: ActivityNotFoundException) {
-                Log.i(TAG, "設定の画面がない: $action", e)
+                Log.i(TAG, "設定の画面がない: $action: ${e.javaClass.simpleName}")
             } catch (e: SecurityException) {
                 // 書き出されていない画面を、ほかのアプリが同じ action で受けている場合
-                Log.i(TAG, "設定の画面を開けない: $action", e)
+                Log.i(TAG, "設定の画面を開けない: $action: ${e.javaClass.simpleName}")
             }
         }
         return false

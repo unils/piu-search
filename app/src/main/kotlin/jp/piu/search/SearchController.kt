@@ -8,6 +8,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
 import jp.piu.search.core.reading.ReadingAnalyzer
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.IndexedApp
@@ -32,11 +34,13 @@ import java.util.concurrent.Executor
  * @property app アプリの識別子
  * @property label 表示名
  * @property reason 出た理由。名前で一致したとき・空の検索語の一覧では null（ui.md の「理由は名前で一致しなかったときだけ」）
+ * @property isWork 個人用と混ぜて出している中の仕事用の行。読み上げで個人用の同名のアプリと区別する
  */
 data class ResultRow(
     val app: AppId,
     val label: String,
     val reason: MatchReason? = null,
+    val isWork: Boolean = false,
 )
 
 /** 検索の画面の、検索窓の上に出すもの。 */
@@ -163,20 +167,22 @@ enum class RowAction(
 }
 
 /**
- * アプリを開く頼み。開いたら、経路と検索語で学習する（[SearchController.finishSession]）。
+ * アプリを開く頼み。開く前に、経路と検索語で学習を判定する（[SearchController.finishSession]）。
  *
  * @property app 開くアプリ
  * @property route 開いた経路
  * @property query 開いたときに検索窓にあった検索語（打ったまま。正規化しない）
+ * @property learnedPair 行を出した学習のキーの組。起動の完了を待つ間に結果が変わっても、押した行の語を使う
  */
 data class OpenRequest(
     val app: AppId,
     val route: OpenRoute,
     val query: String,
+    val learnedPair: LearnedPair? = null,
 )
 
 /**
- * 検索の画面の状態。
+ * 検索の画面の状態とセッションを構成の変更の間も保つ ViewModel。
  *
  * 照合は軽い（アプリ 500 個で 0.2 ms ほど）ので、入力のたびに画面のスレッドで行う。
  * 漢字の検索語は、まず表記のままで結果を出し、[background] で読みを付けてから結果を出し直す（matching.md の「検索語の扱い」）。
@@ -186,7 +192,10 @@ data class OpenRequest(
  * 仕事用のアプリの扱いは設定（[workProfileMode]）で変わる: 切り替える（上の通り）・個人用と混ぜる・出さない。
  *
  * 学習（[learning]）は索引に重ねて照らす（[SearchIndex.withLearning]）。結果を出すたびに、検索語と見えていた上位を [tracker] に送り、
- * アプリを開いたら（[finishSession]）記録する組を判定する。
+ * アプリを選んだら（[finishSession]）開く前に記録する組を判定する。
+ *
+ * 派生の索引は [indexBackground] で組み立て、同じ材料の通知と起動の記録だけの変更では再生成しない。
+ * [savedState] には現在の検索語だけを置き、セッションの入力履歴と起動中の印は保存しない。
  *
  * @param clock 今の時刻（エポックからのミリ秒）。起動の記録の新しさと、学習の出来事の時刻に使う
  */
@@ -200,7 +209,10 @@ class SearchController(
     learning: LearnedMemory = LearnedMemory.EMPTY,
     private val tracker: SessionTracker = SessionTracker(),
     private val learningConfig: LearningConfig = LearningConfig.DEFAULT,
-) : IndexListener,
+    private val indexBackground: Executor = background,
+    private val savedState: SavedStateHandle? = null,
+) : ViewModel(),
+    IndexListener,
     LaunchHistoryListener,
     LearningListener {
     private var index = index
@@ -212,22 +224,30 @@ class SearchController(
     var workProfileMode: WorkProfileMode by mutableStateOf(WorkProfileMode.SWITCH)
         private set
 
-    // 学習を重ねた索引。index か learning が変わったときだけ作り直す（起動の記録が変わるたびには作らない）
+    private val derivations = LatestTask(indexBackground)
+    private val readings = LatestTask(background)
+    private var requestedDerivation: Derivation? = null
+    private var disposed = false
+    private var sessionActive = true
+
+    @Volatile private var readingGeneration = 0L
+
+    // 学習を重ねた索引のキャッシュは derivations の仕事だけが触る。プロファイルだけ変わった場合も再利用する
     private var learnedFor: Pair<SearchIndex, LearnedMemory>? = null
-    private var learnedIndex = index
+    private var learnedIndex = SearchIndex.EMPTY
 
     // 結果の一覧に収まる行の数（画面が測って知らせる）。「見えていた」上位の件数を決める
     private var rowCapacity = 0
 
-    // 選んでいるプロファイルごとの索引と照合。index・history・workSerials が変わったら作り直す
-    private var personalIndex = index
+    // 順位の信号だけを変える場合は、派生の索引の参照を保つ
+    private var personalIndex = SearchIndex.EMPTY
     private var workIndex = SearchIndex.EMPTY
-    private var personalEngine = SearchEngine(index)
+    private var personalEngine = SearchEngine(SearchIndex.EMPTY)
     private var workEngine = SearchEngine(SearchIndex.EMPTY)
     private var nameOrderCache: Pair<SearchIndex, SearchContent.AllApps>? = null
 
     /** 打たれている検索語。 */
-    var query: String by mutableStateOf("")
+    var query: String by mutableStateOf(savedState?.get<String>("query").orEmpty())
         private set
 
     /** 検索窓の上に出すもの。 */
@@ -246,8 +266,17 @@ class SearchController(
     var showingAllApps: Boolean by mutableStateOf(false)
         private set
 
+    /** 保存待ちと OS への起動要求の印。完了時は旧 Activity が破棄済みでも解除する。 */
+    internal var opening: Any? = null
+
+    /** 今回の検索で生じた救済の知らせは、起動の完了後も新しい検索まで表示しない。 */
+    internal var noticesDeferred: Boolean = false
+
+    /** 回転後の画面の表示状態も、旧 Activity の完了処理から確かめられるようにする。 */
+    internal var screenStarted: Boolean = false
+
     init {
-        rebuildEngines()
+        rebuildIndexes()
         refresh()
     }
 
@@ -275,7 +304,11 @@ class SearchController(
      */
     fun reset() {
         tracker.closed()
+        sessionActive = true
+        opening = null
+        noticesDeferred = false
         query = ""
+        savedState?.set("query", query)
         showingAllApps = false
         profileTab = ProfileTab.PERSONAL
         openCount++
@@ -313,24 +346,38 @@ class SearchController(
 
     /** 結果をスクロールした。 */
     fun onScrolled() {
-        tracker.scrolled(clock())
+        if (sessionActive) tracker.scrolled(clock())
     }
 
     /**
-     * [request] のアプリを開いた: セッションを終え、記録する組を返す（learning.md の R1・R2）。集めた出来事は捨てる。
-     * 画面のスレッドから、アプリを開けたときだけ呼ぶ。
+     * [request] のアプリを選んだ: セッションを終え、記録する組を返す（learning.md の R1・R2）。集めた出来事は捨てる。
+     * 画面のスレッドから、保存と起動を始める前に呼ぶ。待機中の呼び直し・回転で判断が変わるのを防ぐ。
      */
-    fun finishSession(request: OpenRequest): LearningDecision = tracker.opened(clock(), request.app, request.route.learning, request.query)
+    fun finishSession(request: OpenRequest): LearningDecision {
+        sessionActive = false
+        invalidateReading()
+        return tracker.opened(clock(), request.app, request.route.learning, request.query).copy(used = request.learnedPair)
+    }
 
     /** 何も開かずにセッションが終わった（画面を離れた）。集めた出来事を捨てる。画面に戻ったら [startSession] を呼ぶ。 */
     fun endSession() {
+        sessionActive = false
         tracker.closed()
+        invalidateReading()
+    }
+
+    override fun onCleared() {
+        disposed = true
+        derivations.cancel()
+        endSession()
     }
 
     /** 画面に戻った: 今出している検索語と結果から、新しいセッションを始める。 */
     fun startSession() {
+        if (disposed || sessionActive) return
+        sessionActive = true
         if (showingAllApps) tracker.allAppsShown(clock())
-        recordShown(content)
+        refresh()
     }
 
     /** [app] を開く頼み。今出しているものから経路を決める。 */
@@ -341,12 +388,15 @@ class SearchController(
                 is SearchContent.Suggestions -> OpenRoute.SUGGESTION
                 else -> OpenRoute.SEARCH_RESULT
             }
-        return OpenRequest(app, route, query)
+        val learned = (content as? SearchContent.Results)?.rows?.firstOrNull { it.app == app }?.let(::learnedPairOf)
+        return OpenRequest(app, route, query, learnedPair = learned)
     }
 
     /** 検索語を [raw] にする。すべてのアプリを出していたら、検索の結果に戻る（ui.md）。画面のスレッドから呼ぶ。 */
     fun onQueryChange(raw: String) {
+        sessionActive = true
         query = raw
+        savedState?.set("query", raw)
         showingAllApps = false
         refresh()
     }
@@ -355,7 +405,7 @@ class SearchController(
     fun showAllApps(show: Boolean) {
         if (showingAllApps == show) return
         showingAllApps = show
-        if (show) tracker.allAppsShown(clock())
+        if (show && sessionActive) tracker.allAppsShown(clock())
         refresh()
     }
 
@@ -382,7 +432,7 @@ class SearchController(
         if (workProfileMode == mode) return
         workProfileMode = mode
         if (mode != WorkProfileMode.SWITCH) profileTab = ProfileTab.PERSONAL
-        rebuildEngines()
+        rebuildIndexes()
         refresh()
     }
 
@@ -399,9 +449,9 @@ class SearchController(
         if (workProfile == state) return
         workProfile = state
         if (state.serials != workSerials) {
-            workSerials = state.serials
+            workSerials = state.serials.toSet()
             if (!showsProfileSwitch) profileTab = ProfileTab.PERSONAL
-            rebuildEngines()
+            rebuildIndexes()
         }
         refresh()
     }
@@ -409,8 +459,9 @@ class SearchController(
     /** 索引を [index] に差し替え、今の検索語で結果を出し直す（architecture.md の「索引の作成と更新」の 5）。 */
     override fun onIndexChanged(index: SearchIndex) {
         main.execute {
+            if (disposed || this.index === index) return@execute
             this.index = index
-            rebuildEngines()
+            rebuildIndexes()
             refresh()
         }
     }
@@ -418,8 +469,9 @@ class SearchController(
     /** 起動の記録を [history] に差し替え、加点と空の検索語の一覧を出し直す。 */
     override fun onHistoryChanged(history: LaunchHistory) {
         main.execute {
+            if (disposed || this.history === history) return@execute
             this.history = history
-            rebuildEngines()
+            updateSignals()
             refresh()
         }
     }
@@ -427,30 +479,61 @@ class SearchController(
     /** 学習を [memory] に差し替え、今の検索語で結果を出し直す（次の入力を待たずに効かせる）。 */
     override fun onLearningChanged(memory: LearnedMemory) {
         main.execute {
-            if (learning === memory) return@execute
+            if (disposed || learning === memory) return@execute
             learning = memory
-            rebuildEngines()
+            rebuildIndexes()
             refresh()
         }
     }
 
-    private fun rebuildEngines() {
-        val signals = history.asRankingSignals(clock(), learning)
-        if (learnedFor?.let { it.first !== index || it.second !== learning } != false) {
-            learnedIndex = index.withLearning(learning)
-            learnedFor = index to learning
-        }
-        val index = learnedIndex
-        // 仕事用プロファイルがない・混ぜるなら絞らない。個人用はプロファイルの番号でなく「仕事用でない」で決め、取りこぼさない
-        personalIndex =
-            if (workSerials.isEmpty() || workProfileMode == WorkProfileMode.MIXED) {
-                index
-            } else {
-                index.restrictedTo(workSerials, exclude = true)
+    private fun rebuildIndexes() {
+        val source = Derivation(index, learning, workSerials, workProfileMode)
+        if (requestedDerivation == source) return
+        requestedDerivation = source
+        derivations.execute {
+            if (learnedFor?.let { it.first === source.index && it.second === source.learning } != true) {
+                learnedIndex = source.index.withLearning(source.learning)
+                learnedFor = source.index to source.learning
             }
-        workIndex = if (showsProfileSwitch) index.restrictedTo(workSerials) else SearchIndex.EMPTY
+            val learned = learnedIndex
+            val personal =
+                if (source.workSerials.isEmpty() || source.mode == WorkProfileMode.MIXED) {
+                    learned
+                } else {
+                    learned.restrictedTo(source.workSerials, exclude = true)
+                }
+            val work =
+                if (source.workSerials.isNotEmpty() && source.mode == WorkProfileMode.SWITCH) {
+                    learned.restrictedTo(source.workSerials)
+                } else {
+                    SearchIndex.EMPTY
+                }
+            main.execute {
+                if (disposed || requestedDerivation != source) return@execute
+                personalIndex = personal
+                workIndex = work
+                updateSignals()
+                refresh()
+            }
+        }
+    }
+
+    private fun updateSignals() {
+        val signals = history.asRankingSignals(clock(), learning)
         personalEngine = SearchEngine(personalIndex, signals = signals)
         workEngine = SearchEngine(workIndex, signals = signals)
+    }
+
+    private data class Derivation(
+        val index: SearchIndex,
+        val learning: LearnedMemory,
+        val workSerials: Set<Long>,
+        val mode: WorkProfileMode,
+    )
+
+    private fun invalidateReading() {
+        readingGeneration++
+        readings.cancel()
     }
 
     private val selectedIndex: SearchIndex get() = if (profileTab == ProfileTab.WORK) workIndex else personalIndex
@@ -461,6 +544,8 @@ class SearchController(
     private val hintEngine: SearchEngine? get() = workEngine.takeIf { profileTab == ProfileTab.PERSONAL && showsProfileSwitch }
 
     private fun refresh() {
+        invalidateReading()
+        if (disposed) return
         if (showingAllApps) {
             content = allApps()
             return
@@ -476,19 +561,25 @@ class SearchController(
         }
         content = contentOf(current.search(searchQuery), hint, searchQuery, waitingForReading = searchQuery.needsReading)
         recordShown(content)
-        if (!searchQuery.needsReading) return
-        background.execute {
+        if (!sessionActive || !searchQuery.needsReading) return
+        val generation = readingGeneration
+        readings.execute {
+            if (generation != readingGeneration) return@execute
             val withReading =
                 try {
                     searchQuery.withReading(analyzer)
                 } catch (e: RuntimeException) {
                     // 辞書が読めなくても、表記のままの結果は出ている
-                    Log.w(TAG, "検索語に読みを付けられなかった", e)
+                    Log.w(TAG, "検索語に読みを付けられなかった: ${e.javaClass.simpleName}")
                     null
                 }
             main.execute {
                 // 待つ間に検索語・索引・プロファイル・表示が変わっていたら、古い結果で上書きしない
-                if (query != raw || selectedEngine !== current || hintEngine !== hint || showingAllApps) return@execute
+                if (generation != readingGeneration || query != raw || selectedEngine !== current || hintEngine !== hint ||
+                    showingAllApps
+                ) {
+                    return@execute
+                }
                 val refined = withReading ?: searchQuery
                 content = contentOf(current.search(refined), hint, refined, waitingForReading = false)
                 // 読みを付けて結果が変わったら、同じ検索語でもう一度送る（後の結果で「見えていた」を置き換える）
@@ -499,7 +590,7 @@ class SearchController(
 
     /** 今の検索語と、[shown] の上位の「見えていた」分を学習のセッションに送る。すべてのアプリの一覧は検索語の結果でないので送らない。 */
     private fun recordShown(shown: SearchContent) {
-        if (shown is SearchContent.AllApps) return
+        if (!sessionActive || shown is SearchContent.AllApps) return
         val visible =
             (shown as? SearchContent.Results)
                 ?.rows
@@ -543,9 +634,16 @@ class SearchController(
 
     private companion object {
         const val TAG = "PiuSearch"
-
-        fun SearchResult.toRow(): ResultRow = ResultRow(app, label, reason.takeUnless { it.keyKind == SearchKeyKind.NAME })
-
-        fun IndexedApp.toRow(): ResultRow = ResultRow(id, label)
     }
+
+    /**
+     * 個人用と仕事用を混ぜて出すときだけ、仕事用の行に印を付ける。
+     * 切り替えで仕事用を選んでいる間は全部が仕事用なので、読み上げを冗長にしない。
+     */
+    private fun isMixedWork(app: AppId): Boolean = workProfileMode == WorkProfileMode.MIXED && app.profileSerial in workSerials
+
+    private fun SearchResult.toRow(): ResultRow =
+        ResultRow(app, label, reason.takeUnless { it.keyKind == SearchKeyKind.NAME }, isMixedWork(app))
+
+    private fun IndexedApp.toRow(): ResultRow = ResultRow(id, label, isWork = isMixedWork(id))
 }

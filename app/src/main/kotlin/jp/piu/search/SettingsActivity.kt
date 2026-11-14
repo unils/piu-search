@@ -52,6 +52,7 @@ class SettingsActivity : ComponentActivity() {
                             onShowOnboardingAgain = ::showOnboardingAgain,
                             onOpenSource = ::openSource,
                             onOpenLicenses = { startActivity(Intent(this, LicensesActivity::class.java)) },
+                            onClearLaunchHistory = ::clearLaunchHistory,
                         ),
                 )
             }
@@ -66,6 +67,16 @@ class SettingsActivity : ComponentActivity() {
         appContainer.settings.showOnboardingAgain()
         startActivity(Intent(this, SearchActivity::class.java))
         finish()
+    }
+
+    private fun clearLaunchHistory() {
+        appContainer.launchHistory.clear { cleared ->
+            runOnUiThread {
+                val message =
+                    if (cleared is StorageResult.Success) R.string.settings_history_cleared else R.string.settings_history_clear_failed
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun openSource() {

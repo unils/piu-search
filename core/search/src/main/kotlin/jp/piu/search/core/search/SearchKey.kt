@@ -11,6 +11,7 @@ import jp.piu.search.core.text.TextNormalizer
  *
  * 種類は architecture.md の `search_key` の表に合わせる。種類ごとに、検索語のどの形と比べるかが決まる:
  * [ROMAJI] は検索語の標準形のローマ字と、[GENRE] はジャンルの語彙を通して比べ、残りは検索語の正規化した形（かな・英字）と比べる。
+ * [PACKAGE_NAME] と [PUBLISHER] のかなの読みは、[SearchIndex] が元の種類と提供元の段を保ったローマ字の形も作る。
  */
 public enum class SearchKeyKind {
     /** アプリの表示名。[TextNormalizer.strict] の形（`yahoo天気`）。 */

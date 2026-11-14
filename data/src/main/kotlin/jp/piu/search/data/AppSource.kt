@@ -33,10 +33,16 @@ public data class Profile(
  *
  * @property id 入口の識別子
  * @property packageUpdatedAt パッケージの最後の更新の時刻（ミリ秒）。引かなかったときは 0
+ * @property apkFingerprint base と split のパスと時刻。取得不能なら null
+ * @property isCurrentProfile 自分のプロファイルなら変更番号を使う
+ * @property category ジャンルを毎回判定するためのカテゴリ
  */
 public data class ActivityStamp(
     val id: AppId,
     val packageUpdatedAt: Long,
+    val apkFingerprint: String? = null,
+    val isCurrentProfile: Boolean = true,
+    val category: Int = ApplicationInfo.CATEGORY_UNDEFINED,
 )
 
 /**
@@ -85,6 +91,10 @@ public class AppSource(
             .sortedByDescending { it.isCurrent }
     }
 
+    /** 一時停止・ロック中の一覧は正常な空と区別するため、読み取りの対象から外す。 */
+    public fun readableProfiles(): List<Profile> =
+        profiles().filter { !userManager.isQuietModeEnabled(it.user) && userManager.isUserUnlocked(it.user) }
+
     /**
      * すべてのプロファイルの起動の入口。1 つのアプリが入口を 2 つ持てば 2 件になる。
      * [packages] を渡せば、そのパッケージの入口だけ（null ならすべて）。
@@ -97,18 +107,80 @@ public class AppSource(
      * 表示名は読まないので [activities] より軽い。[withUpdateTime] が false なら時刻は引かず 0 にする。
      */
     public fun stamps(withUpdateTime: Boolean): List<ActivityStamp> {
-        val times = HashMap<Pair<Long, String>, Long>()
-        return launcherEntries(null).map { (info, profile) ->
-            val id = AppId(info.componentName.packageName, info.componentName.className, profile.serial)
-            val time =
-                if (withUpdateTime) {
-                    times.getOrPut(profile.serial to id.packageName) { updatedAt(id.packageName, info.applicationInfo, profile.isCurrent) }
-                } else {
-                    0L
-                }
-            ActivityStamp(id, time)
-        }
+        val profiles = stampProfiles(withUpdateTime)
+        if (profiles.values.any { it.status == ProfileReadStatus.FAILED }) throw MaterialReadException()
+        return profiles.values.flatMap { it.items }
     }
+
+    /** 一覧の失敗を空のプロファイルにしない。仕事用の APK 属性は変更番号によらず毎回読む。 */
+    public fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
+        enumerate(null) { infos, profile ->
+            val fingerprints = HashMap<String, String?>()
+            val times = HashMap<String, Long>()
+            infos.map { info ->
+                val id = AppId(info.componentName.packageName, info.componentName.className, profile.serial)
+                ActivityStamp(
+                    id,
+                    if (withUpdateTime) {
+                        times.getOrPut(
+                            id.packageName,
+                        ) { updatedAt(id.packageName, info.applicationInfo, profile.isCurrent) }
+                    } else {
+                        0
+                    },
+                    fingerprints.getOrPut(id.packageName) { apkFingerprint(info.applicationInfo) },
+                    profile.isCurrent,
+                    info.applicationInfo.category,
+                )
+            }
+        }
+
+    /** 詳細の変換失敗をパッケージごとに残し、ほかのパッケージを読み続ける。 */
+    internal fun launcherProfiles(packages: Set<String>?): Map<Long, ProfileRead<LauncherActivityInfo>> =
+        enumerate(packages) { infos, _ -> infos }
+
+    internal fun launchable(
+        info: LauncherActivityInfo,
+        serial: Long,
+    ): LaunchableActivity = toLaunchable(info, Profile(info.user, serial, info.user == Process.myUserHandle()))
+
+    private fun <T> enumerate(
+        packages: Set<String>?,
+        convert: (List<LauncherActivityInfo>, Profile) -> List<T>,
+    ): Map<Long, ProfileRead<T>> =
+        profiles().associate { profile ->
+            val result =
+                try {
+                    if (!isReadable(profile)) {
+                        ProfileRead<T>(ProfileReadStatus.UNAVAILABLE)
+                    } else {
+                        val infos =
+                            launcherApps
+                                .getActivityList(null, profile.user)
+                                .filter { isAppEntry(it) && (packages == null || it.componentName.packageName in packages) }
+                        if (!isReadable(profile)) {
+                            ProfileRead(ProfileReadStatus.UNAVAILABLE)
+                        } else {
+                            ProfileRead(ProfileReadStatus.COMPLETE, convert(infos, profile))
+                        }
+                    }
+                } catch (_: RuntimeException) {
+                    ProfileRead<T>(ProfileReadStatus.FAILED)
+                }
+            profile.serial to result
+        }
+
+    /** 材料の読み取り中の一時停止も、正常な空として保存しないために再確認する。 */
+    internal fun profileReadStatus(serial: Long): ProfileReadStatus =
+        try {
+            val profile = profiles().firstOrNull { it.serial == serial }
+            if (profile != null && isReadable(profile)) ProfileReadStatus.COMPLETE else ProfileReadStatus.UNAVAILABLE
+        } catch (_: RuntimeException) {
+            ProfileReadStatus.FAILED
+        }
+
+    private fun isReadable(profile: Profile): Boolean =
+        !userManager.isQuietModeEnabled(profile.user) && userManager.isUserUnlocked(profile.user)
 
     /**
      * [activity] のパッケージの最後の更新の時刻（ミリ秒）。索引の `packageUpdatedAt` に入れ、全件の見直しで比べる。
@@ -118,19 +190,23 @@ public class AppSource(
         updatedAt(activity.id.packageName, activity.applicationInfo, activity.user == Process.myUserHandle())
 
     private fun launcherEntries(packages: Set<String>?): List<Pair<LauncherActivityInfo, Profile>> =
-        profiles().flatMap { profile ->
+        readableProfiles().flatMap { profile ->
             val infos =
                 if (packages == null) {
                     launcherApps.getActivityList(null, profile.user)
                 } else {
                     packages.sorted().flatMap { launcherApps.getActivityList(it, profile.user) }
                 }
-            infos.map { it to profile }
+            infos.filter(::isAppEntry).map { it to profile }
         }
+
+    // AOSP LauncherAppsService.getHiddenAppActivityInfo（android14-release）は、対象パッケージにこのクラスの入口を合成する。
+    // アプリを開く入口ではなく設定のアプリ情報へ転送するため、名前やアイコンを読まずに除く（根拠は architecture.md）
+    private fun isAppEntry(info: LauncherActivityInfo): Boolean = info.componentName.className != "android.app.AppDetailsActivity"
 
     // 自分のプロファイルは PackageInfo.lastUpdateTime（architecture.md の「データの保存」）。
     // 仕事用プロファイルのパッケージは PackageManager から引けないので、APK のファイルの更新の時刻を使う。
-    // 更新のたびに APK は新しいディレクトリへ書かれるので、変わったことは分かる
+    // 通常の更新時刻の比較用。仕事用の差分では別に base と split の指紋を毎回比べる
     private fun updatedAt(
         packageName: String,
         applicationInfo: ApplicationInfo,
@@ -189,5 +265,23 @@ public class AppSource(
             activityInfo.nonLocalizedLabel != null -> null
             else -> 0
         }
+    }
+}
+
+/** ファイルの不在や時刻 0 は成功した指紋として保存しない。順序の揺れは変化に数えない。 */
+internal fun apkFingerprint(info: ApplicationInfo): String? {
+    val base = info.sourceDir?.takeIf { it.isNotBlank() } ?: return null
+    val paths = listOf(base) + info.splitSourceDirs.orEmpty().sorted()
+    return try {
+        val attributes = ArrayList<String>()
+        for (path in paths) {
+            val file = File(path)
+            val time = file.lastModified()
+            if (!file.isFile || time == 0L) return null
+            attributes += "${path.length}:$path:$time"
+        }
+        attributes.joinToString("|")
+    } catch (_: SecurityException) {
+        null
     }
 }

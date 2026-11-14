@@ -2,11 +2,7 @@
 
 package jp.piu.search
 
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -17,6 +13,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import jp.piu.search.data.IndexSyncStatus
 
 /**
  * 検索の画面。ランチャーのアイコン・デジタルアシスタント（`ACTION_ASSIST`）・クイック設定のタイル（[SearchTileService]）から開く。
@@ -29,7 +30,7 @@ import androidx.core.content.ContextCompat
  * 結果のアプリを開いたら、この画面を閉じてタスクごと消す。次に呼び出すと、空の検索語の新しい画面で開く（ui.md の「画面の振る舞い」）。
  * 仕事用プロファイルの状態（追加・削除・一時停止）は、開いたときと、開いている間に OS が知らせたときに読み直す（architecture.md の「プロファイル」）。
  *
- * 学習（learning.md）: アプリを開いたら、セッションの判定を記録する。救済を記録したら、開いたアプリの上に短く知らせ、
+ * 学習（learning.md）: 選んだ時点でセッションを判定し、保存の結果を待ってからアプリを開く。救済を保存できたら、開いたアプリの上に短く知らせ、
  * 次に画面を開いたときに［取り消す］つきで知らせる（開くとこの画面はすぐ閉じるので、その場では取り消しを出せない）。
  * 画面を離れたら、集めた出来事を捨てる。
  *
@@ -49,38 +50,52 @@ class SearchActivity : ComponentActivity() {
     // 出す救済の知らせ（前に開いたときの分）
     private var notices by mutableStateOf(emptyList<RescueNotice>())
 
-    // アプリを開いて閉じるところか。onStop でセッションを「何も開かずに終わった」と数えないため
-    private var launching = false
+    private var syncFailed by mutableStateOf(false)
+
+    // 前にアプリを開いたときの記録の保存失敗。画面が閉じる前に見せられないので、次に開いたときに出す
+    private var openRecordFailed by mutableStateOf(false)
+    private val syncStatusListener: (IndexSyncStatus) -> Unit = { status ->
+        ContextCompat.getMainExecutor(this).execute { syncFailed = status.failure != null }
+    }
+
+    private val noticeListener =
+        RescueNoticeListener {
+            ContextCompat.getMainExecutor(this).execute { receiveNotices() }
+        }
+    private val undoing = HashSet<Any>()
+
+    private val profileListener: () -> Unit = {
+        controller.onWorkProfileChanged(appContainer.users.workProfileState())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 状態バーとナビゲーションバーの裏まで描き、余白は insets で取る
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = appContainer
-        container.launchHistory.requestLoad()
-        container.learning.requestLoad()
-        notices = container.learning.takeNotices()
         entrySetup = EntrySetup(this)
         onboardingShown = !container.settings.onboardingDismissed
         searchSettings = container.settings.search
-        // 前に開いたときの索引と起動の記録がメモリにあれば、それですぐ照らす
+        // 構成の変更では同じ状態とセッションを使い、プロセスの作り直しでは検索語だけを戻す
         controller =
-            SearchController(
-                container.analyzer,
-                container.queryExecutor,
-                ContextCompat.getMainExecutor(this),
-                container.indexSync.index,
-                container.launchHistory.history,
-                learning = container.learning.memory,
-            )
+            ViewModelProvider(
+                this,
+                viewModelFactory {
+                    initializer {
+                        SearchController(
+                            container.analyzer,
+                            container.queryExecutor,
+                            ContextCompat.getMainExecutor(applicationContext),
+                            container.indexSync.index,
+                            container.launchHistory.history,
+                            learning = container.learning.memory,
+                            indexBackground = container.derivedIndexExecutor,
+                            savedState = createSavedStateHandle(),
+                        )
+                    }
+                },
+            )[SearchController::class.java]
         controller.onWorkProfileModeChanged(searchSettings.workProfileMode)
-        // 向きの変更などで作り直したときだけ戻す。新しく開いたときは、空の検索語・個人用（ui.md）
-        savedInstanceState?.let { state ->
-            controller.onWorkProfileChanged(container.users.workProfileState())
-            state.getString(STATE_QUERY)?.let(controller::onQueryChange)
-            if (state.getBoolean(STATE_WORK_TAB)) controller.selectProfile(ProfileTab.WORK)
-            if (state.getBoolean(STATE_ALL_APPS)) controller.showAllApps(true)
-        }
         setContent {
             PiuTheme {
                 // すべてのアプリを出しているときの「戻る」は、画面を閉じずに検索の結果に戻す
@@ -101,13 +116,27 @@ class SearchActivity : ComponentActivity() {
                     onboarding = if (onboardingShown) onboardingActions() else null,
                     focusKey = controller.openCount,
                     notices = notices,
-                    onUndoNotice = container.learning::undo,
-                    onNoticeDone = { done -> notices = notices - done },
+                    onUndoNotice = { notice ->
+                        undoing += notice.undoKey
+                        container.learning.undo(notice) { result ->
+                            reportStorageFailure(result)
+                            ContextCompat.getMainExecutor(applicationContext).execute {
+                                undoing -= notice.undoKey
+                                receiveNotices()
+                            }
+                        }
+                    },
+                    onNoticeDone = { done ->
+                        if (done.undoKey !in undoing) container.learning.consumeNotice(done)
+                        notices = notices.filterNot { it === done }
+                    },
                     onRowCapacity = controller::onRowCapacity,
                     onScrolled = controller::onScrolled,
                     searchBarOnTop = searchSettings.searchBarPosition == SearchBarPosition.TOP,
                     showReasons = searchSettings.showReasons,
                     workPausedNotice = controller.workPausedVisible,
+                    syncFailed = syncFailed,
+                    openRecordFailed = openRecordFailed,
                     onOpenSettings = ::openSettings,
                 )
             }
@@ -119,27 +148,36 @@ class SearchActivity : ComponentActivity() {
         setIntent(intent)
         // 呼び出し直された。前の検索語やすべてのアプリの表示を残さず、新しく開いたときと同じにする（ui.md の「画面の振る舞い」）
         controller.reset()
+        receiveNotices()
     }
 
     override fun onStart() {
         super.onStart()
+        controller.screenStarted = true
         val container = appContainer
         val sync = container.indexSync
         sync.addListener(controller)
         container.launchHistory.addListener(controller)
         container.learning.addListener(controller)
-        sync.startWatching()
-        sync.requestSync()
-        // 忘却（R5）は画面を開くたびに見る。記録は多くても数百件で、読み込みの後に同じスレッドで走る
-        container.learning.forgetExpired(System.currentTimeMillis())
+        container.learning.addNoticeListener(noticeListener)
+        receiveNotices()
+        sync.addStatusListener(syncStatusListener)
+        syncFailed = sync.status.failure != null
+        openRecordFailed = container.openRecordFailed
+        container.indexLifecycle.onSearchStarted(::reportStorageFailure)
+        container.profileLifecycle.addListener(profileListener)
+        container.profileLifecycle.onSearchStarted(syncNow = false)
+        // 前に閉じた画面の保存がまだ走っていた場合も、成功後の知らせをこの画面で受け取る
+        container.learning.runAfterPending {
+            ContextCompat.getMainExecutor(applicationContext).execute { receiveNotices() }
+        }
         readSettings()
-        registerProfileReceiver()
         controller.onWorkProfileChanged(container.users.workProfileState())
         // 足すまでの間に差し替わった索引と記録を取りこぼさない
         controller.onIndexChanged(sync.index)
         controller.onHistoryChanged(container.launchHistory.history)
         controller.onLearningChanged(container.learning.memory)
-        controller.startSession()
+        if (controller.opening == null) controller.startSession()
     }
 
     override fun onResume() {
@@ -149,30 +187,31 @@ class SearchActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        unregisterReceiver(profileReceiver)
+        controller.screenStarted = false
         val container = appContainer
+        container.profileLifecycle.onSearchStopped()
+        container.profileLifecycle.removeListener(profileListener)
         val sync = container.indexSync
-        sync.stopWatching()
+        container.indexLifecycle.onSearchStopped()
+        sync.removeStatusListener(syncStatusListener)
         sync.removeListener(controller)
         container.launchHistory.removeListener(controller)
         container.learning.removeListener(controller)
+        container.learning.removeNoticeListener(noticeListener)
         // 何も開かずに画面を離れた（アプリ情報を開いた・ホームに戻った）。打った文字の列を残さない
-        if (!launching) controller.endSession()
+        if (!isChangingConfigurations) controller.endSession()
         super.onStop()
     }
 
     override fun onDestroy() {
-        // 閉じるのではなく作り直す（向きの変更など）なら、まだ出し終えていない救済の知らせを戻し、作り直した画面で出す。
-        // 戻さないと、取り出し済みの知らせが［取り消す］の機会ごと失われる
-        if (!isFinishing) appContainer.learning.returnNotices(notices)
+        if (isFinishing) notices.forEach(appContainer.learning::consumeNotice)
         super.onDestroy()
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString(STATE_QUERY, controller.query)
-        outState.putBoolean(STATE_WORK_TAB, controller.profileTab == ProfileTab.WORK)
-        outState.putBoolean(STATE_ALL_APPS, controller.showingAllApps)
+    private fun receiveNotices() {
+        if (isFinishing || isDestroyed || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return
+        // 保存中に回転した画面も今回の起動に属する。新しい検索として知らせを出し始めない
+        if (!controller.noticesDeferred) notices = appContainer.learning.pendingNotices.filter { it.undoKey !in undoing }
     }
 
     /** 設定画面で変えた設定と「案内をもう一度見る」を効かせる。SharedPreferences のメモリ上の写しを読むだけなので、何度呼んでも軽い。 */
@@ -181,36 +220,6 @@ class SearchActivity : ComponentActivity() {
         searchSettings = settings.search
         onboardingShown = !settings.onboardingDismissed
         controller.onWorkProfileModeChanged(searchSettings.workProfileMode)
-    }
-
-    // 仕事用プロファイルの追加・削除・一時停止と再開。どれも OS だけが送る放送で、登録した受け手にだけ届く
-    private val profileReceiver =
-        object : BroadcastReceiver() {
-            override fun onReceive(
-                context: Context,
-                intent: Intent,
-            ) {
-                controller.onWorkProfileChanged(appContainer.users.workProfileState())
-                // 足された・再開したプロファイルのアプリを索引に入れ、消えたプロファイルの分を除く
-                appContainer.indexSync.requestSync()
-            }
-        }
-
-    private fun registerProfileReceiver() {
-        val filter =
-            IntentFilter().apply {
-                addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
-                addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED)
-                addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
-                addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
-            }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(profileReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            // 旧い版の ContextCompat.registerReceiver は、ほかのアプリを締め出すために自前の権限をマニフェストに足すので使わない。
-            // ここで受けるのは OS だけが送れる放送なので、締め出しは要らない
-            registerReceiver(profileReceiver, filter)
-        }
     }
 
     private fun onboardingActions() =
@@ -240,11 +249,11 @@ class SearchActivity : ComponentActivity() {
             }
 
             RowAction.SUPPRESS -> {
-                appContainer.learning.suppress(controller.suppressionOf(row), System.currentTimeMillis())
+                appContainer.learning.suppress(controller.suppressionOf(row), System.currentTimeMillis(), ::reportStorageFailure)
             }
 
             RowAction.FORGET_LEARNING -> {
-                controller.learnedPairOf(row)?.let(appContainer.learning::remove)
+                controller.learnedPairOf(row)?.let { appContainer.learning.remove(it, ::reportStorageFailure) }
             }
 
             RowAction.MANAGE_LEARNING -> {
@@ -260,38 +269,79 @@ class SearchActivity : ComponentActivity() {
     }
 
     private fun open(request: OpenRequest) {
+        if (isFinishing || isDestroyed || controller.opening != null) return
         val app = request.app
         val container = appContainer
-        if (!container.launcher.launch(app)) {
-            val label = controller.labelOf(app) ?: app.packageName
-            Toast.makeText(this, getString(R.string.launch_failed, label), Toast.LENGTH_SHORT).show()
-            // 消えたアプリが索引に残っていた見込み。同期で索引から外す
-            container.indexSync.requestSync()
+        val now = System.currentTimeMillis()
+        val label = controller.labelOf(app) ?: app.packageName
+        val decision = controller.finishSession(request)
+        val token = Any()
+        controller.opening = token
+        controller.noticesDeferred = true
+        val launch = container.launcher.prepare(app)
+        val context = applicationContext
+        val ui = ContextCompat.getMainExecutor(context)
+
+        fun openSaved(notices: List<RescueNotice>) {
+            ui.execute {
+                if (!launch.launch()) {
+                    Toast.makeText(context, context.getString(R.string.launch_failed, label), Toast.LENGTH_SHORT).show()
+                    container.indexSync.requestSync()
+                    // 保存済みの選択は残す。後の選択や消去を、失敗の巻き戻しで上書きしないため
+                    if (controller.opening === token) {
+                        controller.opening = null
+                        // 非表示中は終了したまま保ち、復帰時の onStart で入力と読みの要求を再開する
+                        if (controller.screenStarted) controller.startSession()
+                    }
+                    return@execute
+                }
+                notices.lastOrNull()?.let { notice ->
+                    Toast
+                        .makeText(
+                            context,
+                            context.getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                }
+                // OS へ渡す最中にも呼び直されうる。閉じる直前に、同じ画面・検索の要求かを確かめる
+                if (controller.opening === token) {
+                    // 通知の保留は別の印で保つ。旧画面が破棄済みでも、戻った画面の再操作を妨げない
+                    controller.opening = null
+                    if (!isFinishing && !isDestroyed) finishAndRemoveTask()
+                }
+            }
+        }
+
+        if (!launch.recordsChoice) {
+            openSaved(emptyList())
             return
         }
-        val now = System.currentTimeMillis()
-        container.launchHistory.record(app, now)
-        val label = controller.labelOf(app)
-        val made = container.learning.record(controller.finishSession(request), now) { label }
-        // 開いたアプリの上に出す（文字だけの Toast は、裏に回ったアプリからも出せる）。取り消しは次に開いたときの知らせで
-        made.lastOrNull()?.let { notice ->
-            Toast
-                .makeText(
-                    applicationContext,
-                    getString(R.string.rescue_learned, notice.pair.query.value, notice.label),
-                    Toast.LENGTH_LONG,
-                ).show()
+        // AppContainer の記録用 Executor は共通の 1 本で、起動の記録 → 学習の順に結果が返る
+        var historySaved = false
+        container.launchHistory.record(app, now) { historySaved = it is StorageResult.Success }
+        container.learning.record(decision, now, onDone = { learningResult ->
+            // 片方だけ保存できた場合も開く。失敗は Repository が識別子を含めずログに残し、画面にも控えめに出す
+            val failed = !historySaved || learningResult !is StorageResult.Success
+            container.openRecordFailed = failed
+            ui.execute { openRecordFailed = failed }
+            openSaved(if (historySaved && learningResult is StorageResult.Success) learningResult.value else emptyList())
+        }) { label }
+    }
+
+    private fun reportStorageFailure(result: StorageResult<Unit>) {
+        if (result !is StorageResult.Failure) return
+        val context = applicationContext
+        ContextCompat.getMainExecutor(context).execute {
+            val message =
+                when (result.reason.operation) {
+                    StorageOperation.LOAD -> R.string.search_record_load_failed
+                    StorageOperation.SAVE -> R.string.search_record_failed
+                }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
-        launching = true
-        // 履歴画面に残さない（excludeFromRecents と合わせて）。タスクの根でなければ、ふつうの finish と同じ
-        finishAndRemoveTask()
     }
 
     private companion object {
-        const val STATE_QUERY = "query"
-        const val STATE_WORK_TAB = "work_tab"
-        const val STATE_ALL_APPS = "all_apps"
-
         /** 仕事用プロファイルがあり、設定が「切り替えて検索する」のときだけ切り替えを出す。 */
         fun profileSwitchOf(controller: SearchController): ProfileSwitch? =
             if (controller.showsProfileSwitch) ProfileSwitch(controller.profileTab, controller.workProfile.paused) else null

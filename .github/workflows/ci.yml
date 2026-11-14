@@ -68,7 +68,7 @@ jobs:
       fail-fast: false
       matrix:
         # 最小 SDK と最新。37 の SDK の部品は android-37.0 の名前で配られている
-        api-level: ['26', '37.0']
+        api-level: ['28', '37.0']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

@@ -30,10 +30,10 @@ public class SearchQuery private constructor(
     internal val primary: QueryForms,
     /** 形態素解析器で付けた読み。[withReading] の前と、漢字を含まない検索語では null。 */
     public val reading: NormalizedText?,
-    private val readingForms: QueryForms?,
+    private val readingForms: List<QueryForms>,
 ) {
     /** 照合に使う形の組。検索語そのものの形が先、読みの形が後。 */
-    internal val formSets: List<QueryForms> = listOfNotNull(primary, readingForms)
+    internal val formSets: List<QueryForms> = listOf(primary) + readingForms
 
     /** 空の検索語か。空なら照合せず、最近と頻繁に使ったアプリを出す（ui.md）。 */
     public val isEmpty: Boolean get() = strict.isEmpty
@@ -59,16 +59,23 @@ public class SearchQuery private constructor(
      *
      * 形態素解析をするので、入力のスレッドではなく裏のスレッドで呼ぶ。
      * 語の読みをつなぎ、読みのない語（英字・辞書にない漢字）は表記のまま残す（「乗り換え」→ のりかえ、「yahoo天気」→ yahooてんき）。
+     * 辞書の読みを先に残し、[ReadingSupplements] の補いも名前と同じ上限まで組み合わせる。
      */
     public fun withReading(analyzer: ReadingAnalyzer): SearchQuery {
         if (!containsKanji || reading != null) return this
         val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
-        val joined = StringBuilder(nfkc.length * 2)
-        analyzer.analyze(nfkc).forEach { joined.append(it.reading ?: it.surface) }
-        val readingText = TextNormalizer.strict(joined)
-        // 読みが付かなかった（辞書にない漢字だけ）なら、同じ形で照らし直しても結果は変わらない
-        if (readingText.isEmpty || readingText == strict) return SearchQuery(raw, strict, primary, strict, null)
-        return SearchQuery(raw, strict, primary, readingText, QueryForms.of(readingText, fromReading = true))
+        val options =
+            analyzer.analyze(nfkc).map { token ->
+                (listOf(TextNormalizer.strict(token.reading ?: token.surface)) + ReadingSupplements.of(token.surface)).distinct()
+            }
+        val readings =
+            combinations(options, SearchKeyGenerator.DEFAULT_MAX_READING_COMBINATIONS)
+                .map { TextNormalizer.strict(it.joinToString("") { part -> part.value }) }
+                .filterNot { it.isEmpty }
+                .distinct()
+        // 漢字の表記との一致と辞書の読みを残し、かなだけの名前にも補いの読みで届くようにする
+        val forms = readings.filterNot { it == strict }.map { QueryForms.of(it, fromReading = true) }
+        return SearchQuery(raw, strict, primary, readings.firstOrNull() ?: strict, forms)
     }
 
     override fun toString(): String = "SearchQuery($raw)"
@@ -78,7 +85,7 @@ public class SearchQuery private constructor(
         /** 打たれた文字列 [raw] から検索語を作る。正規化とローマ字への変換を行う（形態素解析はしない）。 */
         public fun of(raw: String): SearchQuery {
             val strict = TextNormalizer.strict(raw)
-            return SearchQuery(raw, strict, QueryForms.of(strict, fromReading = false), null, null)
+            return SearchQuery(raw, strict, QueryForms.of(strict, fromReading = false), null, emptyList())
         }
     }
 }

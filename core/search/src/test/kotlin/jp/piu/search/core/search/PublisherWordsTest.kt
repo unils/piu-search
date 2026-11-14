@@ -67,7 +67,7 @@ class PublisherWordsTest {
         assertEquals(listOf("rakuten", "らくてん"), publisherKeys("O=\"Rakuten,Inc.\""))
         assertEquals(listOf("rakuten", "bank", "らくてん"), publisherKeys("O=\"Rakuten Bank, Ltd.\""))
         assertEquals(listOf("ly"), publisherKeys("O=LY Corporation, ST=Tokyo, C=JP"))
-        assertEquals(listOf("google", "ぐーぐる"), publisherKeys("O=Google LLC"))
+        assertEquals(listOf("google", "ぐーぐる", "ぐぐる"), publisherKeys("O=Google LLC"))
         // かな・漢字の組織名は形態素解析器で分け、「株式会社」を除いて読みを付ける
         assertEquals(listOf("楽天", "らくてん"), publisherKeys("O=楽天株式会社"))
         // 数字だけの語・1 字の語は除く

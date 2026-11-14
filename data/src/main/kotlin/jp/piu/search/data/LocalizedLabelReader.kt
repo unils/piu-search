@@ -23,7 +23,7 @@ public class LocalizedLabelReader(
 
     /**
      * [activity] の日本語・英語・端末の言語での表示名。表示名（[LaunchableActivity.label]）と同じもの、空のもの、重なりは除く。
-     * 名前が資源でない（マニフェストに直に書いた）アプリと、資源が読めないアプリは空。
+     * 名前が資源でない（マニフェストに直に書いた）アプリは空。資源の読み取り失敗は例外で知らせ、再試行の対象にする。
      */
     public fun read(activity: LaunchableActivity): List<String> {
         val labelRes = labelResource(activity)
@@ -72,11 +72,11 @@ public class LocalizedLabelReader(
     ): String? {
         val configuration = Configuration(context.resources.configuration).apply { setLocale(locale) }
         return try {
-            resourcesFor(activity, configuration)?.getText(labelRes)?.toString()?.trim()
+            resourcesFor(activity, configuration).getText(labelRes).toString().trim()
         } catch (_: PackageManager.NameNotFoundException) {
-            null
+            throw MaterialReadException()
         } catch (_: Resources.NotFoundException) {
-            null
+            throw MaterialReadException()
         }
     }
 
@@ -91,7 +91,7 @@ public class LocalizedLabelReader(
     private fun resourcesFor(
         activity: LaunchableActivity,
         configuration: Configuration,
-    ): Resources? =
+    ): Resources =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             packageManager.getResourcesForApplication(activity.applicationInfo, configuration)
         } else {

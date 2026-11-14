@@ -330,6 +330,80 @@ class LearnedMemoryTest {
         assertEquals(null, BASE.labelOf(AppId("io.example.gone", "Main", 0)))
     }
 
+    @Test
+    fun `64 コードポイントを超える語は選択も救済も記録しない`() {
+        for (word in listOf("あ", "𠮷")) {
+            val allowed = pair(word.repeat(64), PAYPAY)
+            val tooLong = pair(word.repeat(65), PAYPAY)
+            val memory = LearnedMemory.EMPTY.recorded(LearningDecision(tooLong, listOf(allowed, tooLong)), NOW)
+            assertEquals(setOf(allowed), memory.records.keys)
+        }
+    }
+
+    @Test
+    fun `読み戻した古い長すぎる語を索引に重ねない`() {
+        val longPair = pair("あ".repeat(10_000), PAYPAY)
+        val memory = LearnedMemory(listOf(LearnedRecord(longPair.query, PAYPAY, 1, NOW, rescued = true)))
+        assertFalse(engineWith(memory).search(SearchQuery.of(longPair.query.value)).any { it.reason.keyKind == SearchKeyKind.LEARNED })
+    }
+
+    @Test
+    fun `学習の回数は最大値で止まり時刻は更新する`() {
+        val learned = pair("おかね", PAYPAY)
+        for (count in listOf(Int.MAX_VALUE - 1, Int.MAX_VALUE)) {
+            val memory = LearnedMemory(listOf(LearnedRecord(learned.query, PAYPAY, count, NOW, rescued = true)))
+            val next = memory.recorded(LearningDecision(learned, listOf(learned)), NOW + DAY).records.getValue(learned)
+            assertEquals(Int.MAX_VALUE, next.count)
+            assertEquals(NOW + DAY, next.lastUsedAt)
+        }
+    }
+
+    @Test
+    fun `読み込める最大回数でも加点の掛け算はあふれない`() {
+        for (count in listOf(500_000_000, Int.MAX_VALUE)) {
+            val memory = LearnedMemory(listOf(LearnedRecord(NormalizedText("おかね"), PAYPAY, count, NOW, rescued = true)))
+            assertEquals(LearningConfig.DEFAULT.maxBoost, memory.learnedBoost(SearchQuery.of("おかね"), PAYPAY))
+        }
+    }
+
+    @Test
+    fun `学習のキーを毎日使えば 180 日後も残り、回数は入力した語の選択だけ増える`() {
+        val learned = pair("おかね", PAYPAY)
+        val prefix = pair("おか", PAYPAY)
+        var memory = LearnedMemory.EMPTY.recorded(LearningDecision(null, listOf(learned)), NOW)
+        for (day in 1..181) {
+            memory =
+                memory
+                    .forgotten(NOW + day * DAY)
+                    .recorded(LearningDecision(prefix, emptyList(), used = learned), NOW + day * DAY)
+        }
+        assertEquals(1, memory.records.getValue(learned).count)
+        assertEquals(NOW + 181 * DAY, memory.records.getValue(learned).lastUsedAt)
+        assertEquals(181, memory.records.getValue(prefix).count)
+        // その後に 180 日使わなければ、通常どおり消える
+        assertTrue(memory.forgotten(NOW + 361 * DAY).records.isEmpty())
+    }
+
+    @Test
+    fun `学習の使用時刻だけの更新は印や別のプロファイルの記録を変えず、時計も戻さない`() {
+        val learned = pair("おかね", PAYPAY)
+        val marked = pair("しはらい", PAYPAY)
+        val otherProfile = pair("おかね", PAYPAY.copy(profileSerial = 10))
+        val selectionOnly = pair("ぺい", PAYPAY)
+        val before =
+            LearnedMemory.EMPTY
+                .recorded(LearningDecision(selectionOnly, listOf(learned, marked, otherProfile)), NOW)
+                .suppressed(marked, NOW)
+        val after = before.recorded(LearningDecision(null, emptyList(), used = learned), NOW + DAY)
+        assertEquals(1, after.records.getValue(learned).count)
+        assertEquals(NOW + DAY, after.records.getValue(learned).lastUsedAt)
+        for (pair in listOf(marked, otherProfile, selectionOnly)) assertEquals(before.records[pair], after.records[pair])
+        for (pair in listOf(learned, marked, selectionOnly)) {
+            assertEquals(after.records, after.recorded(LearningDecision(null, emptyList(), used = pair), NOW - DAY).records)
+        }
+        assertEquals(after.records, after.recorded(LearningDecision(null, emptyList(), used = marked), NOW + 2 * DAY).records)
+    }
+
     private fun engineWith(memory: LearnedMemory): SearchEngine =
         SearchEngine(BASE.withLearning(memory), signals = LaunchHistory.EMPTY.asRankingSignals(NOW, memory))
 

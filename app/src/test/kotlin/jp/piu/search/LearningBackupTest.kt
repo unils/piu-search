@@ -20,6 +20,7 @@ class LearningBackupTest {
         val text = LearningBackup.encode(MEMORY, PROFILES, NOW)
         val decoded = LearningBackup.decode(text, PROFILES) as BackupReadResult.Success
         assertEquals(MEMORY.records.values.toSet(), decoded.records.toSet())
+        assertEquals(0, decoded.skippedCount)
 
         val root = JSONObject(text)
         assertEquals(LearningBackup.FORMAT, root.getString("format"))
@@ -50,15 +51,40 @@ class LearningBackupTest {
                 .single { it.app.packageName == "io.example.work" }
                 .app.profileSerial,
         )
+    }
 
-        // 仕事用がない端末では、書き出した端末の番号のまま残す
-        val noWork = LearningBackup.decode(text, BackupProfiles(own = 10, work = emptySet())) as BackupReadResult.Success
-        assertEquals(
-            WORK_SERIAL,
-            noWork.records
-                .single { it.app.packageName == "io.example.work" }
-                .app.profileSerial,
-        )
+    @Test
+    fun unmappedWorkRecordsAreDiscardedEvenIfTheOldSerialCollides() {
+        val text = LearningBackup.encode(MEMORY, PROFILES, NOW)
+        for (work in listOf(emptySet(), setOf(11L, 12L))) {
+            val decoded = LearningBackup.decode(text, BackupProfiles(own = WORK_SERIAL, work = work)) as BackupReadResult.Success
+            assertEquals(2, decoded.records.size)
+            assertEquals(1, decoded.skippedCount)
+            assertEquals(setOf(WORK_SERIAL), decoded.records.map { it.app.profileSerial }.toSet())
+        }
+    }
+
+    @Test
+    fun deeplyNestedJsonIsRejectedWithoutOverflowingTheStack() {
+        for ((open, close) in listOf("[" to "]", "{\"nested\":" to "}")) {
+            val nested = open.repeat(20_000) + "0" + close.repeat(20_000)
+            val text = """{"format":"${LearningBackup.FORMAT}","version":1,"records":[],"extra":$nested}"""
+            assertEquals(BackupReadResult.Failure(BackupFailure.INVALID), LearningBackup.decode(text, PROFILES))
+        }
+    }
+
+    @Test
+    fun queriesLongerThan64CodePointsAreDiscardedAfterNormalization() {
+        for (query in listOf("あ".repeat(65), "𠮷".repeat(65), "㍿".repeat(17))) {
+            val decoded = LearningBackup.decode(recordJson(query = JSONObject.quote(query)), PROFILES) as BackupReadResult.Success
+            assertEquals(listOf("ちず"), decoded.records.map { it.query.value })
+            assertEquals(1, decoded.skippedCount)
+        }
+        for (query in listOf("あ".repeat(64), "𠮷".repeat(64), "ア・".repeat(64))) {
+            val decoded = LearningBackup.decode(recordJson(query = JSONObject.quote(query)), PROFILES) as BackupReadResult.Success
+            assertEquals(2, decoded.records.size)
+            assertEquals(0, decoded.skippedCount)
+        }
     }
 
     @Test
@@ -101,6 +127,53 @@ class LearningBackupTest {
     fun newerVersionsAreNotRead() {
         val text = """{"format": "${LearningBackup.FORMAT}", "version": 2, "records": [{"unknown": true}]}"""
         assertEquals(BackupReadResult.Failure(BackupFailure.NEWER_VERSION), LearningBackup.decode(text, PROFILES))
+    }
+
+    @Test
+    fun depthLimitIncludesUnknownFieldsButNotBracketsOrEscapedQuotesInStrings() {
+        val base = JSONObject(recordJson())
+        for (depth in listOf(8, 9)) {
+            val nested = "[".repeat(depth - 1) + "0" + "]".repeat(depth - 1)
+            val text = base.toString().dropLast(1) + ",\"extra\":" + nested + "}"
+            val decoded = LearningBackup.decode(text, PROFILES)
+            if (depth == 8) {
+                assertEquals(2, (decoded as BackupReadResult.Success).records.size)
+            } else {
+                assertEquals(BackupReadResult.Failure(BackupFailure.INVALID), decoded)
+            }
+        }
+        base.put("extra", "[{}]\"\\".repeat(100))
+        assertEquals(2, (LearningBackup.decode(base.toString(), PROFILES) as BackupReadResult.Success).records.size)
+    }
+
+    @Test
+    fun invalidRecordsStillRejectTheWholeFileEvenWhenTheyWouldBeSkipped() {
+        for (text in listOf(
+            recordJson(query = JSONObject.quote("あ".repeat(65)), count = "-1"),
+            recordJson(profile = "\"work\"", rescued = "1"),
+        )) {
+            assertEquals(BackupReadResult.Failure(BackupFailure.INVALID), LearningBackup.decode(text, BackupProfiles(0, emptySet())))
+        }
+    }
+
+    @Test
+    fun aRecordRejectedForBothReasonsIsCountedOnce() {
+        val decoded =
+            LearningBackup.decode(
+                recordJson(query = JSONObject.quote("あ".repeat(65)), profile = "\"work\""),
+                BackupProfiles(0, emptySet()),
+            ) as BackupReadResult.Success
+        assertEquals(1, decoded.records.size)
+        assertEquals(1, decoded.skippedCount)
+    }
+
+    @Test
+    fun jsonExtensionsCannotHideDeepNestingFromThePrecheck() {
+        val nested = "[".repeat(20_000) + "0" + "]".repeat(20_000)
+        for (value in listOf("/* \" */$nested", "unquoted \",$nested", "'\"',$nested", "# \"\n$nested")) {
+            val text = """{"format":"${LearningBackup.FORMAT}","version":1,"records":[],"extra":$value}"""
+            assertEquals(BackupReadResult.Failure(BackupFailure.INVALID), LearningBackup.decode(text, PROFILES))
+        }
     }
 
     private fun recordJson(

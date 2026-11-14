@@ -3,6 +3,9 @@
 package jp.piu.search.core.search
 
 import jp.piu.search.core.reading.ReadingAnalyzer
+import jp.piu.search.core.text.NormalizedText
+import jp.piu.search.core.text.RomajiConverter
+import jp.piu.search.core.text.RomajiMode
 import jp.piu.search.core.text.containsLatin
 
 /**
@@ -10,8 +13,9 @@ import jp.piu.search.core.text.containsLatin
  *
  * @property ranks 正解ごとの順位（1 始まり。[EvalQuery.answers] と同じ順）。結果に出なければ null
  * @property top 結果の上位の表示名（報告に出す分だけ）
- * @property taught 学習の語の完全一致（[SearchKeyKind.LEARNED] の段階 1）が結果にあるか。英字を含む検索語では、学習の語のローマ字の前方一致（段階 2）も数える。
- *   学習の分類でこの検索語そのもの（か、その読み・ローマ字）を教えたので、教えたアプリが上に来るのは狙いどおり
+ * @property taught 学習の分類でこの検索語そのもの（その読み・ローマ字と、打ちかけの形を含む）を教えたか。教えたアプリが上に来るのは狙いどおりなので、
+ *   学習の後の比べから外す。学習の語の完全一致（[SearchKeyKind.LEARNED] の段階 1）が結果にあれば真。英字を含む検索語では、
+ *   学習の語の前方一致（段階 2）のうち、教えた語の最後の 1 音までを打ったものも数える
  */
 internal class QueryOutcome(
     val query: EvalQuery,
@@ -136,22 +140,44 @@ internal class EvalRunner(
         val results = results(query.query)
         val labels = results.map { it.label }
         val position = labels.withIndex().associate { (i, label) -> label to i + 1 }
-        // 英字を含む検索語は、学習の語のローマ字の前方一致も教えたものに数える（M4-02）。「ginko」は教えた「ぎんこう」を
-        // ローマ字で打っている途中の形で、教えたアプリが上に来るのは、かなで「ぎんこ」と打ったときと同じく狙いどおり
-        val latin =
-            SearchQuery
-                .of(query.query)
-                .strict.value
-                .containsLatin()
+        // 英字を含む検索語は、教えた語をローマ字で打ちかけた形も教えたものに数える（M4-02）。「ginko」「ぎんk」は教えた「ぎんこう」の
+        // 打ちかけで、教えたアプリが上に来るのは狙いどおり。ただし教えた語の頭にあたる別の語（「しんかんせんよやく」に対する
+        // 「shinkansen」）は数えない。学習の副作用を見たい行なので
+        val strict = SearchQuery.of(query.query).strict
+        val typed =
+            if (strict.value.containsLatin()) {
+                RomajiConverter.toStandard(strict, RomajiMode.PREFIX).value
+            } else {
+                null
+            }
         val taught =
             results.any {
                 it.reason.keyKind == SearchKeyKind.LEARNED &&
-                    (it.reason.stage == MatchStage.EXACT || (latin && it.reason.stage == MatchStage.PREFIX))
+                    (
+                        it.reason.stage == MatchStage.EXACT ||
+                            (
+                                typed != null && it.reason.stage == MatchStage.PREFIX &&
+                                    untypedLength(it.reason.matchedText, typed) <= MAX_UNTYPED
+                            )
+                    )
             }
         return QueryOutcome(query, query.answers.map { position[it] }, labels.take(TOP_SHOWN), taught)
     }
 
+    // 教えた語の標準形のローマ字のうち、打っていない末尾の字数
+    private fun untypedLength(
+        taught: NormalizedText,
+        typed: String,
+    ): Int = RomajiConverter.toStandard(taught, RomajiMode.COMPLETE).value.length - typed.length
+
     companion object {
+        /**
+         * 教えた語の打ちかけとみなす、打っていない末尾の字数（標準形のローマ字）の上限。
+         * 最後の 1 音の途中（「ぎんk」→ gink、残り ou）と、長音の省き（「ginko」、残り u）までを同じ語とする。
+         * 1 音を丸ごと残す形は別の語の頭とみなす（「shinkansen」は残り yoyaku）
+         */
+        private const val MAX_UNTYPED = 2
+
         /** 報告に出す上位の数。 */
         const val TOP_SHOWN = 5
 

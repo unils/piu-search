@@ -25,7 +25,8 @@ import java.text.Normalizer
  * 5. 提供元（[SearchKeyKind.PUBLISHER]）: 署名の証明書の組織名の語と、その読み（[PublisherWords]）
  * 6. ジャンル（[SearchKeyKind.GENRE]）
  *
- * 1〜3 には緩い形（[KeyForm.LOOSE]）も、厳密形と違うときだけ作る。
+ * 1〜5 には緩い形（[KeyForm.LOOSE]）も、厳密形と違うときだけ作る。
+ * パッケージ名と提供元の読みのローマ字は、段階と出た理由を引き継いで [SearchIndex] が組み立てる。
  * 同じ文字列のキーは、比べる相手（検索語のローマ字・かなと英字・ジャンル）が同じなら 1 つにし、先に作った種類を残す
  * （名前 → 別の言語の名前 → 読み → ローマ字 → パッケージ名 → 提供元 → ジャンルの順。厳密形が先）。
  *
@@ -75,7 +76,7 @@ public class SearchKeyGenerator(
     ) {
         val yahooMark = nfkc.trimStart().startsWith(YAHOO_MARK)
         val words =
-            splitNameWords(nfkc, analyzer.analyze(nfkc)).mapIndexedNotNull { i, word ->
+            splitNameWords(nfkc, analyzer.analyze(nfkc), latinReader).mapIndexedNotNull { i, word ->
                 val spelling = TextNormalizer.strict(word.surface)
                 // 「+」は正規化で消えて表記が空になるが、読みを持つので残す
                 if (spelling.isEmpty && word.kind != WordKind.PLUS) {
@@ -126,7 +127,7 @@ public class SearchKeyGenerator(
         val readings = ArrayList<NormalizedText>()
         for (organization in signerNames.flatMap(PublisherWords::organizations)) {
             val nfkc = Normalizer.normalize(organization, Normalizer.Form.NFKC)
-            for (word in splitNameWords(nfkc, analyzer.analyze(nfkc))) {
+            for (word in splitNameWords(nfkc, analyzer.analyze(nfkc), latinReader)) {
                 val spelling = TextNormalizer.strict(word.surface)
                 when (word.kind) {
                     WordKind.LATIN -> {
@@ -372,7 +373,9 @@ private class KeyCollector {
     private fun looseOf(key: SearchKey): SearchKey? {
         val loosen: (String) -> String =
             when (key.kind) {
-                SearchKeyKind.NAME, SearchKeyKind.LOCALIZED_NAME, SearchKeyKind.READING -> {
+                SearchKeyKind.NAME, SearchKeyKind.LOCALIZED_NAME, SearchKeyKind.READING,
+                SearchKeyKind.PACKAGE_NAME, SearchKeyKind.PUBLISHER,
+                -> {
                     { TextNormalizer.loose(NormalizedText(it)).value }
                 }
 

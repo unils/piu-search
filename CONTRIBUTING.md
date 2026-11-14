@@ -18,6 +18,8 @@ java -version   # 17 以上なら足りる
 
 ### Android SDK
 
+対応する端末は Android 9（API 28）以上。`test-apps` も同じ最小 SDK を共有する。
+
 SDK の部品は `android sdk`（Android CLI。Android SDK Command-line Tools に入っている）で入れる。旧来の `sdkmanager` も動くが、非推奨の警告が出る。`android sdk` の説明は公式の文書 <https://d.android.com/tools/agents/android-cli> にある。
 
 1. Command-line Tools を取得し、`~/Android/Sdk/cmdline-tools/latest` に置く。ファイル名と SHA-256 は <https://developer.android.com/studio#command-line-tools-only> の値（下は 2026-10-27 の値）
@@ -43,12 +45,12 @@ SDK の部品は `android sdk`（Android CLI。Android SDK Command-line Tools �
 
    ```bash
    ~/Android/Sdk/cmdline-tools/latest/bin/android --sdk="$HOME/Android/Sdk" sdk install \
-       emulator system-images/android-37.0/default/x86_64 system-images/android-26/default/x86_64
+       emulator system-images/android-37.0/default/x86_64 system-images/android-28/default/x86_64
    ~/Android/Sdk/cmdline-tools/latest/bin/avdmanager create avd -n api37 \
        -k "system-images;android-37.0;default;x86_64" -d pixel_8
    ```
 
-   CI（GitHub Actions）の計器テスト（API 26 と 37）は、無料の runner ではエミュレータの起動が時間切れになることがあるので、手動で起動したとき（`workflow_dispatch`）だけ回す。check のジョブ（書式・Lint・単体テストなど）は push のたびに回る。
+   CI（GitHub Actions）の計器テスト（API 28 と 37）は、無料の runner ではエミュレータの起動が時間切れになることがあるので、手動で起動したとき（`workflow_dispatch`）だけ回す。check のジョブ（書式・Lint・単体テストなど）は push のたびに回る。
 
 入れた部品は `android --sdk="$HOME/Android/Sdk" sdk list` で確かめられる。
 
@@ -106,7 +108,7 @@ pull request の前に、CI と同じ形の検査を 1 回で通す。
 - 前（`checkNoAnrDialog`）: 端末に「応答なし」（ANR）の窓が出ていれば、テストを始めずに落とす。エミュレータの起動中に重いビルドを同時に回すと、SystemUI が起動を終えられずにこの窓を出すことがある。窓が残ったままだと、呼び出しの入口のテストが落ちる（テストの HOME キーで窓が閉じるときに SystemUI が終了し（logcat の `user request after error`）、起動し直す間のキーが失われる）。起動が済んでからビルドする。窓は `adb shell dumpsys window windows | grep 'Application Not Responding'` で確かめられる
 - 後（`verify<Variant>ConnectedTestCount`）: 結果の XML（`*/build/outputs/androidTest-results/connected/<variant>/`）で、端末ごとのテストの数がソースの `@Test` の数に届かなければ落とす。`-Pandroid.testInstrumentationRunnerArguments.class=…` などで絞って回したときは、1 件以上を求める
 
-APK を手で入れて試したら、計器テストの前に `adb uninstall jp.piu.search` で消す。API 26 では、本体が入ったままだとテストの APK が入らず（`INSTALL_FAILED_ALREADY_EXISTS`）、テストが 0 件になる（2026-11-02 に確かめた）。上の件数の検査が落とす。
+APK を手で入れて試したら、計器テストの前に `adb uninstall jp.piu.search` で消す。以前の API 26 の試験（現在はサポート対象外）では、本体が入ったままだとテストの APK が入らず（`INSTALL_FAILED_ALREADY_EXISTS`）、テストが 0 件になる（2026-11-02 に確かめた）。上の件数の検査が落とす。
 
 計器テストを続けて何度も回すなら、エミュレータを `-gpu lavapipe` で起動する。`-gpu swiftshader_indirect`（android-emulator-runner の既定）では、全体を 1 回回すたびにエミュレータのプロセスのメモリが約 1 GB 増えて戻らない（エミュレータ 37.2.12.0・API 37 で、2026-11-02 に測った。`lavapipe` は 1 回 0.2 GB ほど）。
 
@@ -114,9 +116,9 @@ detekt が `Could not initialize class ...PluginEnabler` で落ちたら、Gradl
 
 仕事用プロファイルを試すなら、エミュレータで次のようにする（終わったら `adb shell pm remove-user 10` で消す。AVD に残るため）。
 
-`pm create-user` は、成功しても終了コードが 1 になることがある（API 26）。計器テストは、端末の既定のアシスタントとクイック設定のタイルを一時的に変え、終わったら元に戻す。
+作成したプロファイルは、終了コードだけでなく端末のユーザーの一覧でも確かめる。計器テストは、端末の既定のアシスタントとクイック設定のタイルを一時的に変え、終わったら元に戻す。
 
-API 26 では `installTestApps` がテスト用のアプリを仕事用プロファイルに入れないので、`cmd package install-existing --user 10` で入れる。
+仕事用プロファイルにテスト用のアプリがなければ、`cmd package install-existing --user 10` で入れる。
 
 ```bash
 adb shell pm create-user --profileOf 0 --managed work   # 作られたユーザーの番号（例: 10）を控える
@@ -192,7 +194,11 @@ public fun withReading(analyzer: ReadingAnalyzer): SearchQuery
 ### テスト
 
 - 新しい処理にはテストを書く。不具合を直すときは、その不具合を再現するテストを先に足す
-- 照合を変えたら、評価セット（`core/search/src/test/resources/eval/`）の結果が下がっていないことを確かめる（[docs/design/testing.md](docs/design/testing.md#評価セット)）
+- 照合を変えたら、評価セット（`core/search/src/test/resources/eval/`）の結果が下がっていないことを確かめる（[docs/design/testing.md](docs/design/testing.md#評価セット)）。`check` は、検索語ごとの順位が基準（`eval/baseline.tsv`）より 1 件でも下がると落ちる。意図して変えたとき（照合の調整で一部の語が下がるのを受け入れる・評価セットに行を足す）は、基準を書き直し、`baseline.tsv` の差分を pull request に載せて理由を書く
+
+  ```bash
+  ./gradlew :core:search:updateEvalBaseline
+  ```
 - 網羅率の数値を上げるためだけのテストは書かない
 - `core:*` は Android に依存させない（照合と学習を JVM だけで速くテストするため。[docs/design/architecture.md](docs/design/architecture.md)）
 - 画面を変えてスクリーンショットの正解（`app/src/test/screenshots/`）が変わったら、`./gradlew :app:recordRoborazziDebug` で撮り直し、差分を pull request に書く

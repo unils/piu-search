@@ -105,6 +105,98 @@ class DatabaseSchemaTest {
         assertEquals(LaunchRecord(1, 5000), database.launchStats.load().records[app])
     }
 
+    @Test
+    fun version3IsMigratedTo4AndTheFirstOpenDiscardsUnmarkedWorkRecords() {
+        helper.createDatabase(FILE, 3).use { db ->
+            insertIndexRows(db)
+            db.execSQL("INSERT INTO launch_stat VALUES ('jp.co.jorudan.nrkj', 'jp.co.jorudan.nrkj.Launcher', 0, 3, 2000)")
+            db.execSQL("INSERT INTO launch_stat VALUES ('io.example.work', 'Main', 11, 4, 3000)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', 'jp.co.jorudan.nrkj', 'jp.co.jorudan.nrkj.Launcher', 0, 2, 3000, 1, 0)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', 'io.example.work', 'Main', 11, 3, 3000, 1, 0)")
+        }
+        helper.runMigrationsAndValidate(FILE, 4, true, *PiuRoomDatabase.MIGRATIONS).close()
+        openWithRoom().use { database ->
+            assertIndexRowsAreRead(database)
+            assertEquals(
+                2,
+                database.launchStats
+                    .load()
+                    .records.size,
+            )
+            assertEquals(
+                2,
+                database.learned
+                    .load()
+                    .records.size,
+            )
+        }
+        // 旧版には DB 内の印がない。印のファイルがすでにあっても、古い仕事用の記録を公開しない。
+        LocalDatabase.open(context, FILE, allowMainThread = true).use { database ->
+            assertTrue(
+                database.index
+                    .load()
+                    .apps
+                    .isEmpty(),
+            )
+            assertEquals(
+                setOf(TRANSIT),
+                database.launchStats
+                    .load()
+                    .records.keys,
+            )
+            assertEquals(
+                setOf(0L),
+                database.learned
+                    .load()
+                    .records.values
+                    .map { it.app.profileSerial }
+                    .toSet(),
+            )
+        }
+    }
+
+    @Test
+    fun version4MigrationKeepsLearningLaunchesAndInstallation() {
+        helper.createDatabase(FILE, 4).use { db ->
+            insertIndexRows(db)
+            db.execSQL("INSERT INTO installation VALUES (0, 'test-installation')")
+            db.execSQL("INSERT INTO launch_stat VALUES ('jp.co.jorudan.nrkj', 'jp.co.jorudan.nrkj.Launcher', 0, 3, 2000)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', 'jp.co.jorudan.nrkj', 'jp.co.jorudan.nrkj.Launcher', 0, 2, 3000, 1, 0)")
+        }
+        helper.runMigrationsAndValidate(FILE, 5, true, *PiuRoomDatabase.MIGRATIONS).use { db ->
+            db.query("SELECT token FROM installation").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("test-installation", cursor.getString(0))
+            }
+        }
+        openWithRoom().use { database ->
+            assertIndexRowsAreRead(database)
+            assertEquals(
+                3,
+                database.launchStats
+                    .load()
+                    .records
+                    .getValue(TRANSIT)
+                    .count,
+            )
+            assertEquals(
+                2,
+                database.learned
+                    .load()
+                    .records.values
+                    .single()
+                    .count,
+            )
+            org.junit.Assert.assertNull(
+                database.index
+                    .load()
+                    .apps
+                    .single()
+                    .apkFingerprint,
+            )
+        }
+    }
+
     private fun openWithRoom(): LocalDatabase {
         val room =
             Room

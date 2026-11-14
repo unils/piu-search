@@ -68,7 +68,7 @@ public class SearchEngine(
             val starts = table.wordStarts[i]
             val weight = kindWeight[table.kind[i].ordinal]
             if (table.providerTier[i]) {
-                offerProvider(i, forms, providerPrefixAllowed, best)
+                offerProvider(table, i, forms, providerPrefixAllowed, best)
                 continue
             }
             val learned = table.kind[i] == SearchKeyKind.LEARNED
@@ -80,36 +80,47 @@ public class SearchEngine(
                 if (!looseDiffers) continue
             }
             // 緩い形のキーと、検索語の緩い形が厳密形と違うときの厳密形のキーは、検索語の緩い形と比べる
-            var stage = stageOf(key, starts, forms.loose, forms.loose, kindAllowsSubstring)
+            var stage = capPackageStage(stageOf(key, starts, forms.loose, forms.loose, kindAllowsSubstring), table.kind[i])
             if (learned) stage = capLearnedStage(stage, key, forms.loose)
             if (stage >= 0) best.offer(table.app[i], stage, KeyForm.LOOSE, weight, table.kind[i], key, null, forms.fromReading)
         }
     }
 
     /**
-     * 提供元の段のキー（[KeyTable.providerTier]）の i 番目を比べる。完全一致と前方一致だけを見る。
+     * [table] の提供元の段のキー（[KeyTable.providerTier]）の i 番目を比べる。完全一致と前方一致だけを見る。
      *
      * 語の途中の一致は見ない（`ten` で rakuten の会社のアプリが並ぶと、名前の部分一致より役に立たない語が増える）。
      * 前方一致は、検索語がジャンルと同じ字数（かな 2 字・英字 3 字）以上のときだけ（[prefixAllowed]）。短い語の頭で多くの会社のアプリが並ばないように。
      */
     private fun offerProvider(
+        table: KeyTable,
         i: Int,
         forms: QueryForms,
         prefixAllowed: Boolean,
         best: Best,
+        romaji: Boolean = false,
     ) {
-        val table = index.textKeys
         val key = table.text[i]
+        val prefix = if (romaji) forms.romajiPrefix.orEmpty() else forms.strict
+        val complete = if (romaji) forms.romajiComplete.orEmpty() else forms.strict
+        val loosePrefix = if (romaji) forms.romajiLoose.orEmpty() else forms.loose
+        val looseComplete = if (romaji) forms.romajiLooseComplete.orEmpty() else forms.loose
+        val strictForm = if (romaji && !forms.romajiIsStrict) KeyForm.LOOSE else KeyForm.STRICT
 
-        fun hits(query: String) = query.isNotEmpty() && if (prefixAllowed) key.startsWith(query) else key == query
+        // 入力途中の sh → s が短い語への完全一致にならないよう、完結した形と前方一致の形を別々に見る
+        fun hits(
+            prefixQuery: String,
+            completeQuery: String,
+        ) = (completeQuery.isNotEmpty() && key == completeQuery) ||
+            (prefixAllowed && prefixQuery.isNotEmpty() && key.startsWith(prefixQuery))
         val form =
             when {
-                hits(forms.strict) -> KeyForm.STRICT
-                hits(forms.loose) -> KeyForm.LOOSE
+                table.form[i] == KeyForm.STRICT && hits(prefix, complete) -> strictForm
+                hits(loosePrefix, looseComplete) -> KeyForm.LOOSE
                 else -> return
             }
         val stage = MatchStage.PROVIDER.ordinal
-        best.offer(table.app[i], stage, form, kindWeight[table.kind[i].ordinal], table.kind[i], key, null, forms.fromReading)
+        best.offer(table.app[i], stage, form, kindWeight[table.kind[i].ordinal], table.kind[i], table.shown[i], null, forms.fromReading)
     }
 
     /** 検索語の標準形のローマ字を、ローマ字のキーと比べる。ローマ字の形がない検索語（漢字が残る・途中で空になる）では何もしない。 */
@@ -128,6 +139,10 @@ public class SearchEngine(
         val looseDiffers = loose != prefix || looseComplete != complete
         val strictForm = if (forms.romajiIsStrict) KeyForm.STRICT else KeyForm.LOOSE
         for (i in 0 until table.size) {
+            if (table.providerTier[i]) {
+                offerProvider(table, i, forms, query.isLongEnoughForGenre, best, romaji = true)
+                continue
+            }
             val key = table.text[i]
             val starts = table.wordStarts[i]
             val learned = table.kind[i] == SearchKeyKind.LEARNED

@@ -54,7 +54,7 @@ class SearchIndexVersionTest {
             .joinToString("") { "%02x".format(it) }
 
     private companion object {
-        const val EXPECTED_VERSION = 5
+        const val EXPECTED_VERSION = 7
         const val EXPECTED_SUPPLEMENTS_SHA256 = "2d7b06b63f442bb74d688c821e379faae9856d1cb805cbd769277448a4105f71"
         const val EXPECTED_BRANDS_SHA256 = "7371adadf67cf87dc7d44b3bb67a4f4b83741114a27495c64b8559806074a15a"
     }

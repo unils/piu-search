@@ -21,6 +21,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -28,7 +29,12 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -46,6 +52,12 @@ const val SETTINGS_SHOW_REASONS_TAG = "settings_show_reasons"
 
 /** テストから「学習の一覧」を探すための印。 */
 const val SETTINGS_LEARNED_TAG = "settings_learned"
+
+/** テストから起動の記録の削除を探すための印。 */
+const val SETTINGS_CLEAR_HISTORY_TAG = "settings_clear_history"
+
+/** テストから起動の記録の削除を確定するボタンを探すための印。 */
+const val SETTINGS_CLEAR_HISTORY_CONFIRM_TAG = "settings_clear_history_confirm"
 
 /** テストから「案内をもう一度見る」を探すための印。 */
 const val SETTINGS_ONBOARDING_AGAIN_TAG = "settings_onboarding_again"
@@ -72,6 +84,7 @@ fun workProfileOptionTag(mode: WorkProfileMode): String = "settings_work_${mode.
  * @property onShowOnboardingAgain 「案内をもう一度見る」を押したとき
  * @property onOpenSource ソースの URL を押したとき
  * @property onOpenLicenses 「ライセンス」を押したとき
+ * @property onClearLaunchHistory 起動の記録の全消去を確かめたとき
  */
 class SettingsActions(
     val onSearchSettingsChange: (SearchSettings) -> Unit,
@@ -81,6 +94,7 @@ class SettingsActions(
     val onShowOnboardingAgain: () -> Unit,
     val onOpenSource: () -> Unit,
     val onOpenLicenses: () -> Unit,
+    val onClearLaunchHistory: () -> Unit,
 )
 
 /**
@@ -101,6 +115,27 @@ fun SettingsScreen(
     actions: SettingsActions,
     modifier: Modifier = Modifier,
 ) {
+    // 向きを変えても、削除を確かめる窓を残す。
+    var confirmingClearHistory by rememberSaveable { mutableStateOf(false) }
+    if (confirmingClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmingClearHistory = false },
+            title = { Text(stringResource(R.string.settings_clear_history)) },
+            text = { Text(stringResource(R.string.settings_clear_history_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingClearHistory = false
+                        actions.onClearLaunchHistory()
+                    },
+                    modifier = Modifier.testTag(SETTINGS_CLEAR_HISTORY_CONFIRM_TAG),
+                ) { Text(stringResource(R.string.learned_clear_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingClearHistory = false }) { Text(stringResource(R.string.learned_clear_cancel)) }
+            },
+        )
+    }
     Surface(modifier = modifier.fillMaxSize()) {
         ReadableWidth {
             Column(
@@ -160,6 +195,13 @@ fun SettingsScreen(
                     detail = stringResource(R.string.settings_learning_detail),
                     onClick = actions.onOpenLearned,
                     modifier = Modifier.testTag(SETTINGS_LEARNED_TAG),
+                )
+
+                LinkRow(
+                    title = stringResource(R.string.settings_clear_history),
+                    detail = stringResource(R.string.settings_clear_history_detail),
+                    onClick = { confirmingClearHistory = true },
+                    modifier = Modifier.testTag(SETTINGS_CLEAR_HISTORY_TAG),
                 )
 
                 Section(R.string.settings_entry)
