@@ -54,6 +54,15 @@ class LearningBackupTest {
     }
 
     @Test
+    fun recordsOfUnknownProfilesAreNotExported() {
+        val stray = LearnedRecord(NormalizedText("ぎゃく"), AppId("io.example.gone", "Main", 99L), 1, NOW, rescued = false)
+        val memory = LearnedMemory(MEMORY.records.values + stray)
+        val decoded = LearningBackup.decode(LearningBackup.encode(memory, PROFILES, NOW), PROFILES) as BackupReadResult.Success
+        assertEquals(MEMORY.records.size, decoded.records.size)
+        assertEquals(false, decoded.records.any { it.app.packageName == "io.example.gone" })
+    }
+
+    @Test
     fun unmappedWorkRecordsAreDiscardedEvenIfTheOldSerialCollides() {
         val text = LearningBackup.encode(MEMORY, PROFILES, NOW)
         for (work in listOf(emptySet(), setOf(11L, 12L))) {
