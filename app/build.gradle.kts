@@ -78,7 +78,7 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 3
         versionName = "0.1.0"
-        // ソースの置き場（設定画面の「このアプリについて」）。公開前の仮の値。公開の場所が決まったら（M7）ここだけを差し替える
+        // ソースの置き場（設定画面の「このアプリについて」）
         buildConfigField("String", "SOURCE_URL", "\"https://github.com/unils/piu-search\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
