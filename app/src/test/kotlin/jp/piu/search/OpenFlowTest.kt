@@ -18,6 +18,8 @@ import jp.piu.search.core.search.IndexedApp
 import jp.piu.search.core.search.LearnedPair
 import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.search.SearchIndex
+import jp.piu.search.core.search.SearchKey
+import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.text.NormalizedText
 import jp.piu.search.data.LocalDatabase
 import org.junit.Assert.assertEquals
@@ -150,6 +152,123 @@ class OpenFlowTest {
                     .getValue(PAIR)
                     .rescued,
             )
+        }
+    }
+
+    @Test
+    fun successfulLaunchAfterRecreationAllowsAnotherChoiceOnReturn() {
+        val other = AppId("io.example.other", "Main", 0)
+        val index = SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()), IndexedApp(other, "別のアプリ", emptyList())))
+        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
+            ready(scenario, index)
+            duringLaunch = { scenario.pause().stop() }
+            withSavingPaused {
+                choose(scenario)
+                scenario.recreate()
+            }
+            drain()
+            assertEquals(1, launches)
+            assertFalse(scenario.get().isFinishing)
+
+            scenario.start().resume().visible()
+            ready(scenario, index)
+            duringLaunch = {}
+            open(scenario.get(), controller(scenario.get()).openRequest(other))
+            drain()
+
+            assertEquals(2, launches)
+            assertEquals(
+                1,
+                container.launchHistory.history.records
+                    .getValue(other)
+                    .count,
+            )
+            assertTrue(scenario.get().isFinishing)
+        }
+    }
+
+    @Test
+    fun failedLaunchAfterRecreationRestartsTheVisibleSessionAndAllowsRetry() {
+        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
+            ready(scenario)
+            duringLaunch = { throw android.content.ActivityNotFoundException() }
+            withSavingPaused {
+                choose(scenario)
+                scenario.recreate()
+            }
+            drain()
+            assertEquals(1, launches)
+            assertFalse(scenario.get().isFinishing)
+            assertTrue(tracker(controller(scenario.get())).size > 0)
+
+            duringLaunch = {}
+            choose(scenario)
+            drain()
+            assertEquals(2, launches)
+            assertTrue(scenario.get().isFinishing)
+        }
+    }
+
+    @Test
+    fun anotherTapOnTheFinishingScreenCannotRecordOrLaunchAgain() {
+        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
+            ready(scenario)
+            choose(scenario)
+            drain()
+            assertTrue(scenario.get().isFinishing)
+            choose(scenario)
+            drain()
+            assertEquals(1, launches)
+            assertEquals(
+                1,
+                container.launchHistory.history.records
+                    .getValue(APP)
+                    .count,
+            )
+        }
+    }
+
+    @Test
+    fun failedLaunchWhileStoppedDoesNotRestartInputOrReadingUntilReturning() {
+        val query = "送金"
+        val index = SearchIndex(listOf(IndexedApp(APP, "アプリ", listOf(SearchKey(NormalizedText(query), SearchKeyKind.NAME)))))
+        val readingStarted = CountDownLatch(1)
+        val releaseReading = CountDownLatch(1)
+        try {
+            Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
+                ready(scenario, index)
+                container.queryExecutor.execute {
+                    readingStarted.countDown()
+                    check(releaseReading.await(10, TimeUnit.SECONDS))
+                }
+                check(readingStarted.await(10, TimeUnit.SECONDS))
+                container.analyzer.release()
+                controller(scenario.get()).onQueryChange(query)
+                assertEquals(APP, controller(scenario.get()).topResult)
+                duringLaunch = { throw android.content.ActivityNotFoundException() }
+                withSavingPaused {
+                    open(scenario.get(), controller(scenario.get()).openRequest(APP))
+                    scenario.pause().stop()
+                    assertEquals(0, tracker(controller(scenario.get())).size)
+                }
+                drain()
+                releaseReading.countDown()
+                container.queryExecutor.submit {}.get(10, TimeUnit.SECONDS)
+                shadowOf(Looper.getMainLooper()).idle()
+
+                assertEquals(1, launches)
+                assertFalse(scenario.get().isFinishing)
+                assertEquals(0 to false, tracker(controller(scenario.get())).size to container.analyzer.isLoaded)
+
+                scenario.start().resume().visible()
+                shadowOf(Looper.getMainLooper()).idle()
+                container.queryExecutor.submit {}.get(10, TimeUnit.SECONDS)
+                shadowOf(Looper.getMainLooper()).idle()
+                assertTrue(tracker(controller(scenario.get())).size > 0)
+                assertTrue(container.analyzer.isLoaded)
+            }
+        } finally {
+            releaseReading.countDown()
         }
     }
 
@@ -453,11 +572,14 @@ class OpenFlowTest {
         return work
     }
 
-    private fun ready(scenario: ActivityController<SearchActivity>) {
+    private fun ready(
+        scenario: ActivityController<SearchActivity>,
+        index: SearchIndex = SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()))),
+    ) {
         container.learning.awaitIdle()
         shadowOf(Looper.getMainLooper()).idle()
         scenario.onActivity {
-            controller(it).onIndexChanged(SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()))))
+            controller(it).onIndexChanged(index)
         }
         shadowOf(Looper.getMainLooper()).idle()
         container.derivedIndexExecutor.submit {}.get(10, TimeUnit.SECONDS)
@@ -503,6 +625,12 @@ class OpenFlowTest {
             .getDeclaredField("controller")
             .apply { isAccessible = true }
             .get(activity) as SearchController
+
+    private fun tracker(controller: SearchController): SessionTracker =
+        SearchController::class.java
+            .getDeclaredField("tracker")
+            .apply { isAccessible = true }
+            .get(controller) as SessionTracker
 
     private fun withSavingPaused(action: () -> Unit) {
         val release = CountDownLatch(1)

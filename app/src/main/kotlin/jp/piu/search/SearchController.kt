@@ -264,8 +264,14 @@ class SearchController(
     var showingAllApps: Boolean by mutableStateOf(false)
         private set
 
-    /** 保存待ちと OS への起動要求の印。構成の変更後も今回の知らせを消費しないために保つ。 */
+    /** 保存待ちと OS への起動要求の印。完了時は旧 Activity が破棄済みでも解除する。 */
     internal var opening: Any? = null
+
+    /** 今回の検索で生じた救済の知らせは、起動の完了後も新しい検索まで表示しない。 */
+    internal var noticesDeferred: Boolean = false
+
+    /** 回転後の画面の表示状態も、旧 Activity の完了処理から確かめられるようにする。 */
+    internal var screenStarted: Boolean = false
 
     init {
         rebuildIndexes()
@@ -298,6 +304,7 @@ class SearchController(
         tracker.closed()
         sessionActive = true
         opening = null
+        noticesDeferred = false
         query = ""
         savedState?.set("query", query)
         showingAllApps = false

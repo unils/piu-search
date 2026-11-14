@@ -149,6 +149,7 @@ class SearchActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        controller.screenStarted = true
         val container = appContainer
         val sync = container.indexSync
         sync.addListener(controller)
@@ -181,6 +182,7 @@ class SearchActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        controller.screenStarted = false
         val container = appContainer
         container.profileLifecycle.onSearchStopped()
         container.profileLifecycle.removeListener(profileListener)
@@ -204,7 +206,7 @@ class SearchActivity : ComponentActivity() {
     private fun receiveNotices() {
         if (isFinishing || isDestroyed || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return
         // 保存中に回転した画面も今回の起動に属する。新しい検索として知らせを出し始めない
-        if (controller.opening == null) notices = appContainer.learning.pendingNotices.filter { it.undoKey !in undoing }
+        if (!controller.noticesDeferred) notices = appContainer.learning.pendingNotices.filter { it.undoKey !in undoing }
     }
 
     /** 設定画面で変えた設定と「案内をもう一度見る」を効かせる。SharedPreferences のメモリ上の写しを読むだけなので、何度呼んでも軽い。 */
@@ -262,7 +264,7 @@ class SearchActivity : ComponentActivity() {
     }
 
     private fun open(request: OpenRequest) {
-        if (controller.opening != null) return
+        if (isFinishing || isDestroyed || controller.opening != null) return
         val app = request.app
         val container = appContainer
         val now = System.currentTimeMillis()
@@ -270,6 +272,7 @@ class SearchActivity : ComponentActivity() {
         val decision = controller.finishSession(request)
         val token = Any()
         controller.opening = token
+        controller.noticesDeferred = true
         val launch = container.launcher.prepare(app)
         val context = applicationContext
         val ui = ContextCompat.getMainExecutor(context)
@@ -282,7 +285,8 @@ class SearchActivity : ComponentActivity() {
                     // 保存済みの選択は残す。後の選択や消去を、失敗の巻き戻しで上書きしないため
                     if (controller.opening === token) {
                         controller.opening = null
-                        controller.startSession()
+                        // 非表示中は終了したまま保ち、復帰時の onStart で入力と読みの要求を再開する
+                        if (controller.screenStarted) controller.startSession()
                     }
                     return@execute
                 }
@@ -295,8 +299,10 @@ class SearchActivity : ComponentActivity() {
                         ).show()
                 }
                 // OS へ渡す最中にも呼び直されうる。閉じる直前に、同じ画面・検索の要求かを確かめる
-                if (controller.opening === token && !isFinishing && !isDestroyed) {
-                    finishAndRemoveTask()
+                if (controller.opening === token) {
+                    // 通知の保留は別の印で保つ。旧画面が破棄済みでも、戻った画面の再操作を妨げない
+                    controller.opening = null
+                    if (!isFinishing && !isDestroyed) finishAndRemoveTask()
                 }
             }
         }
