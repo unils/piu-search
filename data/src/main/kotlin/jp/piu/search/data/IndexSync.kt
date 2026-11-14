@@ -87,6 +87,7 @@ public class IndexSync internal constructor(
     private val launcherApps: LauncherApps?,
     private val writer: DatabaseWriter = DatabaseWriter(),
     private val profiles: ProfileReconciler? = null,
+    private val profileSerialOf: (UserHandle) -> Long? = device::profileSerial,
 ) {
     /**
      * 端末の部品で作る。[analyzer] は、漢字の検索語に読みを付ける側（画面）と共有してよい。
@@ -125,7 +126,7 @@ public class IndexSync internal constructor(
     private val statusListeners = CopyOnWriteArrayList<(IndexSyncStatus) -> Unit>()
     private val packageListeners = CopyOnWriteArrayList<(Set<String>) -> Unit>()
     private val requestLock = Any()
-    private val pendingPackages = LinkedHashMap<String, Long>()
+    private val pendingPackages = LinkedHashMap<PackageRequest, Long>()
     private var notificationRevision = 0L
     private var scheduled = false
     private var requested = false
@@ -161,14 +162,39 @@ public class IndexSync internal constructor(
         searchVisible = visible
     }
 
-    /** 通知は成功するまで保持し、同じパッケージの新しい通知を古い完了で消さない。 */
-    public fun packagesChanged(packages: Set<String>) {
-        synchronized(requestLock) {
-            packages.forEach { pendingPackages[it] = ++notificationRevision }
-        }
+    /**
+     * 通知元のプロファイルを成功まで保持し、同期中に届いた新しい通知を古い完了で消さない。
+     *
+     * @param packages 変更を知らせられたパッケージ
+     * @param user Callback の通知元。省略した場合は全プロファイルを指定する
+     */
+    public fun packagesChanged(
+        packages: Set<String>,
+        user: UserHandle? = null,
+    ) {
+        enqueuePackages(packages, user)
         packageListeners.forEach { it(packages) }
         if (searchVisible) requestSync()
     }
+
+    private fun enqueuePackages(
+        packages: Set<String>,
+        user: UserHandle? = null,
+    ) {
+        // 取得できたシリアル番号を保ち、ユーザー id が再利用されても通知先を取り違えない
+        val serial = user?.let(::readProfileSerial)
+        synchronized(requestLock) {
+            packages.forEach { pendingPackages[PackageRequest(it, user, serial)] = ++notificationRevision }
+        }
+    }
+
+    private fun readProfileSerial(user: UserHandle): Long? =
+        try {
+            profileSerialOf(user)?.takeIf { it >= 0 }
+        } catch (_: RuntimeException) {
+            // 番号の取得失敗で通知を捨てず、次の同期でも通知元から解決する
+            null
+        }
 
     init {
         profiles?.addRemovalListener(::profilesRemoved)
@@ -212,7 +238,7 @@ public class IndexSync internal constructor(
      */
     public fun sync(packages: Set<String> = emptySet()): SyncReport {
         check(!writer.isCurrentThread) { "索引の計算は書き手の外から呼ぶ" }
-        synchronized(requestLock) { packages.forEach { pendingPackages[it] = ++notificationRevision } }
+        enqueuePackages(packages)
         return synchronized(syncLock) {
             updateStatus(status.copy(running = true))
             try {
@@ -261,7 +287,7 @@ public class IndexSync internal constructor(
         }
     }
 
-    private fun syncSerial(notifications: Map<String, Long>): SyncReport {
+    private fun syncSerial(notifications: Map<PackageRequest, Long>): SyncReport {
         val started = SystemClock.elapsedRealtime()
         val removedProfiles = HashSet<Long>()
         var analyzerMillis = 0L
@@ -330,9 +356,14 @@ public class IndexSync internal constructor(
                     if (invalidated.isNotEmpty()) packageListeners.forEach { it(invalidated) }
                     if (nextIndex != null) publish(nextIndex)
                     synchronized(requestLock) {
-                        val blocked = failed.mapTo(HashSet()) { it.packageName } + plan.blockedPackages
-                        notifications.forEach { (name, generation) ->
-                            if (name !in blocked && pendingPackages[name] == generation) pendingPackages.remove(name)
+                        notifications.forEach { (request, generation) ->
+                            val targets = plan.requestTargets[request]
+                            val completed =
+                                !targets.isNullOrEmpty() &&
+                                    targets.all { key ->
+                                        key !in failed && (key.profileSerial in plan.readable || !before.isPresent(key.profileSerial))
+                                    }
+                            if (completed && pendingPackages[request] == generation) pendingPackages.remove(request)
                         }
                     }
                     SyncReport(
@@ -383,29 +414,29 @@ public class IndexSync internal constructor(
             override fun onPackageRemoved(
                 packageName: String,
                 user: UserHandle,
-            ) = packagesChanged(setOf(packageName))
+            ) = packagesChanged(setOf(packageName), user)
 
             override fun onPackageAdded(
                 packageName: String,
                 user: UserHandle,
-            ) = packagesChanged(setOf(packageName))
+            ) = packagesChanged(setOf(packageName), user)
 
             override fun onPackageChanged(
                 packageName: String,
                 user: UserHandle,
-            ) = packagesChanged(setOf(packageName))
+            ) = packagesChanged(setOf(packageName), user)
 
             override fun onPackagesAvailable(
                 packageNames: Array<out String>,
                 user: UserHandle,
                 replacing: Boolean,
-            ) = packagesChanged(packageNames.toSet())
+            ) = packagesChanged(packageNames.toSet(), user)
 
             override fun onPackagesUnavailable(
                 packageNames: Array<out String>,
                 user: UserHandle,
                 replacing: Boolean,
-            ) = packagesChanged(packageNames.toSet())
+            ) = packagesChanged(packageNames.toSet(), user)
         }
 
     /** 頼んだ同期がすべて終わるまで待つ。テストで、データベースを閉じる前に使う。 */
@@ -429,7 +460,7 @@ public class IndexSync internal constructor(
         bootCount: Int?,
         locales: String,
         buildFingerprint: String,
-        requested: Set<String>,
+        requested: Set<PackageRequest>,
     ): Plan {
         val previous = snapshot.state
         val full = previous == null || previous.locales != locales || previous.buildFingerprint != buildFingerprint
@@ -444,6 +475,20 @@ public class IndexSync internal constructor(
             }
         val listed = stamps.groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
         val stored = snapshot.apps.groupBy { it.key }
+        val knownProfiles = profiles.keys + stored.keys.map { it.profileSerial }
+        val requestTargets =
+            requested
+                .mapNotNull { request ->
+                    val serials =
+                        if (request.user == null) {
+                            knownProfiles
+                        } else {
+                            (request.profileSerial ?: readProfileSerial(request.user))?.let(::setOf) ?: return@mapNotNull null
+                        }
+                    request to serials.mapTo(HashSet()) { PackageKey(it, request.packageName) }
+                }.toMap()
+        val forced = requestTargets.values.flatten().toHashSet()
+
         val dirty =
             (stored.keys + listed.keys).filterTo(HashSet()) { key ->
                 val old = stored[key]
@@ -460,7 +505,7 @@ public class IndexSync internal constructor(
                     val timeChanged =
                         !sequenceUsable &&
                             (stamp.packageUpdatedAt == 0L || old.first().packageUpdatedAt != stamp.packageUpdatedAt)
-                    key.packageName in requested || (sequenceUsable && key.packageName in changes.packages) ||
+                    key in forced || (sequenceUsable && key.packageName in changes.packages) ||
                         old.any { it.apkFingerprint == null } || fingerprintChanged || timeChanged ||
                         old.mapTo(HashSet()) { it.app.id } != now.mapTo(HashSet()) { it.id }
                 }
@@ -505,10 +550,6 @@ public class IndexSync internal constructor(
         dirty.filterTo(failed) { it in listed && it !in present }
         val removed = dirty.filterTo(HashSet()) { it !in listed && it.profileSerial in completed && it !in failed }
         val unavailable = snapshot.apps.any { it.app.id.profileSerial !in completed }
-        val cannotReadAll =
-            profiles.values.any { it.status != ProfileReadStatus.COMPLETE } ||
-                candidates.values.any { it.status != ProfileReadStatus.COMPLETE }
-        val blocked = if (cannotReadAll) requested else emptySet()
         val newState = SyncState(changes.sequence, bootCount, locales, buildFingerprint)
         return Plan(
             if (full) {
@@ -530,7 +571,7 @@ public class IndexSync internal constructor(
             removed,
             completed,
             failed,
-            blocked,
+            requestTargets,
             dirty.mapTo(HashSet()) { it.packageName },
             genres,
             genreMillis,
@@ -618,6 +659,13 @@ public class IndexSync internal constructor(
         fun isPresent(serial: Long): Boolean = profiles?.isPresent(serial) != false
     }
 
+    /** 番号をまだ取得できない通知も、通知元を持って次回に解決する。user が null なら全プロファイル指定。 */
+    private data class PackageRequest(
+        val packageName: String,
+        val user: UserHandle?,
+        val profileSerial: Long?,
+    )
+
     private class Plan(
         val mode: SyncMode,
         val state: SyncState,
@@ -625,7 +673,7 @@ public class IndexSync internal constructor(
         val removedPackages: Set<PackageKey>,
         val readable: Set<Long>,
         val failedPackages: Set<PackageKey>,
-        val blockedPackages: Set<String>,
+        val requestTargets: Map<PackageRequest, Set<PackageKey>>,
         val changedPackages: Set<String>,
         val genres: Map<jp.piu.search.core.search.AppId, List<jp.piu.search.core.search.GenreId>>?,
         val genreMillis: Long,

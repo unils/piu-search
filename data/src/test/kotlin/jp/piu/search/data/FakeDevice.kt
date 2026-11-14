@@ -109,7 +109,11 @@ internal class FakeDevice : DeviceApps {
     override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
         super.stampProfiles(withUpdateTime).mapValues { (serial, result) ->
             if (serial in failedProfiles) ProfileRead(ProfileReadStatus.FAILED) else result
-        }
+        } + (profiles intersect unavailable).associateWith { ProfileRead(ProfileReadStatus.UNAVAILABLE) }
+
+    override fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> =
+        super.readProfiles(packages) +
+            (profiles intersect unavailable).associateWith { ProfileRead(ProfileReadStatus.UNAVAILABLE) }
 
     override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<jp.piu.search.core.search.GenreId>> {
         genresCalls++

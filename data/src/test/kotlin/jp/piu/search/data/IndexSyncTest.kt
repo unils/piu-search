@@ -3,6 +3,11 @@
 package jp.piu.search.data
 
 import android.content.Context
+import android.content.pm.LauncherApps
+import android.os.Handler
+import android.os.Process
+import android.os.UserHandle
+import android.os.UserManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppEntry
@@ -20,7 +25,11 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowLauncherApps
 
 // 同期の判断（全件の作り直し・全件の見直し・変更の番号による差分・一覧との突き合わせ）を、偽の端末で確かめる。
 // 保存は Robolectric の SQLite（ファイル）。「次に画面を開いたとき」を、同じファイルで新しい IndexSync を作ることで再現する
@@ -41,6 +50,7 @@ class IndexSyncTest {
         indexVersion: Int = 4,
         existingProfiles: () -> Set<Long>? = { device.existingProfiles() },
         source: DeviceApps = device,
+        watch: Boolean = false,
     ): IndexSync {
         val database = LocalDatabase.open(context, FILE, indexVersion, allowMainThread = true).also(opened::add)
         val generator = SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.parse(emptyList())))
@@ -49,8 +59,9 @@ class IndexSyncTest {
             source,
             { generator },
             analyzer,
-            launcherApps = null,
+            launcherApps = if (watch) context.getSystemService(LauncherApps::class.java) else null,
             profiles = ProfileReconciler({ database.profiles }, existingProfiles),
+            profileSerialOf = context.getSystemService(UserManager::class.java)::getSerialNumberForUser,
         )
     }
 
@@ -574,6 +585,157 @@ class IndexSyncTest {
         sync.sync(setOf(TRANSIT.entry.id.packageName))
         assertEquals(1, sync.sync().rebuiltApps)
         assertEquals(0, sync.sync().rebuiltApps)
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun personalNotificationIsConsumedWhileWorkProfileStaysUnavailable() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, _ ->
+            device.unavailable += WORK
+            device.install(TRANSIT.copy(label = "個人用更新テスト"), silently = true)
+            callback.notifyChanged(TRANSIT.entry.id.packageName, Process.myUserHandle())
+
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals("個人用更新テスト", sync.index.labelOf(TRANSIT.entry.id))
+            assertEquals(WORK_TRANSIT.entry.label, sync.index.labelOf(WORK_TRANSIT.entry.id))
+            analyzer.calls = 0
+            assertEquals(0, sync.sync().rebuiltApps)
+            assertEquals(0, analyzer.calls)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun callbackRebuildsOnlyItsProfileEvenForTheSamePackage() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, workUser ->
+            device.install(TRANSIT.copy(label = "個人用の未通知テスト"), WORK_TRANSIT.copy(label = "仕事用更新テスト"), silently = true)
+            callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals(TRANSIT.entry.label, sync.index.labelOf(TRANSIT.entry.id))
+            assertEquals("仕事用更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+            assertEquals(0, sync.sync().rebuiltApps)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun successfulPersonalNotificationIsConsumedWhenTheSameWorkPackageIsIncomplete() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, workUser ->
+            device.install(
+                TRANSIT.copy(label = "個人用更新テスト"),
+                WORK_TRANSIT.copy(label = "仕事用更新テスト").copy(complete = false),
+                silently = true,
+            )
+            callback.notifyChanged(TRANSIT.entry.id.packageName, Process.myUserHandle())
+            callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+            val partial = sync.sync()
+            assertEquals(2, partial.rebuiltApps)
+            assertEquals(1, partial.failedPackages)
+
+            device.install(WORK_TRANSIT.copy(label = "仕事用回復テスト"), silently = true)
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals("個人用更新テスト", sync.index.labelOf(TRANSIT.entry.id))
+            assertEquals("仕事用回復テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+            assertEquals(0, sync.sync().rebuiltApps)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun callbackWithAnUnknownProfileSerialIsRetainedUntilItCanBeResolved() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, workUser ->
+            val users = shadowOf(context.getSystemService(UserManager::class.java))
+            users.setSerialNumberForUser(workUser, -1)
+            device.install(WORK_TRANSIT.copy(label = "仕事用更新テスト"), silently = true)
+            callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+            assertEquals(0, sync.sync().rebuiltApps)
+            assertEquals(WORK_TRANSIT.entry.label, sync.index.labelOf(WORK_TRANSIT.entry.id))
+
+            users.setSerialNumberForUser(workUser, WORK)
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals("仕事用更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+            assertEquals(0, sync.sync().rebuiltApps)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun resolvedCallbackProfileIsKeptWhenALaterSerialQueryFails() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, workUser ->
+            device.install(WORK_TRANSIT.copy(label = "仕事用更新テスト"), silently = true)
+            callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+            shadowOf(context.getSystemService(UserManager::class.java)).setSerialNumberForUser(workUser, -1)
+
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals(TRANSIT.entry.label, sync.index.labelOf(TRANSIT.entry.id))
+            assertEquals("仕事用更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
+            assertEquals(0, sync.sync().rebuiltApps)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 37], shadows = [CallbackLauncherApps::class])
+    fun callbackArrivingDuringTheSameProfileReadSurvivesTheOlderCompletion() {
+        device.install(TRANSIT, WORK_TRANSIT)
+        withWatchingSync { sync, callback, workUser ->
+            callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+            device.beforeRead = {
+                device.beforeRead = {}
+                callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
+            }
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals(1, sync.sync().rebuiltApps)
+            assertEquals(0, sync.sync().rebuiltApps)
+        }
+    }
+
+    private fun withWatchingSync(test: (IndexSync, CallbackLauncherApps, UserHandle) -> Unit) {
+        val users = shadowOf(context.getSystemService(UserManager::class.java))
+        val workUser = UserHandle.getUserHandleForUid(10 * 100_000)
+        // ユーザー id と保存用のシリアル番号を取り違えないことも確かめる
+        users.setSerialNumberForUser(Process.myUserHandle(), PERSONAL)
+        users.setSerialNumberForUser(workUser, WORK)
+        val sync = newSync(watch = true)
+        sync.sync()
+        sync.startWatching()
+        try {
+            test(sync, shadowOf(context.getSystemService(LauncherApps::class.java)) as CallbackLauncherApps, workUser)
+        } finally {
+            sync.stopWatching()
+            sync.awaitIdle()
+        }
+    }
+
+    /** OS からの通知元を任意にして、実際に登録された Callback を通す。 */
+    @Implements(LauncherApps::class)
+    class CallbackLauncherApps : ShadowLauncherApps() {
+        private var registered: LauncherApps.Callback? = null
+
+        @Implementation
+        override fun registerCallback(
+            callback: LauncherApps.Callback,
+            handler: Handler,
+        ) {
+            registered = callback
+        }
+
+        @Implementation
+        override fun unregisterCallback(callback: LauncherApps.Callback) {
+            if (registered === callback) registered = null
+        }
+
+        fun notifyChanged(
+            packageName: String,
+            user: UserHandle,
+        ) {
+            checkNotNull(registered).onPackageChanged(packageName, user)
+        }
     }
 
     private fun SearchIndex.profiles(): Set<Long> =

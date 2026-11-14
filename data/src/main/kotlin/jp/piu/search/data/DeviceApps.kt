@@ -5,6 +5,8 @@ package jp.piu.search.data
 import android.content.Context
 import android.content.res.Resources
 import android.os.Build
+import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.GenreId
@@ -13,6 +15,9 @@ import jp.piu.search.core.search.GenreId
  * [IndexSync] が端末に問い合わせること。判断の部分を端末なしで（Robolectric と偽物で）テストできるよう分ける。
  */
 internal interface DeviceApps {
+    /** Callback の通知元を保存用のシリアル番号へ変える。分からなければ次の同期で再試行する。 */
+    fun profileSerial(user: UserHandle): Long? = null
+
     /** OS のビルド。変われば資源も変わり得るため全件を作り直す。 */
     fun buildFingerprint(): String = Build.FINGERPRINT
 
@@ -87,10 +92,13 @@ internal class AndroidDeviceApps(
     private val reader: InstalledAppReader = InstalledAppReader(context),
     private val bootCountOverride: (() -> Int?)? = null,
 ) : DeviceApps {
+    private val userManager = context.getSystemService(UserManager::class.java)
     private val resolver = context.contentResolver
     private val packageManager = context.packageManager
     private val genreResolver = GenreResolver(context.packageManager)
     private val ownPackage = context.packageName
+
+    override fun profileSerial(user: UserHandle): Long? = userManager.getSerialNumberForUser(user).takeIf { it >= 0 }
 
     override fun bootCount(): Int? = bootCountOverride?.invoke() ?: systemBootCount()
 
