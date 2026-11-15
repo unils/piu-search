@@ -150,5 +150,74 @@
     <string name="search_record_failed">学習または起動の記録を保存できませんでした</string>
     <string name="search_record_load_failed">学習または起動の記録を読めませんでした</string>
     <string name="open_record_failed">前に選んだ記録を保存できなかった</string>
-    <string name="index_sync_failed">索引を更新できなかった</string>
+    <string name="index_notice_sync">アプリの一覧を更新できなかった。前の一覧で検索している</string>
+    <string name="index_notice_no_index">アプリの一覧を読めなかった</string>
+    <string name="index_notice_personal">個人用のアプリの一覧を読めなかった。前の一覧で検索している</string>
+    <string name="index_notice_work">仕事用のアプリの一覧を読めなかった。前の一覧で検索している</string>
+    <string name="index_notice_details">詳細</string>
+
+    <string name="settings_index">検索の索引</string>
+    <string name="index_status_title">索引の状態</string>
+    <plurals name="index_status_apps">
+        <item quantity="other">%d 個のアプリ</item>
+    </plurals>
+    <string name="index_status_no_issues">問題なし</string>
+    <plurals name="index_status_issue_summary">
+        <item quantity="other">%d 件の情報を読めていない</item>
+    </plurals>
+    <string name="index_status_intro">検索に使うアプリの一覧が、今どうなっているか。不具合の報告に使う文をコピーできる。</string>
+    <string name="index_status_overview">概要</string>
+    <string name="index_status_profiles">アプリの一覧</string>
+    <string name="index_status_genres">ジャンルの判定</string>
+    <string name="index_status_issues">読めていない情報</string>
+    <string name="index_status_report">報告</string>
+    <string name="index_status_labeled">%1$s: %2$s</string>
+    <string name="index_status_work_n">仕事用 %1$d</string>
+    <plurals name="index_status_archived">
+        <item quantity="other">うちアーカイブ済み %d 個</item>
+    </plurals>
+    <string name="index_status_archived_none">うちアーカイブ済み: なし</string>
+    <string name="index_status_last_saved">最後に更新した時刻: %1$s</string>
+    <string name="index_status_last_sync">最後の更新: %1$s</string>
+    <string name="index_status_running">更新している…</string>
+    <string name="index_status_outcome_ok">更新できた</string>
+    <string name="index_status_outcome_issues">更新できた・一部の情報を読めていない</string>
+    <string name="index_status_outcome_partial">一部を更新できなかった</string>
+    <string name="index_status_outcome_failed">更新できなかった</string>
+    <string name="index_status_not_yet">まだ更新していない</string>
+    <string name="index_status_profile_complete">読めた</string>
+    <string name="index_status_profile_unavailable">一時停止中</string>
+    <string name="index_status_profile_failed">読めなかった</string>
+    <string name="index_status_genres_ok">判定できた</string>
+    <string name="index_status_genres_failed">判定できなかった（前のジャンルで検索している）</string>
+    <string name="index_status_none">なし</string>
+    <plurals name="index_status_count">
+        <item quantity="other">%d 件</item>
+    </plurals>
+    <plurals name="index_status_retry_count">
+        <item quantity="other">%1$s（うち次の更新で読み直す %2$d 件）</item>
+    </plurals>
+    <string name="index_status_category_bug">Piu Search の不具合の疑い</string>
+    <string name="index_status_category_transient">一時的に読めない</string>
+    <string name="index_status_category_deterministic">読めないまま使っている</string>
+    <string name="index_status_retry_next">次の更新で読み直す</string>
+    <string name="index_status_retried">読み直しても読めなかった</string>
+    <string name="index_status_stage_entry">アプリの情報</string>
+    <string name="index_status_stage_label">別の言語の名前</string>
+    <string name="index_status_stage_signer">提供元（署名）</string>
+    <string name="index_status_stage_keys">検索の語の作成</string>
+    <string name="index_status_effect_entry">前の情報で検索している。新しく入れたアプリなら、名前でだけ出る</string>
+    <string name="index_status_effect_label">その言語の名前では出ない</string>
+    <string name="index_status_effect_signer">提供元の名前では出ない</string>
+    <string name="index_status_effect_keys">前の情報で検索している。新しく入れたアプリなら、名前の文字どおりでだけ出る</string>
+    <string name="index_status_issue_detail">%1$s。%2$s</string>
+    <string name="index_status_issue_cause">理由: %1$s・初めて読めなかった日: %2$s</string>
+    <string name="index_status_report_show">報告用の文を見る</string>
+    <string name="index_status_report_hint">報告する前に、同じ報告がないか見てほしい</string>
+    <string name="index_status_open_issues">issue のページを開く</string>
+    <string name="index_report_title">報告用の文</string>
+    <string name="index_report_warning">アプリのパッケージ名と、端末の製造元・機種・OS の版が入る。仕事用のアプリのパッケージ名からは、勤め先が分かることがある。Piu Search はこれを送信しない。貼る前に確かめ、出したくない行は消してほしい</string>
+    <string name="index_report_copy">コピー</string>
+    <string name="index_report_close">閉じる</string>
+    <string name="index_report_copied">コピーした</string>
 </resources>

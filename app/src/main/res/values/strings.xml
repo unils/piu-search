@@ -167,5 +167,81 @@
     <string name="search_record_failed">Could not save learning or launch history.</string>
     <string name="search_record_load_failed">Could not load learning or launch history.</string>
     <string name="open_record_failed">Could not save your last choice</string>
-    <string name="index_sync_failed">Could not update the index</string>
+    <!-- 検索画面の索引の知らせ（ui.md の「索引の知らせ」）。行の末尾に「詳細」を付け、押すと「索引の状態」を開く -->
+    <string name="index_notice_sync">Couldn\'t update the app list. Searching the previous one.</string>
+    <string name="index_notice_no_index">Couldn\'t read the app list.</string>
+    <string name="index_notice_personal">Couldn\'t read your personal apps. Searching the previous list.</string>
+    <string name="index_notice_work">Couldn\'t read your work apps. Searching the previous list.</string>
+    <string name="index_notice_details">Details</string>
+
+    <!-- 設定の「索引の状態」と、その画面（ui.md の「索引の状態」） -->
+    <string name="settings_index">Search index</string>
+    <string name="index_status_title">Index status</string>
+    <plurals name="index_status_apps">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+    <string name="index_status_no_issues">No problems</string>
+    <plurals name="index_status_issue_summary">
+        <item quantity="one">%d item of information is missing</item>
+        <item quantity="other">%d items of information are missing</item>
+    </plurals>
+    <string name="index_status_intro">What the app list used for search looks like now. You can copy a summary to report a problem.</string>
+    <string name="index_status_overview">Overview</string>
+    <string name="index_status_profiles">App lists</string>
+    <string name="index_status_genres">Genre detection</string>
+    <string name="index_status_issues">Missing information</string>
+    <string name="index_status_report">Report</string>
+    <string name="index_status_labeled">%1$s: %2$s</string>
+    <string name="index_status_work_n">Work %1$d</string>
+    <plurals name="index_status_archived">
+        <item quantity="one">Archived: %d app</item>
+        <item quantity="other">Archived: %d apps</item>
+    </plurals>
+    <string name="index_status_archived_none">Archived: none</string>
+    <string name="index_status_last_saved">Last updated: %1$s</string>
+    <string name="index_status_last_sync">Last update: %1$s</string>
+    <string name="index_status_running">Updating…</string>
+    <string name="index_status_outcome_ok">Updated</string>
+    <string name="index_status_outcome_issues">Updated; some information is missing</string>
+    <string name="index_status_outcome_partial">Partly not updated</string>
+    <string name="index_status_outcome_failed">Not updated</string>
+    <string name="index_status_not_yet">Not updated yet</string>
+    <string name="index_status_profile_complete">Read</string>
+    <string name="index_status_profile_unavailable">Paused</string>
+    <string name="index_status_profile_failed">Couldn\'t read</string>
+    <string name="index_status_genres_ok">Detected</string>
+    <string name="index_status_genres_failed">Couldn\'t detect (searching with the previous genres)</string>
+    <string name="index_status_none">none</string>
+    <plurals name="index_status_count">
+        <item quantity="one">%d</item>
+        <item quantity="other">%d</item>
+    </plurals>
+    <plurals name="index_status_retry_count">
+        <item quantity="one">%1$s (%2$d will be retried on the next update)</item>
+        <item quantity="other">%1$s (%2$d will be retried on the next update)</item>
+    </plurals>
+    <string name="index_status_category_bug">Possible bug in Piu Search</string>
+    <string name="index_status_category_transient">Temporarily unreadable</string>
+    <string name="index_status_category_deterministic">Used without this information</string>
+    <string name="index_status_retry_next">Will retry on the next update</string>
+    <string name="index_status_retried">Still unreadable after a retry</string>
+    <string name="index_status_stage_entry">App information</string>
+    <string name="index_status_stage_label">Names in other languages</string>
+    <string name="index_status_stage_signer">Developer (signature)</string>
+    <string name="index_status_stage_keys">Search terms</string>
+    <string name="index_status_effect_entry">Searching with the previous information. A newly installed app shows up only by its name.</string>
+    <string name="index_status_effect_label">It doesn\'t show up by names in those languages.</string>
+    <string name="index_status_effect_signer">It doesn\'t show up by the developer\'s name.</string>
+    <string name="index_status_effect_keys">Searching with the previous information. A newly installed app shows up only by its exact name.</string>
+    <string name="index_status_issue_detail">%1$s. %2$s</string>
+    <string name="index_status_issue_cause">Cause: %1$s · First missing: %2$s</string>
+    <string name="index_status_report_show">View report text</string>
+    <string name="index_status_report_hint">Before reporting, please check whether the same problem has already been reported.</string>
+    <string name="index_status_open_issues">Open the issue page</string>
+    <string name="index_report_title">Report text</string>
+    <string name="index_report_warning">This includes app package names and your device\'s manufacturer, model, and Android version. Package names of work apps may reveal your employer. Piu Search doesn\'t send this anywhere. Check it before pasting, and delete any lines you don\'t want to share.</string>
+    <string name="index_report_copy">Copy</string>
+    <string name="index_report_close">Close</string>
+    <string name="index_report_copied">Copied</string>
 </resources>

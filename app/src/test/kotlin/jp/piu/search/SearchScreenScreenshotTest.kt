@@ -178,6 +178,88 @@ class SearchScreenScreenshotTest {
         capture("all_apps_tablet_landscape", query = "ぴざ", allApps = true)
     }
 
+    // 索引の知らせ（ui.md の「索引の知らせ」）。4 つの文を日本語と英語で、長い文は文字の大きさ 200% でも撮る
+    @Test
+    fun indexNoticeSyncFailed() {
+        capture("index_notice_sync", query = "ちず", indexNotice = IndexNotice.SYNC_FAILED)
+    }
+
+    @Test
+    fun indexNoticeNoIndex() {
+        capture(
+            "index_notice_no_index",
+            query = "",
+            index = SearchIndex.EMPTY,
+            history = LaunchHistory.EMPTY,
+            indexNotice = IndexNotice.NO_INDEX,
+        )
+    }
+
+    @Test
+    fun indexNoticePersonalFailed() {
+        capture("index_notice_personal", query = "きんたい", index = profileIndex, work = WORK, indexNotice = IndexNotice.PERSONAL_FAILED)
+    }
+
+    @Test
+    fun indexNoticeWorkFailed() {
+        capture("index_notice_work", query = "きんたい", index = profileIndex, work = WORK, indexNotice = IndexNotice.WORK_FAILED)
+    }
+
+    @Test
+    fun indexNoticePersonalFailedWithFontScale200() {
+        RuntimeEnvironment.setFontScale(2f)
+        capture(
+            "index_notice_personal_font_200",
+            query = "きんたい",
+            index = profileIndex,
+            work = WORK,
+            indexNotice = IndexNotice.PERSONAL_FAILED,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun indexNoticeSyncFailedInEnglish() {
+        capture("index_notice_sync_en", query = "ちず", indexNotice = IndexNotice.SYNC_FAILED)
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun indexNoticeNoIndexInEnglish() {
+        capture(
+            "index_notice_no_index_en",
+            query = "",
+            index = SearchIndex.EMPTY,
+            history = LaunchHistory.EMPTY,
+            indexNotice = IndexNotice.NO_INDEX,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun indexNoticePersonalFailedInEnglish() {
+        capture("index_notice_personal_en", query = "きんたい", index = profileIndex, work = WORK, indexNotice = IndexNotice.PERSONAL_FAILED)
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun indexNoticeWorkFailedInEnglish() {
+        capture("index_notice_work_en", query = "きんたい", index = profileIndex, work = WORK, indexNotice = IndexNotice.WORK_FAILED)
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w360dp-h640dp-xhdpi")
+    fun indexNoticePersonalFailedInEnglishWithFontScale200() {
+        RuntimeEnvironment.setFontScale(2f)
+        capture(
+            "index_notice_personal_en_font_200",
+            query = "きんたい",
+            index = profileIndex,
+            work = WORK,
+            indexNotice = IndexNotice.PERSONAL_FAILED,
+        )
+    }
+
     @Test
     fun noMatchWithWorkMatches() {
         // 個人用に一致がなく、仕事用にある。切り替えと「仕事用に N 件」
@@ -296,6 +378,7 @@ class SearchScreenScreenshotTest {
                 { screen(query = "きんたい", index = profileIndex, work = WORK) },
                 { screen(query = "", onboarding = true) },
                 { screen(query = "", searchBarOnTop = true, index = profileIndex, work = WORK) },
+                { screen(query = "ちず", indexNotice = IndexNotice.PERSONAL_FAILED, index = profileIndex, work = WORK) },
             )
         // 1 つのテストで setContent は 1 回だけなので、出すものと文字の大きさを状態で差し替える
         // （RuntimeEnvironment.setFontScale は Activity を作り直すので、ここでは LocalDensity で変える）
@@ -356,6 +439,7 @@ class SearchScreenScreenshotTest {
         learning: LearnedMemory = LearnedMemory.EMPTY,
         searchBarOnTop: Boolean = false,
         showReasons: Boolean = true,
+        indexNotice: IndexNotice? = null,
     ) {
         render(
             query,
@@ -369,6 +453,7 @@ class SearchScreenScreenshotTest {
             learning = learning,
             searchBarOnTop = searchBarOnTop,
             showReasons = showReasons,
+            indexNotice = indexNotice,
         )
         compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
     }
@@ -389,9 +474,25 @@ class SearchScreenScreenshotTest {
         notices: List<RescueNotice> = emptyList(),
         searchBarOnTop: Boolean = false,
         showReasons: Boolean = true,
+        indexNotice: IndexNotice? = null,
     ) {
         val content =
-            screen(query, history, index, work, tab, allApps, menu, onboarding, tileRequest, learning, notices, searchBarOnTop, showReasons)
+            screen(
+                query,
+                history,
+                index,
+                work,
+                tab,
+                allApps,
+                menu,
+                onboarding,
+                tileRequest,
+                learning,
+                notices,
+                searchBarOnTop,
+                showReasons,
+                indexNotice,
+            )
         compose.setContent { content() }
     }
 
@@ -410,6 +511,7 @@ class SearchScreenScreenshotTest {
         notices: List<RescueNotice> = emptyList(),
         searchBarOnTop: Boolean = false,
         showReasons: Boolean = true,
+        indexNotice: IndexNotice? = null,
     ): @Composable () -> Unit {
         val controller = SearchController(analyzer, direct, direct, index, history, clock = { NOW }, learning = learning)
         controller.onWorkProfileChanged(work)
@@ -434,6 +536,7 @@ class SearchScreenScreenshotTest {
                     searchBarOnTop = searchBarOnTop,
                     showReasons = showReasons,
                     onOpenSettings = {},
+                    indexNotice = indexNotice,
                 )
             }
         }

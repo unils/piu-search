@@ -50,12 +50,14 @@ class SearchActivity : ComponentActivity() {
     // 出す救済の知らせ（前に開いたときの分）
     private var notices by mutableStateOf(emptyList<RescueNotice>())
 
-    private var syncFailed by mutableStateOf(false)
+    // 最後に終わった同期の状態。索引の知らせは、これと設定の「仕事用プロファイルのアプリ」から決める
+    private var syncStatus by mutableStateOf(IndexSyncStatus())
+    private var ownSerial = 0L
 
     // 前にアプリを開いたときの記録の保存失敗。画面が閉じる前に見せられないので、次に開いたときに出す
     private var openRecordFailed by mutableStateOf(false)
     private val syncStatusListener: (IndexSyncStatus) -> Unit = { status ->
-        ContextCompat.getMainExecutor(this).execute { syncFailed = status.failure != null }
+        ContextCompat.getMainExecutor(this).execute { syncStatus = status }
     }
 
     private val noticeListener =
@@ -76,6 +78,7 @@ class SearchActivity : ComponentActivity() {
         entrySetup = EntrySetup(this)
         onboardingShown = !container.settings.onboardingDismissed
         searchSettings = container.settings.search
+        ownSerial = container.users.ownSerial
         // 構成の変更では同じ状態とセッションを使い、プロセスの作り直しでは検索語だけを戻す
         controller =
             ViewModelProvider(
@@ -135,7 +138,8 @@ class SearchActivity : ComponentActivity() {
                     searchBarOnTop = searchSettings.searchBarPosition == SearchBarPosition.TOP,
                     showReasons = searchSettings.showReasons,
                     workPausedNotice = controller.workPausedVisible,
-                    syncFailed = syncFailed,
+                    indexNotice = IndexNotice.of(syncStatus, container.indexSync.index.size > 0, ownSerial, searchSettings.workProfileMode),
+                    onIndexNotice = ::openIndexStatus,
                     openRecordFailed = openRecordFailed,
                     onOpenSettings = ::openSettings,
                 )
@@ -162,7 +166,7 @@ class SearchActivity : ComponentActivity() {
         container.learning.addNoticeListener(noticeListener)
         receiveNotices()
         sync.addStatusListener(syncStatusListener)
-        syncFailed = sync.status.failure != null
+        syncStatus = sync.status
         openRecordFailed = container.openRecordFailed
         container.indexLifecycle.onSearchStarted(::reportStorageFailure)
         container.profileLifecycle.addListener(profileListener)
@@ -266,6 +270,11 @@ class SearchActivity : ComponentActivity() {
     private fun openSettings() {
         // 学習の一覧と同じく、同じタスク（履歴画面に残さない）に積む。「戻る」で検索の画面に戻る
         startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    private fun openIndexStatus() {
+        // 設定画面と同じく、同じタスクに積む。「戻る」で検索の画面に戻る
+        startActivity(Intent(this, IndexStatusActivity::class.java))
     }
 
     private fun open(request: OpenRequest) {

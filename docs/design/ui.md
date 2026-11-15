@@ -174,7 +174,9 @@ OS が起動を拒んだら「開けなかった」を出し、索引を同期�
 
 アーカイブ済みのアプリ（Android 15 以降。APK を消してデータを残した状態）は、欠けとして出さない。概要に「うちアーカイブ済み N 個」とだけ出す。件数は保存した索引から数えるので、一時停止中の仕事用の分も入る（[architecture.md](architecture.md#失敗の分け方)）。
 
-読めていない情報の一覧は、区分の順（不具合の疑い → 次の更新で読み直す → 読めないまま使っている）、同じ区分の中は表示名の順に並べる。1 行に出すもの:
+区分ごとの件数を、不具合の疑い → 一時的 → 決定的の順に出す。一時的は 1 つの区分にし、そのうち次の更新で読み直す件数を添える（例:「一時的に読めない: 2 件（うち次の更新で読み直す 1 件）」。2026-11-16 の管理役の判断。区分は理由の型で決まり、読み直すかは印で決まる別の事実なので、区分の数を印で割らない）。
+
+読めていない情報の一覧は、区分の順（不具合の疑い → 一時的で読み直しを待つ → 一時的で読み直した → 決定的）、同じ区分の中は表示名の順に並べる。1 行に出すもの:
 
 - 表示名と、仕事用なら「仕事用」
 - パッケージ名
@@ -185,9 +187,11 @@ OS が起動を拒んだら「開けなかった」を出し、索引を同期�
 
 | 区分 | 条件 | 日本語 | 英語 |
 |---|---|---|---|
-| 再試行待ち | 理由が一時的で、`retry_once` が立っている | 次の更新で読み直す | Will retry on the next update |
-| 読めないまま | 理由が決定的。または一時的で、もう読み直した | 読めないまま使っている | Used without this information |
 | 不具合の疑い | 理由が不具合の疑い | Piu Search の不具合の疑い | Possible bug in Piu Search |
+| 一時的 | 理由が一時的 | 一時的に読めない | Temporarily unreadable |
+| 決定的 | 理由が決定的 | 読めないまま使っている | Used without this information |
+
+一時的の行には、`retry_once` から引いた言葉を区分に続ける。立っていれば「次の更新で読み直す」（Will retry on the next update）、下りていれば「読み直しても読めなかった」（Still unreadable after a retry）。
 
 | 段 | 日本語 | 英語 | 影響 |
 |---|---|---|---|
@@ -225,14 +229,14 @@ last saved: 2026-11-15
 last sync: mode=CHANGES result=ISSUES
 profiles: personal=COMPLETE work=UNAVAILABLE
 genres: OK
-issues: retry=0 degraded=1 bug=1
-- DEGRADED LABEL work com.example.app cause=android.content.res.Resources$NotFoundException system=N apex=N splits=0 key=Y since=2026-11-14 last=2026-11-15
+issues: transient=0 retry=0 deterministic=1 bug=1
+- DETERMINISTIC LABEL work com.example.app cause=android.content.res.Resources$NotFoundException system=N apex=N splits=0 key=Y since=2026-11-14 last=2026-11-15
 - BUG KEYS personal com.example.other cause=java.lang.IllegalArgumentException system=N apex=N splits=2 key=Y input=label:len42:kanji,kana ver=5 since=2026-11-15 last=2026-11-15
     at a.b.c(SourceFile:12)
     at a.b.d(SourceFile:40)
 ```
 
-`last saved` は最後に保存できた同期の日。`last sync` はこのプロセスの最後の同期で、`result` は上の表の `OK`・`ISSUES`・`PARTIAL`・`FAILED`。まだ同期していなければ `last sync: none`。`profiles` の値は `COMPLETE`・`UNAVAILABLE`・`FAILED`。プロファイルはシリアル番号ではなく `personal`・`work`（2 つ目からは `work2`…）で書く。行の先頭の区分（`RETRY`・`DEGRADED`・`BUG`）は、文を作るときに理由から引いたもの。
+`last saved` は最後に保存できた同期の日。`last sync` はこのプロセスの最後の同期で、`result` は上の表の `OK`・`ISSUES`・`PARTIAL`・`FAILED`。まだ同期していなければ `last sync: none`。`profiles` の値は `COMPLETE`・`UNAVAILABLE`・`FAILED`。プロファイルはシリアル番号ではなく `personal`・`work`（2 つ目からは `work2`…）で書く。行の先頭の区分（`TRANSIENT`・`DETERMINISTIC`・`BUG`）は、文を作るときに理由から引いたもの。`TRANSIENT` の行には、`cause` の後に再試行の印（`retry=Y`・`retry=N`）を書く。`issues` の `retry` は `transient` の内数。行は区分・プロファイル・パッケージ名の順に並べる（表示名を入れないため）。
 
 ## 見た目とアクセシビリティ
 

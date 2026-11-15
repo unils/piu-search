@@ -68,6 +68,9 @@ const val SETTINGS_SOURCE_TAG = "settings_source"
 /** テストから「ライセンス」を探すための印。 */
 const val SETTINGS_LICENSES_TAG = "settings_licenses"
 
+/** テストから「索引の状態」を探すための印。 */
+const val SETTINGS_INDEX_STATUS_TAG = "settings_index_status"
+
 /** テストから検索窓の位置の選択肢を探すための印。 */
 fun searchBarOptionTag(position: SearchBarPosition): String = "settings_search_bar_${position.name}"
 
@@ -85,6 +88,7 @@ fun workProfileOptionTag(mode: WorkProfileMode): String = "settings_work_${mode.
  * @property onOpenSource ソースの URL を押したとき
  * @property onOpenLicenses 「ライセンス」を押したとき
  * @property onClearLaunchHistory 起動の記録の全消去を確かめたとき
+ * @property onOpenIndexStatus 「索引の状態」を押したとき
  */
 class SettingsActions(
     val onSearchSettingsChange: (SearchSettings) -> Unit,
@@ -95,10 +99,22 @@ class SettingsActions(
     val onOpenSource: () -> Unit,
     val onOpenLicenses: () -> Unit,
     val onClearLaunchHistory: () -> Unit,
+    val onOpenIndexStatus: () -> Unit = {},
 )
 
 /**
- * 設定画面（ui.md の「設定画面」）: 検索窓の位置・出た理由の表示・仕事用プロファイルのアプリ・学習・呼び出しの設定・このアプリについて。
+ * 設定の「索引の状態」の 1 行に出す件数。
+ *
+ * @property apps 索引のアプリの数
+ * @property issues 読めていない情報の件数
+ */
+data class IndexSummary(
+    val apps: Int,
+    val issues: Int,
+)
+
+/**
+ * 設定画面（ui.md の「設定画面」）: 検索窓の位置・出た理由の表示・仕事用プロファイルのアプリ・学習・呼び出しの設定・索引の状態・このアプリについて。
  *
  * 選んだらすぐ保存し、確定のボタンは置かない。検索の画面に戻ると、その場で効く。
  *
@@ -106,6 +122,7 @@ class SettingsActions(
  * @param version 版の表示（`0.0.1 (1)` など）
  * @param sourceUrl ソースの URL
  * @param actions 操作
+ * @param indexSummary 「索引の状態」の 1 行の件数
  */
 @Composable
 fun SettingsScreen(
@@ -114,6 +131,7 @@ fun SettingsScreen(
     sourceUrl: String,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
+    indexSummary: IndexSummary = IndexSummary(0, 0),
 ) {
     // 向きを変えても、削除を確かめる窓を残す。
     var confirmingClearHistory by rememberSaveable { mutableStateOf(false) }
@@ -218,6 +236,14 @@ fun SettingsScreen(
                         Text(stringResource(R.string.settings_onboarding_again))
                     }
                 }
+
+                Section(R.string.settings_index)
+                LinkRow(
+                    title = stringResource(R.string.index_status_title),
+                    detail = indexSummaryText(indexSummary.apps, indexSummary.issues),
+                    onClick = actions.onOpenIndexStatus,
+                    modifier = Modifier.testTag(SETTINGS_INDEX_STATUS_TAG),
+                )
 
                 Section(R.string.settings_about)
                 InfoRow(stringResource(R.string.settings_version), version)
