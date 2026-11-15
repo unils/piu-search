@@ -197,6 +197,74 @@ class DatabaseSchemaTest {
         }
     }
 
+    // 0.1.0 の行（不明の時刻を 0 で保存・指紋 NULL）と 0.1.1 の行（不明の時刻を Long.MIN_VALUE で保存・指紋あり）の両方を入れる
+    @Test
+    fun version5IsMigratedTo6MarkingRowsWithoutAFingerprintAndKeepingEverythingElse() {
+        helper.createDatabase(FILE, 5).use { db ->
+            db.execSQL(
+                "INSERT INTO app (id, package_name, activity_name, profile_serial, label, package_updated_at, apk_fingerprint) " +
+                    "VALUES (1, 'io.example.old', 'io.example.old.Main', 0, '0.1.0 の行', 0, NULL)",
+            )
+            db.execSQL(
+                "INSERT INTO app (id, package_name, activity_name, profile_serial, label, package_updated_at, apk_fingerprint) " +
+                    "VALUES (2, 'io.example.new', 'io.example.new.Main', 11, '0.1.1 の行', ${Long.MIN_VALUE}, '10:/a/b.apk:5')",
+            )
+            db.execSQL("INSERT INTO search_key VALUES (1, 0, 'きゅう', 'READING', 'STRICT', '')")
+            db.execSQL("INSERT INTO search_key VALUES (2, 0, 'しん', 'READING', 'STRICT', '')")
+            db.execSQL(
+                "INSERT INTO meta (id, index_version, change_sequence, boot_count, locales, build_fingerprint) " +
+                    "VALUES (0, ${SearchIndexVersion.CURRENT}, 5, 3, 'ja-JP', 'build')",
+            )
+            db.execSQL("INSERT INTO installation VALUES (0, 'test-installation')")
+            db.execSQL("INSERT INTO launch_stat VALUES ('io.example.old', 'io.example.old.Main', 0, 3, 2000)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', 'io.example.old', 'io.example.old.Main', 0, 2, 3000, 1, 0)")
+        }
+        // 移行の後の表が、書き出した 6.json（entity）と同じかを Room が確かめる
+        helper.runMigrationsAndValidate(FILE, 6, true, *PiuRoomDatabase.MIGRATIONS).use { db ->
+            db.query("SELECT token FROM installation").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("test-installation", cursor.getString(0))
+            }
+            for ((table, count) in listOf("app" to 2, "search_key" to 2, "launch_stat" to 1, "learned" to 1, "material_issue" to 0)) {
+                db.query("SELECT COUNT(*) FROM $table").use { cursor ->
+                    cursor.moveToFirst()
+                    assertEquals(table, count, cursor.getInt(0))
+                }
+            }
+        }
+        openWithRoom().use { database ->
+            val loaded = database.index.load()
+            val old = loaded.apps.single { it.app.id.packageName == "io.example.old" }
+            val new = loaded.apps.single { it.app.id.packageName == "io.example.new" }
+            // 0.1.0 の「不明の 0」は区別できず時刻 0。0.1.1 の番兵は不明（null）
+            assertEquals(0L, old.packageUpdatedAt)
+            org.junit.Assert.assertNull(new.packageUpdatedAt)
+            // 指紋が NULL の行にだけ作り直しの印。アーカイブは 0
+            assertTrue(old.rebuildPending)
+            org.junit.Assert.assertFalse(new.rebuildPending)
+            assertTrue(loaded.apps.none { it.archived })
+            // このアプリの版は null（今の版と違うとみなす）、索引の版は上げない
+            assertEquals(SyncState(5, 3, "ja-JP", "build", appVersionCode = null), loaded.state)
+            org.junit.Assert.assertNull(loaded.lastSavedAt)
+            assertEquals(
+                3,
+                database.launchStats
+                    .load()
+                    .records.values
+                    .single()
+                    .count,
+            )
+            assertEquals(
+                2,
+                database.learned
+                    .load()
+                    .records.values
+                    .single()
+                    .count,
+            )
+        }
+    }
+
     private fun openWithRoom(): LocalDatabase {
         val room =
             Room

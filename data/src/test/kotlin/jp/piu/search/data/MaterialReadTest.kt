@@ -130,7 +130,8 @@ class MaterialReadTest {
             }
         assertEquals(IssueCategory.TRANSIENT, MaterialCauses.categoryOf(MaterialCauses.causeOf(gone)))
         // 仕事用は APK のファイルから読む。解釈できなければ ARCHIVE_UNREADABLE（決定的）
-        val unreadable = assertThrows(MaterialReadException::class.java) { signers.read(activity(user = UserHandle.getUserHandleForUid(1_000_000))) }
+        val unreadable =
+            assertThrows(MaterialReadException::class.java) { signers.read(activity(user = UserHandle.getUserHandleForUid(1_000_000))) }
         assertEquals(MaterialCauses.ARCHIVE_UNREADABLE, ReadFailure.of(unreadable).cause)
         // 署名のない PackageInfo は NO_SIGNERS（決定的）で、ARCHIVE_UNREADABLE と別の符号
         val none = assertThrows(MaterialReadException::class.java) { signers.read(activity()) }
@@ -148,7 +149,8 @@ class MaterialReadTest {
                 RuntimeException(DeadObjectException()) to IssueCategory.TRANSIENT,
                 IOException() to IssueCategory.TRANSIENT,
                 java.io.FileNotFoundException() to IssueCategory.TRANSIENT,
-                android.content.res.Resources.NotFoundException() to IssueCategory.DETERMINISTIC,
+                android.content.res.Resources
+                    .NotFoundException() to IssueCategory.DETERMINISTIC,
                 CertificateException() to IssueCategory.DETERMINISTIC,
                 SecurityException() to IssueCategory.DETERMINISTIC,
                 IllegalStateException() to IssueCategory.SUSPECTED_BUG,
@@ -173,7 +175,13 @@ class MaterialReadTest {
     fun ownLibraryAndKotlinExceptionsAreNamedByTheirNearestPlatformParent() {
         assertEquals("java.lang.IllegalStateException", MaterialCauses.causeOf(OwnFailure()))
         assertEquals("java.lang.RuntimeException", MaterialCauses.causeOf(UninitializedPropertyAccessException()))
-        assertEquals("java.lang.RuntimeException", MaterialCauses.causeOf(jp.piu.search.core.search.KeyGenerationException(jp.piu.search.core.search.KeyInput.LABEL, 0, RuntimeException())))
+        assertEquals(
+            "java.lang.RuntimeException",
+            MaterialCauses.causeOf(
+                jp.piu.search.core.search
+                    .KeyGenerationException(jp.piu.search.core.search.KeyInput.LABEL, 0, RuntimeException()),
+            ),
+        )
     }
 
     @Test
@@ -202,8 +210,20 @@ class MaterialReadTest {
                     val decision = SyncPlanner.issue(key, stage, ReadFailure.of(throwable), null, null, false, 3, "2026-11-15")
                     (decision as IssueDecision.Put).issue
                 }
-            database.index.replaceAll(listOf(StoredApp(jp.piu.search.core.search.IndexedApp(AppId(key.packageName, "Main", 0), "名前", emptyList()), 1)), SyncState(1, 1, "ja-JP"))
-            database.index.saveIfCurrent(SyncState(1, 1, "ja-JP"), IndexChange(false, emptyList(), putIssues = issues, state = SyncState(1, 1, "ja-JP"), savedAt = 9))
+            database.index.replaceAll(
+                listOf(
+                    StoredApp(
+                        jp.piu.search.core.search
+                            .IndexedApp(AppId(key.packageName, "Main", 0), "名前", emptyList()),
+                        1,
+                    ),
+                ),
+                SyncState(1, 1, "ja-JP"),
+            )
+            database.index.saveIfCurrent(
+                SyncState(1, 1, "ja-JP"),
+                IndexChange(false, emptyList(), putIssues = issues, state = SyncState(1, 1, "ja-JP"), savedAt = 9),
+            )
             val reloaded = database.index.load().issues
             assertEquals(issues.toSet(), reloaded.toSet())
             assertEquals(
@@ -221,18 +241,50 @@ class MaterialReadTest {
     @Test
     fun keysInputSummaryNamesTheInputWithoutItsText() {
         val analyzer = CountingAnalyzer().apply { failOn = "爆" }
-        val generator = jp.piu.search.core.search.SearchKeyGenerator(analyzer, jp.piu.search.core.search.LatinWordReader(jp.piu.search.core.search.BrandTable.parse(emptyList())))
+        val generator =
+            jp.piu.search.core.search.SearchKeyGenerator(
+                analyzer,
+                jp.piu.search.core.search
+                    .LatinWordReader(
+                        jp.piu.search.core.search.BrandTable
+                            .parse(emptyList()),
+                    ),
+            )
         val id = AppId("io.example.app", "Main", 0)
+
         fun summary(entry: jp.piu.search.core.search.AppEntry): String {
             val e = assertThrows(RuntimeException::class.java) { generator.generate(entry) }
             return InputSummary.of(entry, e)
         }
-        assertEquals("label:len6:kanji,kana", summary(jp.piu.search.core.search.AppEntry(id, "爆発テスト乗")))
-        assertEquals("localized:len4:kanji,alnum", summary(jp.piu.search.core.search.AppEntry(id, "名前", localizedLabels = listOf("Ok", "爆Map"))))
-        val signer = summary(jp.piu.search.core.search.AppEntry(id, "名前", signerNames = listOf("O=爆😀")))
+        assertEquals(
+            "label:len6:kanji,kana",
+            summary(
+                jp.piu.search.core.search
+                    .AppEntry(id, "爆発テスト乗"),
+            ),
+        )
+        assertEquals(
+            "localized:len4:kanji,alnum",
+            summary(
+                jp.piu.search.core.search
+                    .AppEntry(id, "名前", localizedLabels = listOf("Ok", "爆Map")),
+            ),
+        )
+        val signer =
+            summary(
+                jp.piu.search.core.search
+                    .AppEntry(id, "名前", signerNames = listOf("O=爆😀")),
+            )
         assertEquals("signer:len4:kanji,alnum,emoji,other", signer)
         assertFalse(signer.contains("爆"))
-        assertEquals("unknown", InputSummary.of(jp.piu.search.core.search.AppEntry(id, "名前"), IllegalStateException()))
+        assertEquals(
+            "unknown",
+            InputSummary.of(
+                jp.piu.search.core.search
+                    .AppEntry(id, "名前"),
+                IllegalStateException(),
+            ),
+        )
     }
 
     @Test

@@ -27,6 +27,14 @@ class ProfileStoreTest {
             seed(db)
             db.profiles.delete(setOf(WORK.profileSerial))
             assertEquals(setOf(0L), db.profiles.serials())
+            // 材料の欠けの行も同じトランザクションで消える
+            assertEquals(
+                listOf(PackageKey(0, PERSONAL.packageName)),
+                db.index
+                    .load()
+                    .issues
+                    .map { it.key },
+            )
             assertEquals(
                 listOf(PERSONAL),
                 db.index
@@ -76,6 +84,14 @@ class ProfileStoreTest {
                 .execSQL("DROP TRIGGER fail_profile_delete")
             db.profiles.delete(setOf(WORK.profileSerial))
             assertEquals(setOf(0L), db.profiles.serials())
+            // 材料の欠けの行も同じトランザクションで消える
+            assertEquals(
+                listOf(PackageKey(0, PERSONAL.packageName)),
+                db.index
+                    .load()
+                    .issues
+                    .map { it.key },
+            )
         }
 
     @Test
@@ -117,6 +133,22 @@ class ProfileStoreTest {
         val memory = LearnedMemory.EMPTY.recorded(LearningDecision(pair(PERSONAL), listOf(pair(WORK))), 1)
         db.learned.save(LearnedMemory.EMPTY, memory)
         listOf(PERSONAL, WORK).forEach { db.launchStats.record(it, 1) }
+        val state = SyncState(0, 1, "ja-JP")
+        val issues =
+            listOf(PERSONAL, WORK).map {
+                MaterialIssue(
+                    PackageKey(it.profileSerial, it.packageName),
+                    MaterialStage.SIGNER,
+                    "java.io.IOException",
+                    null,
+                    null,
+                    1,
+                    false,
+                    "2026-11-15",
+                    "2026-11-15",
+                )
+            }
+        check(db.index.saveIfCurrent(state, IndexChange(false, emptyList(), putIssues = issues, state = state, savedAt = 1)))
     }
 
     private fun withDatabase(test: (LocalDatabase) -> Unit) {

@@ -251,11 +251,15 @@ internal object InputSummary {
     private fun classOf(cp: Int): String =
         when {
             Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN -> "kanji"
+
             Character.UnicodeScript.of(cp) == Character.UnicodeScript.HIRAGANA ||
                 Character.UnicodeScript.of(cp) == Character.UnicodeScript.KATAKANA ||
                 cp == 'ー'.code -> "kana"
+
             Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN || Character.isDigit(cp) -> "alnum"
+
             isEmoji(cp) -> "emoji"
+
             else -> "other"
         }
 

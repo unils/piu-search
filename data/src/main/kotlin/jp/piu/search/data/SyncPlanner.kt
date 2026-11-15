@@ -155,10 +155,17 @@ internal object SyncPlanner {
         val bootChanged = previous?.bootCount != null && device.bootCount != null && previous.bootCount != device.bootCount
         val versionChanged = previous?.appVersionCode != device.appVersionCode
         return when {
-            full -> SyncScope(SyncMode.FULL_REBUILD, 0, bootChanged, versionChanged)
-            device.bootCount != null && previous.bootCount == device.bootCount && sequence != null ->
+            full -> {
+                SyncScope(SyncMode.FULL_REBUILD, 0, bootChanged, versionChanged)
+            }
+
+            device.bootCount != null && previous.bootCount == device.bootCount && sequence != null -> {
                 SyncScope(SyncMode.CHANGES, sequence, false, versionChanged)
-            else -> SyncScope(SyncMode.FULL_REVIEW, 0, bootChanged, versionChanged)
+            }
+
+            else -> {
+                SyncScope(SyncMode.FULL_REVIEW, 0, bootChanged, versionChanged)
+            }
         }
     }
 
@@ -286,7 +293,10 @@ internal object SyncPlanner {
             targets.profiles
                 .filterValues { it.status == ProfileReadStatus.FAILED }
                 .mapValues { it.value.failure ?: Throwable::class.java.name } +
-                candidates.filterValues { it.status == ProfileReadStatus.FAILED }.mapValues { it.value.failure ?: Throwable::class.java.name }
+                candidates
+                    .filterValues {
+                        it.status == ProfileReadStatus.FAILED
+                    }.mapValues { it.value.failure ?: Throwable::class.java.name }
         return SyncPlan(
             mode = scope.mode,
             // 読めなかった組には印が立ち、再開後に作り直される。前の言語・ビルドを残すと、再開までの同期がすべて全件の作り直しになり、
@@ -343,11 +353,13 @@ internal object SyncPlanner {
                 decisions[MaterialStage.LABEL] = IssueDecision.Keep
                 decisions[MaterialStage.SIGNER] = IssueDecision.Keep
             }
+
             // アーカイブ済みは APK がなく、補助の材料がないのは正常な不在
             !read.auxiliaryRead -> {
                 decisions[MaterialStage.LABEL] = IssueDecision.Delete
                 decisions[MaterialStage.SIGNER] = IssueDecision.Delete
             }
+
             else -> {
                 decisions[MaterialStage.LABEL] = decide(MaterialStage.LABEL, read.labelFailure)
                 decisions[MaterialStage.SIGNER] = decide(MaterialStage.SIGNER, read.signerFailure)
@@ -358,7 +370,12 @@ internal object SyncPlanner {
             val signers = if (read.signerFailure == null) read.signers else emptyList()
             val entries =
                 read.listed.map {
-                    AppEntry(it.id, checkNotNull(read.labels[it.id]), localizedLabels = read.localized[it.id].orEmpty(), signerNames = signers)
+                    AppEntry(
+                        it.id,
+                        checkNotNull(read.labels[it.id]),
+                        localizedLabels = read.localized[it.id].orEmpty(),
+                        signerNames = signers,
+                    )
                 }
             PackagePlan(read, null, entries, emptyList(), false, decisions, retryOnly)
         } else {

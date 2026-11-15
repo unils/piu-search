@@ -14,7 +14,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * すべての表を消すので、起動の記録と学習まで消えるため。索引の表だけなら、移行の中で消して作り直してよい。
  */
 @Database(
-    entities = [AppRow::class, SearchKeyRow::class, MetaRow::class, LaunchStatRow::class, LearnedRow::class, InstallationRow::class, MaterialIssueRow::class],
+    entities = [
+        AppRow::class,
+        SearchKeyRow::class,
+        MetaRow::class,
+        LaunchStatRow::class,
+        LearnedRow::class,
+        InstallationRow::class,
+        MaterialIssueRow::class,
+    ],
     version = PiuRoomDatabase.VERSION,
     exportSchema = true,
 )

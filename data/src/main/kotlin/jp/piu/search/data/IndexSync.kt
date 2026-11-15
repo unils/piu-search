@@ -478,7 +478,8 @@ public class IndexSync internal constructor(
         )
     }
 
-    private fun readDeviceState(): DeviceState = DeviceState(device.bootCount(), device.locales(), device.buildFingerprint(), appVersionCode)
+    private fun readDeviceState(): DeviceState =
+        DeviceState(device.bootCount(), device.locales(), device.buildFingerprint(), appVersionCode)
 
     /**
      * Application の部品から Callback を登録する。背景では通知を保持し、前面でのみ同期を頼む。
@@ -534,6 +535,9 @@ public class IndexSync internal constructor(
                 replacing: Boolean,
             ) = packagesChanged(packageNames.toSet(), user)
         }
+
+    /** まだ消費していない知らせの数。テストで消費の条件を確かめる。 */
+    internal fun pendingNotificationCount(): Int = synchronized(requestLock) { pendingPackages.size }
 
     /** 頼んだ同期がすべて終わるまで待つ。テストで、データベースを閉じる前に使う。 */
     internal fun awaitIdle() {
@@ -764,7 +768,10 @@ public class IndexSync internal constructor(
         val old = before.apps.groupBy { it.key }
         val new = next.groupBy { it.key }
         val changed = (old.keys + new.keys).filterTo(HashSet()) { old[it] != new[it] }
-        val genreOnly = changed.filterTo(HashSet()) { old[it] != null && new[it] != null && withoutGenres(old[it]) == withoutGenres(new[it]) }
+        val genreOnly =
+            changed.filterTo(
+                HashSet(),
+            ) { old[it] != null && new[it] != null && withoutGenres(old[it]) == withoutGenres(new[it]) }
         val pendingOnly =
             changed.filterTo(HashSet()) { key ->
                 val o = old[key]
@@ -859,7 +866,12 @@ public class IndexSync internal constructor(
     private companion object {
         const val TAG = "PiuIndexSync"
 
-        fun utcDay(millis: Long): String = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()
+        fun utcDay(millis: Long): String =
+            Instant
+                .ofEpochMilli(millis)
+                .atZone(ZoneOffset.UTC)
+                .toLocalDate()
+                .toString()
     }
 }
 

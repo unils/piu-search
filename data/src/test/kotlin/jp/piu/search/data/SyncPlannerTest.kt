@@ -60,7 +60,22 @@ class SyncPlannerTest {
         val now = listOf(stamp(MAPS), stamp(MAIL, time = 2_000), stamp(CLOCK, time = null), stamp(NOTES, time = 0))
         assertEquals(setOf(key(MAIL)), targets(REVIEW, stored, now).reads.keys)
         // 変更の番号が使えない端末（毎回が見直し）でも、両方とも鍵のない組は読まない
-        assertEquals(setOf(key(MAIL)), targets(REVIEW, stored, now.map { if (it.id.packageName == CLOCK) it.copy(apkFingerprint = null) else it }).reads.keys)
+        assertEquals(
+            setOf(key(MAIL)),
+            targets(
+                REVIEW,
+                stored,
+                now.map {
+                    if (it.id.packageName ==
+                        CLOCK
+                    ) {
+                        it.copy(apkFingerprint = null)
+                    } else {
+                        it
+                    }
+                },
+            ).reads.keys,
+        )
     }
 
     @Test
@@ -77,7 +92,10 @@ class SyncPlannerTest {
         assertEquals(emptySet<PackageKey>(), targets(REVIEW, stored, now).reads.keys)
         assertEquals(setOf(key(MAPS, WORK)), targets(REVIEW.copy(bootChanged = true), stored, now).reads.keys)
         // 鍵のある組は、再起動だけでは読まない
-        assertEquals(emptySet<PackageKey>(), targets(REVIEW.copy(bootChanged = true), listOf(stored(MAPS, WORK)), listOf(stamp(MAPS, WORK))).reads.keys)
+        assertEquals(
+            emptySet<PackageKey>(),
+            targets(REVIEW.copy(bootChanged = true), listOf(stored(MAPS, WORK)), listOf(stamp(MAPS, WORK))).reads.keys,
+        )
     }
 
     @Test
@@ -114,7 +132,8 @@ class SyncPlannerTest {
     fun retryOnceOfTheWorkPackageDoesNotReadThePersonalPackageOfTheSameName() {
         val stored = listOf(stored(MAPS), stored(MAPS, WORK))
         val now = listOf(stamp(MAPS), stamp(MAPS, WORK))
-        val targets = targets(CHANGES, stored, now, issues = listOf(issue(MAPS, IOException::class.java.name, retryOnce = true, profile = WORK)))
+        val targets =
+            targets(CHANGES, stored, now, issues = listOf(issue(MAPS, IOException::class.java.name, retryOnce = true, profile = WORK)))
         assertEquals(setOf(key(MAPS, WORK)), targets.readTargets.keys)
     }
 
@@ -140,14 +159,36 @@ class SyncPlannerTest {
     fun transientFailureSetsRetryOnceOnlyWhenReadForAnotherReason() {
         val now = listOf(stamp(MAPS))
         val failure = RuntimeException(DeadObjectException())
-        val normal = plan(CHANGES, targets(CHANGES, listOf(stored(MAPS)), now, forced = setOf(key(MAPS))), listOf(stored(MAPS)), emptyList(), read(now, labelFailure = failure))
-        val first = (normal.packages.single().issues.getValue(MaterialStage.LABEL) as IssueDecision.Put).issue
+        val normal =
+            plan(
+                CHANGES,
+                targets(CHANGES, listOf(stored(MAPS)), now, forced = setOf(key(MAPS))),
+                listOf(stored(MAPS)),
+                emptyList(),
+                read(now, labelFailure = failure),
+            )
+        val first =
+            (
+                normal.packages
+                    .single()
+                    .issues
+                    .getValue(MaterialStage.LABEL) as IssueDecision.Put
+            ).issue
         assertEquals("android.os.DeadObjectException", first.cause)
         assertEquals(IssueCategory.TRANSIENT, first.category)
         assertTrue(first.retryOnce)
         val retried = targets(CHANGES, listOf(stored(MAPS)), now, issues = listOf(first))
         assertEquals(mapOf(key(MAPS) to true), retried.reads)
-        val second = (plan(CHANGES, retried, listOf(stored(MAPS)), listOf(first), read(now, labelFailure = failure)).packages.single().issues.getValue(MaterialStage.LABEL) as IssueDecision.Put).issue
+        val second =
+            (
+                plan(
+                    CHANGES,
+                    retried,
+                    listOf(stored(MAPS)),
+                    listOf(first),
+                    read(now, labelFailure = failure),
+                ).packages.single().issues.getValue(MaterialStage.LABEL) as IssueDecision.Put
+            ).issue
         assertFalse(second.retryOnce)
         // 続けて欠けている間は初めの日を保つ
         assertEquals(first.firstFailedOn, second.firstFailedOn)
@@ -187,7 +228,14 @@ class SyncPlannerTest {
         val old = listOf(stored(MAPS), stored(MAPS, activity = "Gone"))
         val now = listOf(stamp(MAPS), stamp(MAPS, activity = "New"))
         val targets = targets(CHANGES, old, now)
-        val pkg = plan(CHANGES, targets, old, emptyList(), read(now, entryFailure = PackageManager.NameNotFoundException())).packages.single()
+        val pkg =
+            plan(
+                CHANGES,
+                targets,
+                old,
+                emptyList(),
+                read(now, entryFailure = PackageManager.NameNotFoundException()),
+            ).packages.single()
         assertEquals(listOf(id(MAPS)), pkg.kept.map { it.app.id })
         assertEquals(listOf(id(MAPS, activity = "New")), pkg.build.map { it.id })
         assertTrue(pkg.substitute)
@@ -201,7 +249,14 @@ class SyncPlannerTest {
     fun vanishedEntryAndListingLabelFailureAreEntryFailures() {
         val now = listOf(stamp(MAPS), stamp(MAPS, activity = "Second"))
         val vanished = read(now, vanish = setOf(id(MAPS, activity = "Second")))
-        assertEquals(MaterialCauses.VANISHED, plan(REVIEW, targets(REVIEW, emptyList(), now), emptyList(), emptyList(), vanished).packages.single().entryFailure?.cause)
+        assertEquals(
+            MaterialCauses.VANISHED,
+            plan(REVIEW, targets(REVIEW, emptyList(), now), emptyList(), emptyList(), vanished)
+                .packages
+                .single()
+                .entryFailure
+                ?.cause,
+        )
         val label = read(now, labelOf = { if (it.activityName.endsWith("Second")) throw Resources.NotFoundException() else it.packageName })
         val pkg = plan(REVIEW, targets(REVIEW, emptyList(), now), emptyList(), emptyList(), label).packages.single()
         assertEquals(Resources.NotFoundException::class.java.name, pkg.entryFailure?.cause)
@@ -212,10 +267,21 @@ class SyncPlannerTest {
     @Test
     fun archivedPackageDoesNotReadAuxiliaryMaterialAndDeletesTheirRows() {
         val now = listOf(stamp(MAPS, archived = true, fingerprint = null, time = null))
-        val issues = listOf(issue(MAPS, CertificateException::class.java.name, stage = MaterialStage.SIGNER), issue(MAPS, Resources.NotFoundException::class.java.name, stage = MaterialStage.LABEL))
+        val issues =
+            listOf(
+                issue(MAPS, CertificateException::class.java.name, stage = MaterialStage.SIGNER),
+                issue(MAPS, Resources.NotFoundException::class.java.name, stage = MaterialStage.LABEL),
+            )
         val read = read(now, signerFailure = CertificateException())
         assertFalse(read.auxiliaryRead)
-        val pkg = plan(CHANGES, targets(CHANGES, listOf(stored(MAPS)), now, issues = issues), listOf(stored(MAPS)), issues, read).packages.single()
+        val pkg =
+            plan(
+                CHANGES,
+                targets(CHANGES, listOf(stored(MAPS)), now, issues = issues),
+                listOf(stored(MAPS)),
+                issues,
+                read,
+            ).packages.single()
         assertEquals(IssueDecision.Delete, pkg.issues[MaterialStage.LABEL])
         assertEquals(IssueDecision.Delete, pkg.issues[MaterialStage.SIGNER])
         assertEquals(IssueDecision.Delete, pkg.issues[MaterialStage.ENTRY])
@@ -227,8 +293,23 @@ class SyncPlannerTest {
         val stored = listOf(stored(MAPS), stored(MAPS, WORK), stored(MAIL, WORK))
         val profiles = mapOf(PERSONAL to complete(stamp(MAPS)), WORK to ProfileRead<ActivityStamp>(ProfileReadStatus.UNAVAILABLE))
         val issues = listOf(issue(MAIL, IOException::class.java.name, profile = WORK))
+
         fun pending(scope: SyncScope) =
-            SyncPlanner.plan(scope, NOW, SyncPlanner.targets(scope, stored, issues, { true }, profiles, emptySet(), emptySet()), stored, issues, { true }, 7, emptyMap(), emptyMap(), TODAY).pending
+            SyncPlanner
+                .plan(
+                    scope,
+                    NOW,
+                    SyncPlanner.targets(scope, stored, issues, {
+                        true
+                    }, profiles, emptySet(), emptySet()),
+                    stored,
+                    issues,
+                    { true },
+                    7,
+                    emptyMap(),
+                    emptyMap(),
+                    TODAY,
+                ).pending
         assertEquals(emptySet<PackageKey>(), pending(CHANGES))
         assertEquals(setOf(key(MAIL, WORK)), pending(CHANGES.copy(versionChanged = true)))
         assertEquals(setOf(key(MAPS, WORK), key(MAIL, WORK)), pending(FULL))
@@ -237,7 +318,11 @@ class SyncPlannerTest {
     @Test
     fun packageMissingFromACompleteListIsRemovedWithoutReadingAndFailedProfilesAreKept() {
         val stored = listOf(stored(MAPS), stored(MAIL), stored(MAPS, WORK))
-        val profiles = mapOf(PERSONAL to complete(stamp(MAPS)), WORK to ProfileRead<ActivityStamp>(ProfileReadStatus.FAILED, failure = "android.os.DeadObjectException"))
+        val profiles =
+            mapOf(
+                PERSONAL to complete(stamp(MAPS)),
+                WORK to ProfileRead<ActivityStamp>(ProfileReadStatus.FAILED, failure = "android.os.DeadObjectException"),
+            )
         val targets = SyncPlanner.targets(CHANGES, stored, emptyList(), { true }, profiles, emptySet(), emptySet())
         assertEquals(setOf(key(MAIL)), targets.removed)
         assertEquals(emptySet<PackageKey>(), targets.reads.keys)
@@ -252,7 +337,19 @@ class SyncPlannerTest {
     fun detailsThatBecameUnavailableAreNotApplied() {
         val now = listOf(stamp(MAPS))
         val targets = targets(CHANGES, emptyList(), now)
-        val plan = SyncPlanner.plan(CHANGES, NOW, targets, emptyList(), emptyList(), { true }, 7, emptyMap(), mapOf(PERSONAL to ProfileRead(ProfileReadStatus.UNAVAILABLE)), TODAY)
+        val plan =
+            SyncPlanner.plan(
+                CHANGES,
+                NOW,
+                targets,
+                emptyList(),
+                emptyList(),
+                { true },
+                7,
+                emptyMap(),
+                mapOf(PERSONAL to ProfileRead(ProfileReadStatus.UNAVAILABLE)),
+                TODAY,
+            )
         assertEquals(emptyList<PackagePlan>(), plan.packages)
         assertEquals(emptySet<Long>(), plan.completed)
         assertEquals(ProfileReadStatus.UNAVAILABLE, plan.profileResults[PERSONAL])
@@ -329,7 +426,15 @@ class SyncPlannerTest {
             observeKeys = { (if (phase++ == 0) before else after) ?: keys },
             details = {
                 entryFailure?.let { throw it }
-                listed.filter { it.id !in vanish }.map { LaunchableActivity(it.id, it.id.packageName, Process.myUserHandle(), ApplicationInfo(), 0) }
+                listed.filter { it.id !in vanish }.map {
+                    LaunchableActivity(
+                        it.id,
+                        it.id.packageName,
+                        Process.myUserHandle(),
+                        ApplicationInfo(),
+                        0,
+                    )
+                }
             },
             readLabels = { LabelRead(emptyList(), labelFailure) },
             readSigners = {
@@ -371,7 +476,13 @@ class SyncPlannerTest {
             fingerprint: String? = "apk:1",
             activity: String = "Main",
             archived: Boolean = false,
-        ) = ActivityStamp(id(packageName, profile, activity), time, fingerprint, isCurrentProfile = profile == PERSONAL, isArchived = archived)
+        ) = ActivityStamp(
+            id(packageName, profile, activity),
+            time,
+            fingerprint,
+            isCurrentProfile = profile == PERSONAL,
+            isArchived = archived,
+        )
 
         fun stored(
             packageName: String,

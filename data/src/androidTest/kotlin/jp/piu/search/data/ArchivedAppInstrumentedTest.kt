@@ -11,6 +11,10 @@ import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import jp.piu.search.core.reading.NoReadingAnalyzer
+import jp.piu.search.core.search.BrandTable
+import jp.piu.search.core.search.LatinWordReader
+import jp.piu.search.core.search.SearchKeyGenerator
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -60,6 +64,34 @@ class ArchivedAppInstrumentedTest {
         val info = entry()
         Log.i(TAG, "アーカイブ済み: isArchived=${info.applicationInfo.isArchived} sourceDir=${info.applicationInfo.sourceDir}")
         assertTrue(info.applicationInfo.isArchived)
+        // 読み手（AppSource）を通しても、一覧の段でアーカイブ済みと分かる。APK がないので指紋はない（失敗ではない）
+        val stamp =
+            AppSource(context)
+                .stampProfiles(withUpdateTime = true)
+                .values
+                .flatMap { it.items }
+                .single { it.id.packageName == GAME }
+        assertTrue(stamp.isArchived)
+        assertEquals(null, stamp.apkFingerprint)
+        // 補助の材料を読まないので、欠けにならない
+        val database = LocalDatabase.open(context, null)
+        try {
+            val sync =
+                IndexSync(
+                    database.index,
+                    AndroidDeviceApps(context),
+                    { SearchKeyGenerator(NoReadingAnalyzer, LatinWordReader(BrandTable.parse(emptyList()))) },
+                    NoReadingAnalyzer,
+                    null,
+                )
+            val report = sync.sync()
+            Log.i(TAG, "アーカイブ済みを含む同期: $report")
+            assertTrue(report.archivedPackages >= 1)
+            assertTrue(sync.materialIssues.none { it.key.packageName == GAME })
+            assertTrue(sync.index.labelOf(stamp.id) != null)
+        } finally {
+            database.close()
+        }
     }
 
     private fun entry() =

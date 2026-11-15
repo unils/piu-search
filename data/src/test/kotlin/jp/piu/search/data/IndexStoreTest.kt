@@ -72,13 +72,24 @@ class IndexStoreTest {
         }
     }
 
-    @Test
     // 0.1.x は指紋を消して作り直しを表した。0.2.0 は指紋（鍵）を保ち、作り直しの印を立てる。欠けの行は消さない
+    @Test
     fun indexVersionChangeKeepsOldKeysAndMarksEveryEntryUntilRebuilt() {
         val database = open(indexVersion = 4)
         val original = stored(APPS[0]).copy(apkFingerprint = "unchanged-apk")
         database.index.replaceAll(listOf(original), STATE)
-        val issue = MaterialIssue(PackageKey(PERSONAL, TRANSIT), MaterialStage.SIGNER, "java.security.cert.CertificateException", null, null, 1, false, "2026-11-15", "2026-11-15")
+        val issue =
+            MaterialIssue(
+                PackageKey(PERSONAL, TRANSIT),
+                MaterialStage.SIGNER,
+                "java.security.cert.CertificateException",
+                null,
+                null,
+                1,
+                false,
+                "2026-11-15",
+                "2026-11-15",
+            )
         database.index.saveIfCurrent(STATE, IndexChange(false, emptyList(), putIssues = listOf(issue), state = STATE, savedAt = 5))
 
         val newer = reopen(database, indexVersion = 5)
@@ -236,7 +247,14 @@ class IndexStoreTest {
         val database = open()
         database.index.replaceAll(listOf(stored(APPS[0], updatedAt = null)), STATE)
         assertEquals(Long.MIN_VALUE, database.longValue("SELECT package_updated_at FROM app"))
-        assertNull(reopen(database).index.load().apps.single().packageUpdatedAt)
+        assertNull(
+            reopen(database)
+                .index
+                .load()
+                .apps
+                .single()
+                .packageUpdatedAt,
+        )
     }
 
     // 次の索引にない組の欠けの行は保存のときに消え、last_saved_at は保存と同じトランザクションで書く
@@ -246,19 +264,40 @@ class IndexStoreTest {
         database.index.replaceAll(APPS.take(2).map(::stored), STATE)
         val issues =
             APPS.take(2).map {
-                MaterialIssue(PackageKey(PERSONAL, it.id.packageName), MaterialStage.LABEL, "java.io.IOException", null, null, 1, true, "2026-11-14", "2026-11-15")
+                MaterialIssue(
+                    PackageKey(PERSONAL, it.id.packageName),
+                    MaterialStage.LABEL,
+                    "java.io.IOException",
+                    null,
+                    null,
+                    1,
+                    true,
+                    "2026-11-14",
+                    "2026-11-15",
+                )
             }
         assertTrue(database.index.saveIfCurrent(STATE, IndexChange(false, emptyList(), putIssues = issues, state = STATE, savedAt = 7)))
-        assertEquals(issues.toSet(), database.index.load().issues.toSet())
+        assertEquals(
+            issues.toSet(),
+            database.index
+                .load()
+                .issues
+                .toSet(),
+        )
         assertTrue(
-            database.index.saveIfCurrent(STATE, IndexChange(false, emptyList(), removed = listOf(PackageKey(PERSONAL, TRANSIT)), state = STATE, savedAt = 8)),
+            database.index.saveIfCurrent(
+                STATE,
+                IndexChange(false, emptyList(), removed = listOf(PackageKey(PERSONAL, TRANSIT)), state = STATE, savedAt = 8),
+            ),
         )
         val reopened = reopen(database)
         val loaded = reopened.index.load()
         assertEquals(issues.drop(1), loaded.issues)
         assertEquals(8L, loaded.lastSavedAt)
         // 状態が違えば書かない（このアプリの版も照合に入る）
-        assertFalse(reopened.index.saveIfCurrent(STATE.copy(appVersionCode = 9), IndexChange(false, emptyList(), state = STATE, savedAt = 9)))
+        assertFalse(
+            reopened.index.saveIfCurrent(STATE.copy(appVersionCode = 9), IndexChange(false, emptyList(), state = STATE, savedAt = 9)),
+        )
     }
 
     private fun LocalDatabase.longValue(sql: String): Long =

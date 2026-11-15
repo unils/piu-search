@@ -570,7 +570,14 @@ class IndexSyncTest {
         device.failures.clear()
         device.touch(TRANSIT.entry.id.packageName)
         assertEquals(SyncOutcome.OK, sync.sync().outcome)
-        assertEquals(emptyList<MaterialIssue>(), opened.last().index.load().issues)
+        assertEquals(
+            emptyList<MaterialIssue>(),
+            opened
+                .last()
+                .index
+                .load()
+                .issues,
+        )
     }
 
     @Test
@@ -676,8 +683,8 @@ class IndexSyncTest {
         assertEquals(listOf(MAPS.entry.id), browserApps)
     }
 
-    @Test
     // 0.1.x は失敗した組の知らせを残して毎回読み直した。読んだ知らせは成否によらず消費し、読み直しは欠けの行に任せる
+    @Test
     fun notificationIsConsumedEvenWhenThePackageFailsDeterministically() {
         device.install(TRANSIT, MAPS)
         val sync = newSync()

@@ -116,7 +116,6 @@ class IndexSyncInstrumentedTest {
         val stale =
             stored.apps
                 .filter { it.app.id.packageName == TRANSIT && it.app.id.profileSerial == mySerial }
-                // 指紋を落とすと不完全な材料として即座に再試行され、再起動による時刻の見直しを試せなくなる
                 .map { it.copy(app = it.app.copy(label = "古い名前"), packageUpdatedAt = 0) }
         assertEquals(1, stale.size)
         assertNotNull(stale.single().apkFingerprint)
@@ -165,39 +164,34 @@ class IndexSyncInstrumentedTest {
         assertConverged(review)
     }
 
+    // 0.1.0 型の不具合（system image のアプリで毎回失敗する）を見逃さない。決定的な欠けは記録に残し、image ごとの件数と比べる
     private fun assertConverged(report: SyncReport) {
-        if (report.rebuiltApps == 0 && report.failedPackages == 0 && report.failedProfiles == 0) return
+        Log.i(TAG, "決定的な欠け: ${report.issueCounts.deterministic} 件 ${opened.last().index.load().issues.map { "${it.stage}:${it.cause}" }}")
+        if (report.readPackages == 0 && report.failedProfiles.isEmpty() && report.issueCounts.retryPending == 0 &&
+            report.issueCounts.suspectedBug == 0
+        ) {
+            return
+        }
         throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
     }
 
     // 読み直しの原因になりうるパッケージを並べる。どの入口が収束しないかを、出力だけで追えるようにする
     private fun unsettledPackages(): String {
-        val stored =
-            opened
-                .last()
-                .index
-                .load()
-                .apps
-        val device = AndroidDeviceApps(context)
-        val failed =
-            device.readProfiles(null).flatMap { (serial, read) ->
-                read.failedPackages.map { "$serial/$it" } +
-                    if (read.status != ProfileReadStatus.COMPLETE) listOf("$serial: ${read.status}") else emptyList()
-            }
-        val withoutFingerprint = stored.filter { it.apkFingerprint == null }.map { "${it.app.id}" }
-        val byId = stored.associateBy { it.app.id }
+        val loaded = opened.last().index.load()
+        val byId = loaded.apps.associateBy { it.app.id }
         val drifted =
-            device.stampProfiles(withUpdateTime = true).values.flatMap { it.items }.mapNotNull { stamp ->
+            AndroidDeviceApps(context).stampProfiles(withUpdateTime = true).values.flatMap { it.items }.mapNotNull { stamp ->
                 val old = byId[stamp.id] ?: return@mapNotNull "${stamp.id}: 索引にない"
                 if (old.packageUpdatedAt == stamp.packageUpdatedAt &&
-                    (stamp.isCurrentProfile || old.apkFingerprint == stamp.apkFingerprint)
+                    (stamp.isCurrentProfile || old.apkFingerprint == stamp.apkFingerprint) && old.archived == stamp.isArchived
                 ) {
                     null
                 } else {
                     "${stamp.id}: 時刻 ${old.packageUpdatedAt} → ${stamp.packageUpdatedAt}、指紋 ${old.apkFingerprint} → ${stamp.apkFingerprint}"
                 }
             }
-        return "読めなかった: $failed\n指紋のない索引: $withoutFingerprint\n時刻か指紋が変わった: $drifted"
+        val pending = loaded.apps.filter { it.rebuildPending }.map { "${it.app.id}" }
+        return "欠けの行: ${loaded.issues}\n作り直しの印: $pending\n時刻か指紋が変わった: $drifted"
     }
 
     @Test

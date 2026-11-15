@@ -71,7 +71,9 @@ public class SearchKeyGenerator(
             val packageWords = packageWords(app.id.packageName)
             packageWords.forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) }
             // 読みは語の後に置く（同じ文字列なら語の方を残すため）。会社の名前を、かなや漢字（楽天 → らくてん）で引けるように
-            packageWords.forEach { word -> latinReader.readings(word.value).forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) } }
+            packageWords.forEach { word ->
+                latinReader.readings(word.value).forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) }
+            }
         }
         publisherKeys(app.signerNames).forEach(keys::add)
         app.genres.forEach { keys.add(SearchKey(NormalizedText(it.value), SearchKeyKind.GENRE)) }

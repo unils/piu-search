@@ -147,13 +147,20 @@ internal class FakeDevice : DeviceApps {
         listed = apps.toMap()
         return profiles.associateWith { serial ->
             when {
-                serial in failedProfiles -> ProfileRead(ProfileReadStatus.FAILED, failure = "android.os.DeadObjectException")
-                serial !in before || serial !in after -> ProfileRead(ProfileReadStatus.UNAVAILABLE)
-                else ->
+                serial in failedProfiles -> {
+                    ProfileRead(ProfileReadStatus.FAILED, failure = "android.os.DeadObjectException")
+                }
+
+                serial !in before || serial !in after -> {
+                    ProfileRead(ProfileReadStatus.UNAVAILABLE)
+                }
+
+                else -> {
                     ProfileRead(
                         ProfileReadStatus.COMPLETE,
                         apps.values.filter { it.entry.id.profileSerial == serial }.map { it.stamp(withUpdateTime) },
                     )
+                }
             }
         }
     }
@@ -181,18 +188,30 @@ internal class FakeDevice : DeviceApps {
                     readPackage(
                         key = key,
                         listed = stamps,
-                        listedKeys = if (timeTaken) ApkKeys(stamps.first().packageUpdatedAt, stamps.first().apkFingerprint) else currentKeys(key),
+                        listedKeys =
+                            if (timeTaken) {
+                                ApkKeys(
+                                    stamps.first().packageUpdatedAt,
+                                    stamps.first().apkFingerprint,
+                                )
+                            } else {
+                                currentKeys(key)
+                            },
                         labelOf = { id -> listingLabelFailures[id]?.let { throw it } ?: checkNotNull(listed[id]).entry.label },
-                        observeKeys = run {
-                            var phase = 0
-                            { observe(phase++) }
-                        },
+                        observeKeys =
+                            run {
+                                var phase = 0
+                                { observe(phase++) }
+                            },
                         details = {
                             failures[key to MaterialStage.ENTRY]?.let { throw it }
                             apps.values.filter { it.key == key && it.entry.id !in vanished }.map { it.activity() }
                         },
                         readLabels = { activity ->
-                            LabelRead(apps[activity.id]?.entry?.localizedLabels.orEmpty(), failures[key to MaterialStage.LABEL] as? Exception)
+                            LabelRead(
+                                apps[activity.id]?.entry?.localizedLabels.orEmpty(),
+                                failures[key to MaterialStage.LABEL] as? Exception,
+                            )
                         },
                         readSigners = { activity ->
                             failures[key to MaterialStage.SIGNER]?.let { throw it }
