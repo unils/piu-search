@@ -175,7 +175,7 @@ T7 の作業では計器テスト・エミュレータ・adb を実行してい�
   - 表示名が `values-ja/` にだけある（既定の `values/` にない）: 英語の名前が決定的な欠け（`LABEL`）。日本語の名前と表示名では引ける
   - 表示名をマニフェストに直に書いた: 欠けなし（正常な不在）
   - split を持つ: 欠けなし。split を替えると仕事用で指紋が変わる
-- API 35 以降の計器テストで、test-apps のアプリを `pm archive` でアーカイブし、欠けにならないこと、一覧の `LauncherActivityInfo.getApplicationInfo().isArchived` が真になることを確かめる（`pm archive` がエミュレータで使えるかは未確認。使えなければ `FakeDevice` のテストだけにし、一覧の値は実機で確かめる）
+- API 35 以降の計器テストで、test-apps のアプリを `pm archive` でアーカイブし、欠けにならないこと、一覧の `LauncherActivityInfo.getApplicationInfo().isArchived` が真になることを確かめる（`ArchivedAppInstrumentedTest`。API 37 のエミュレータで、インストーラを shell にすれば `pm archive` が使え、`pm install` で戻せることを 2026-11-15 に確かめた）
 - 一時的な欠けのテストは、偽の部品が投げるものを型まで決めて書く（`IOException`、`DeadObjectException` を原因に持つ `RuntimeException`）。「一時的に読めない」とだけ書くと、`ARCHIVE_UNREADABLE`・`NO_SIGNERS`（決定的で、次の通常の条件まで読み直さない）の場合と区別されない
 - `MaterialReadTest`: 指紋に大きさが入り、時刻が同じでも大きさが違えば違う指紋になること。ファイルが読めないときは鍵なし（失敗ではない）になること
 
