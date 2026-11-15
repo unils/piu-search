@@ -18,10 +18,12 @@ import java.util.concurrent.Executors
  * 部品の組み立て（architecture.md の「モジュール」）。アプリの中で 1 つだけ作り、[PiuApplication] が持つ。
  *
  * 依存の注入のライブラリは使わず、ここで手で組む。プロセスが生きている間は索引をメモリに残し、次に画面を開いたときに読み直さない。
+ * [appVersionCode] は今の Piu Search の `versionCode`。テストで版の変更を起こすために差し替えられる。
  * 作るのは画面のスレッドなので、ファイルや資源を読む部品（データベース・ブランド表・辞書）は、使うときに裏のスレッドで開く。
  */
 class AppContainer(
     context: Context,
+    private val appVersionCode: Int = BuildConfig.VERSION_CODE,
 ) {
     private val appContext = context.applicationContext
 
@@ -31,8 +33,8 @@ class AppContainer(
     /** データベース。Room はファイルを最初の読み書きで開くので、作るだけなら軽い。 */
     val database: LocalDatabase by lazy { LocalDatabase.open(appContext) }
 
-    /** 索引の同期。 */
-    val indexSync: IndexSync by lazy { IndexSync(appContext, database, analyzer, writer, profiles) }
+    /** 索引の同期。このアプリの版が変われば、欠けの行のある組を読み直す（architecture.md の「読み直しの規則」）。 */
+    val indexSync: IndexSync by lazy { IndexSync(appContext, database, analyzer, writer, profiles, appVersionCode) }
 
     /** 漢字の検索語に読みを付けるスレッド。索引の作り直しを待たずに読みを付けられるよう、同期とは分ける。 */
     val queryExecutor: ExecutorService = backgroundThread("piu-query-reading")

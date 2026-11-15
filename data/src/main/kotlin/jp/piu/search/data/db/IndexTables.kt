@@ -36,6 +36,9 @@ internal data class AppRow(
     // 読めなかった時刻は IndexStore が Long.MIN_VALUE で表す（0 は有効な時刻）
     @ColumnInfo(name = "package_updated_at") val packageUpdatedAt: Long,
     @ColumnInfo(name = "apk_fingerprint") val apkFingerprint: String? = null,
+    // 既定値は移行（Migration5To6）の SQL とそろえる。Room のスキーマの検査が、移行の後の表と entity を比べるため
+    @ColumnInfo(name = "archived", defaultValue = "0") val archived: Boolean = false,
+    @ColumnInfo(name = "rebuild_pending", defaultValue = "0") val rebuildPending: Boolean = false,
 )
 
 /**
@@ -81,8 +84,33 @@ internal data class MetaRow(
     @ColumnInfo(name = "boot_count") val bootCount: Int?,
     @ColumnInfo(name = "locales") val locales: String,
     @ColumnInfo(name = "build_fingerprint", defaultValue = "''") val buildFingerprint: String = "",
+    @ColumnInfo(name = "app_version_code") val appVersionCode: Int? = null,
+    // 表示と報告のためだけ。判断と保存前の照合には使わない
+    @ColumnInfo(name = "last_saved_at") val lastSavedAt: Long? = null,
 ) {
     companion object {
         const val SINGLE_ID = 0
     }
 }
+
+/**
+ * `material_issue` の行。組と段 1 つの材料の欠け（architecture.md の「同期のための列」）。行がない段は読めた。
+ *
+ * 段と理由は R8 で変わらない固定の文字列で持つ（enum の名前に頼らない）。区分は保存しない。
+ */
+@Entity(
+    tableName = "material_issue",
+    primaryKeys = ["profile_serial", "package_name", "stage"],
+)
+internal data class MaterialIssueRow(
+    @ColumnInfo(name = "profile_serial") val profileSerial: Long,
+    @ColumnInfo(name = "package_name") val packageName: String,
+    val stage: String,
+    val cause: String,
+    val frames: String?,
+    @ColumnInfo(name = "input_summary") val inputSummary: String?,
+    @ColumnInfo(name = "version_code") val versionCode: Int,
+    @ColumnInfo(name = "retry_once") val retryOnce: Boolean,
+    @ColumnInfo(name = "first_failed_on") val firstFailedOn: String,
+    @ColumnInfo(name = "last_failed_on") val lastFailedOn: String,
+)

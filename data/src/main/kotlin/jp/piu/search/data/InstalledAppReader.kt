@@ -4,26 +4,133 @@ package jp.piu.search.data
 
 import android.content.Context
 import jp.piu.search.core.search.AppEntry
+import jp.piu.search.core.search.AppId
 
 /**
- * 端末のアプリの入口 1 つの、索引の材料とパッケージの最後の更新の時刻。
+ * 組 1 つの詳細の読み取り結果（architecture.md の「材料の欠け」）。段ごとの結果と失敗、鍵の 3 つの観測を別々に持つ。
+ * 成否の判断（`CHANGED_DURING_READ` を含む）と欠けの行の決定は [SyncPlanner] が行う。
  *
- * @property entry 索引の材料
- * @property packageUpdatedAt パッケージの最後の更新の時刻（[AppSource.packageUpdatedAt]）。読めなければ null
- * @property apkFingerprint base と split の属性。不完全な読み取りでは保存しない
- * @property complete 別言語名と署名を含めて材料が揃ったか
+ * @property key プロファイルとパッケージの組
+ * @property listed 一覧の入口（一覧の観測）
+ * @property listedKeys 保存し、前後と比べる鍵。一覧で時刻を引いたなら一覧の値、引かなかったなら詳細を読む前に一覧の情報から観測した値
+ * @property before 詳細を読む前の鍵
+ * @property after 詳細を読んだ後の鍵
+ * @property labels 一覧の表示名。取得が例外になった入口は null
+ * @property entryFailure `ENTRY` の段の最初の失敗（詳細の問い合わせ・表示名の取得の例外、`VANISHED`）。前後の鍵の比較は含まない
+ * @property detailIds 詳細にあった入口。詳細の問い合わせが例外なら null
+ * @property localized 入口ごとの別の言語の名前
+ * @property labelFailure `LABEL` の段の最初の失敗
+ * @property signers 署名の DN
+ * @property signerFailure `SIGNER` の段の失敗
+ * @property auxiliaryRead `LABEL`・`SIGNER` を読んだか。アーカイブ済みの組と、詳細を読めなかった組では読まない
  */
-public data class InstalledApp(
-    val entry: AppEntry,
-    val packageUpdatedAt: Long?,
-    val apkFingerprint: String? = null,
-    val complete: Boolean = true,
-)
+internal class PackageRead(
+    val key: PackageKey,
+    val listed: List<ActivityStamp>,
+    val listedKeys: ApkKeys,
+    val before: ApkKeys,
+    val after: ApkKeys,
+    val labels: Map<AppId, String?>,
+    val entryFailure: ReadFailure?,
+    val detailIds: Set<AppId>?,
+    val localized: Map<AppId, List<String>>,
+    val labelFailure: ReadFailure?,
+    val signers: List<String>,
+    val signerFailure: ReadFailure?,
+    val auxiliaryRead: Boolean,
+) {
+    /** 一覧でアーカイブ済みだったか。 */
+    val archived: Boolean get() = listed.any { it.isArchived }
+}
 
 /**
- * 端末のアプリから、索引の材料（[AppEntry]）を作る。
+ * 組 1 つを段ごとに読む。各段の catch は段の境界で、元の例外を [ReadFailure] に包んで運ぶ（architecture.md の「失敗の分け方」）。
+ * 端末の部品は関数で渡す。偽の端末のテストも、この組み立てと分類を通すため。
  *
- * [AppSource] の入口に、[LocalizedLabelReader] の別の言語の名前と [GenreResolver] のジャンルと、[SignerReader] の署名者の DN を足す。
+ * `Error` は捕まえない（続けて動かせる状態ではない）。
+ */
+internal fun readPackage(
+    key: PackageKey,
+    listed: List<ActivityStamp>,
+    listedKeys: ApkKeys,
+    labelOf: (AppId) -> String,
+    observeKeys: () -> ApkKeys,
+    details: () -> List<LaunchableActivity>,
+    readLabels: (LaunchableActivity) -> LabelRead,
+    readSigners: (LaunchableActivity) -> List<String>,
+): PackageRead {
+    var entryFailure: ReadFailure? = null
+    val labels = LinkedHashMap<AppId, String?>()
+    for (stamp in listed) {
+        labels[stamp.id] =
+            try {
+                labelOf(stamp.id)
+            } catch (e: RuntimeException) {
+                entryFailure = entryFailure ?: ReadFailure.of(e)
+                null
+            }
+    }
+    val before = observeKeys()
+    val activities =
+        try {
+            details().associateBy { it.id }
+        } catch (e: Exception) {
+            entryFailure = entryFailure ?: ReadFailure.of(e)
+            null
+        }
+    // 一覧にあった入口が詳細にない。競合かもしれず、削除とは決めない
+    if (activities != null && listed.any { it.id !in activities }) {
+        entryFailure = entryFailure ?: ReadFailure.code(MaterialCauses.VANISHED)
+    }
+    val archived = listed.any { it.isArchived }
+    val localized = LinkedHashMap<AppId, List<String>>()
+    var labelFailure: ReadFailure? = null
+    var signers = emptyList<String>()
+    var signerFailure: ReadFailure? = null
+    val present = activities?.let { found -> listed.mapNotNull { found[it.id] } }.orEmpty()
+    // アーカイブ済みの組は APK がないので補助の材料を読まない（正常な不在）。詳細を読めなかった組も、どの版の材料か分からないので読まない
+    val auxiliaryRead = activities != null && !archived && present.isNotEmpty()
+    if (auxiliaryRead) {
+        for (activity in present) {
+            val read =
+                try {
+                    readLabels(activity)
+                } catch (e: Exception) {
+                    LabelRead(emptyList(), e)
+                }
+            localized[activity.id] = read.names
+            if (read.failure != null) labelFailure = labelFailure ?: ReadFailure.of(read.failure)
+        }
+        signers =
+            try {
+                readSigners(present.first())
+            } catch (e: Exception) {
+                signerFailure = ReadFailure.of(e)
+                emptyList()
+            }
+    }
+    val after = observeKeys()
+    return PackageRead(
+        key = key,
+        listed = listed,
+        listedKeys = listedKeys,
+        before = before,
+        after = after,
+        labels = labels,
+        entryFailure = entryFailure,
+        detailIds = activities?.keys,
+        localized = localized,
+        labelFailure = labelFailure,
+        signers = signers,
+        signerFailure = signerFailure,
+        auxiliaryRead = auxiliaryRead,
+    )
+}
+
+/**
+ * 端末のアプリから、索引の材料を読む。
+ *
+ * [AppSource] の一覧に、[LocalizedLabelReader] の別の言語の名前と [SignerReader] の署名者の DN を足す。
  * アプリの資源を開くので、画面のスレッドでは呼ばない。
  */
 public class InstalledAppReader(
@@ -41,68 +148,59 @@ public class InstalledAppReader(
         SignerReader(context.packageManager),
     )
 
-    /** すべてのプロファイルの起動できるアプリ。入口ごとに 1 件。 */
-    public fun readAll(): List<AppEntry> = read(null).map { it.entry }
-
-    /** [packages] のパッケージの、すべてのプロファイルの入口（null ならすべて）。パッケージの更新の時刻を添える。 */
-    public fun read(packages: Set<String>?): List<InstalledApp> {
-        val profiles = readProfiles(packages)
-        if (profiles.values.any { it.status == ProfileReadStatus.FAILED || it.failedPackages.isNotEmpty() }) throw MaterialReadException()
-        val result = profiles.values.flatMap { it.items }
-        val genreMap = genres.resolveStamps(source.stamps(withUpdateTime = false))
-        return result.map { it.copy(entry = it.entry.copy(genres = genreMap[it.entry.id].orEmpty())) }
-    }
-
-    /** 個別の資源の失敗を不完全なパッケージとして残し、ほかの更新を止めない。 */
-    public fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> =
-        source.launcherProfiles(packages).mapValues { (serial, profile) ->
-            if (profile.status != ProfileReadStatus.COMPLETE) {
-                ProfileRead(profile.status)
-            } else {
-                val failed = HashSet<String>()
-                val result = ArrayList<InstalledApp>()
-                for ((packageName, infos) in profile.items.groupBy { it.componentName.packageName }) {
-                    try {
-                        val activities = infos.map { source.launchable(it, serial) }
-                        result += readPackage(activities)
-                    } catch (_: RuntimeException) {
-                        failed += packageName
-                    }
+    /**
+     * 読めるプロファイルの起動できるアプリ。入口ごとに 1 件。計器テストと調べもの用で、段の失敗は読めた材料だけで返す。
+     */
+    public fun readAll(): List<AppEntry> {
+        val listing = source.listing(withUpdateTime = false)
+        val stamps = listing.profiles.values.flatMap { it.items }
+        val targets = stamps.groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
+        val genreMap = genres.resolveStamps(stamps)
+        return readPackages(listing, targets, timeTaken = false).values.flatMap { profile ->
+            profile.items.flatMap { read ->
+                read.listed.map {
+                    AppEntry(
+                        it.id,
+                        read.labels[it.id] ?: it.id.packageName,
+                        localizedLabels = read.localized[it.id].orEmpty(),
+                        genres = genreMap[it.id].orEmpty(),
+                        signerNames = read.signers,
+                    )
                 }
-                val status = source.profileReadStatus(serial)
-                if (status == ProfileReadStatus.COMPLETE) ProfileRead(status, result, failed) else ProfileRead(status)
             }
         }
-
-    internal fun readPackage(
-        activities: List<LaunchableActivity>,
-        readLabels: (LaunchableActivity) -> List<String> = labels::read,
-        readSigners: (LaunchableActivity) -> List<String> = signers::read,
-    ): List<InstalledApp> {
-        val fingerprintBefore = apkFingerprint(activities.first().applicationInfo)
-        var complete = true
-        val signerNames =
-            try {
-                readSigners(activities.first())
-            } catch (_: RuntimeException) {
-                complete = false
-                emptyList()
-            }
-        val entries =
-            activities.map { activity ->
-                val localized =
-                    try {
-                        readLabels(activity)
-                    } catch (_: Exception) {
-                        complete = false
-                        emptyList()
-                    }
-                AppEntry(activity.id, activity.label, localizedLabels = localized, signerNames = signerNames)
-            }
-        val first = activities.first()
-        val time = source.packageUpdatedAt(first)
-        val fingerprintAfter = apkFingerprint(first.applicationInfo)
-        complete = complete && fingerprintBefore != null && fingerprintBefore == fingerprintAfter
-        return entries.map { InstalledApp(it, time, if (complete) fingerprintAfter else null, complete) }
     }
+
+    /**
+     * [targets] の組を、一覧 [listing] の情報で読む。対象はプロファイルとパッケージの組で、ほかのプロファイルの同じパッケージは読まない。
+     *
+     * 読み終えた後にプロファイルを確かめ直し、読めなくなっていたら結果を捨てる（読み取り中の一時停止を正常な空にしないため）。
+     *
+     * @param timeTaken 一覧で更新の時刻を引いたか。引かなかった組は、詳細を読む前に鍵を観測し、それを一覧の観測とする
+     */
+    internal fun readPackages(
+        listing: Listing,
+        targets: Map<PackageKey, List<ActivityStamp>>,
+        timeTaken: Boolean,
+    ): Map<Long, ProfileRead<PackageRead>> =
+        targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
+            val profile = listing.profile(serial) ?: return@mapValues ProfileRead(ProfileReadStatus.UNAVAILABLE)
+            val reads =
+                packages.map { (key, listed) ->
+                    val info = checkNotNull(listing.info(listed.first().id)) { "一覧にない入口" }
+                    val observe = { source.observeKeys(info, profile.isCurrent) }
+                    readPackage(
+                        key = key,
+                        listed = listed,
+                        listedKeys = if (timeTaken) ApkKeys(listed.first().packageUpdatedAt, listed.first().apkFingerprint) else observe(),
+                        labelOf = { id -> checkNotNull(listing.info(id)).label.toString() },
+                        observeKeys = observe,
+                        details = { source.details(key.packageName, profile) },
+                        readLabels = labels::read,
+                        readSigners = signers::read,
+                    )
+                }
+            val status = source.profileReadStatus(serial)
+            if (status == ProfileReadStatus.COMPLETE) ProfileRead(status, reads) else ProfileRead(status)
+        }
 }

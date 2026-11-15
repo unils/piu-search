@@ -19,13 +19,10 @@ public enum class ProfileReadStatus {
  *
  * @property status 一覧の読み取り状態
  * @property items 読めた材料
- * @property failedPackages 一覧にはあるが詳細を読めなかったパッケージ
+ * @property failure [ProfileReadStatus.FAILED] の理由（[MaterialCauses.causeOf]）。報告の件数に使う
  */
 public data class ProfileRead<T>(
     val status: ProfileReadStatus,
     val items: List<T> = emptyList(),
-    val failedPackages: Set<String> = emptySet(),
+    val failure: String? = null,
 )
-
-/** 正常な不在と区別する、再試行の必要な材料の読み取り失敗。 */
-internal class MaterialReadException : RuntimeException()

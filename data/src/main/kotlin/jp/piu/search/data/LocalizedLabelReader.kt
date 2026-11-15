@@ -23,17 +23,31 @@ public class LocalizedLabelReader(
 
     /**
      * [activity] の日本語・英語・端末の言語での表示名。表示名（[LaunchableActivity.label]）と同じもの、空のもの、重なりは除く。
-     * 名前が資源でない（マニフェストに直に書いた）アプリは空。資源の読み取り失敗は例外で知らせ、再試行の対象にする。
+     * 名前が資源でない（マニフェストに直に書いた）アプリは空で、失敗ではない。
+     *
+     * 言語ごとに読み、読めなかった言語があれば最初の例外を [LabelRead.failure] に元の型のまま返す
+     * （`values-ja/` にだけある名前は、英語で `Resources.NotFoundException` になっても日本語では読める）。
      */
-    public fun read(activity: LaunchableActivity): List<String> {
+    public fun read(activity: LaunchableActivity): LabelRead {
         val labelRes = labelResource(activity)
-        if (labelRes == 0) return emptyList()
+        if (labelRes == 0) return LabelRead(emptyList(), null)
         val names = LinkedHashSet<String>()
+        var failure: Exception? = null
         for (locale in locales()) {
-            val name = loadText(activity, labelRes, locale) ?: continue
+            // 失敗の単位は言語 1 つ。型の分類は段の境界（MaterialCauses）で行う
+            val name =
+                try {
+                    loadText(activity, labelRes, locale)
+                } catch (e: PackageManager.NameNotFoundException) {
+                    failure = failure ?: e
+                    continue
+                } catch (e: RuntimeException) {
+                    failure = failure ?: e
+                    continue
+                }
             if (name.isNotBlank() && name != activity.label) names += name
         }
-        return names.toList()
+        return LabelRead(names.toList(), failure)
     }
 
     /** 引く資源の id。0 は引かない。 */
@@ -69,15 +83,9 @@ public class LocalizedLabelReader(
         activity: LaunchableActivity,
         labelRes: Int,
         locale: Locale,
-    ): String? {
+    ): String {
         val configuration = Configuration(context.resources.configuration).apply { setLocale(locale) }
-        return try {
-            resourcesFor(activity, configuration).getText(labelRes).toString().trim()
-        } catch (_: PackageManager.NameNotFoundException) {
-            throw MaterialReadException()
-        } catch (_: Resources.NotFoundException) {
-            throw MaterialReadException()
-        }
+        return resourcesFor(activity, configuration).getText(labelRes).toString().trim()
     }
 
     /**
@@ -101,3 +109,14 @@ public class LocalizedLabelReader(
                 .resources
         }
 }
+
+/**
+ * 別の言語の名前の読み取り結果。
+ *
+ * @property names 読めた名前
+ * @property failure 読めなかった言語の最初の例外（元の型のまま）。なければ null
+ */
+public class LabelRead(
+    public val names: List<String>,
+    public val failure: Exception?,
+)
