@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 既定の values/ に置かないことが、このアプリの試すこと -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="ExtraTranslation,MissingDefaultResource">
+    <string name="app_name">日本語だけテスト</string>
+</resources>
