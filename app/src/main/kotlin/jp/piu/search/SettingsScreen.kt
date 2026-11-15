@@ -42,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 
 /** テストから設定画面を探すための印。 */
@@ -154,7 +155,8 @@ fun SettingsScreen(
             },
         )
     }
-    Surface(modifier = modifier.fillMaxSize()) {
+    // testTag を画面の外（UiAutomator）から resource-id として引けるようにする。R8 を通した版の計器テスト（:release-test）が使う
+    Surface(modifier = modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         ReadableWidth {
             Column(
                 modifier =

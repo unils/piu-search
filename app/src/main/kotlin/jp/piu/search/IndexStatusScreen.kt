@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -95,7 +96,8 @@ fun IndexStatusScreen(
     modifier: Modifier = Modifier,
 ) {
     if (report != null) ReportDialog(report, actions)
-    Surface(modifier = modifier.fillMaxSize()) {
+    // testTag を画面の外（UiAutomator）から resource-id として引けるようにする。R8 を通した版の計器テスト（:release-test）が使う
+    Surface(modifier = modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         ReadableWidth {
             Column(
                 modifier =
@@ -260,7 +262,8 @@ private fun ReportDialog(
     actions: IndexStatusActions,
 ) {
     Dialog(onDismissRequest = actions.onCloseReport, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        // 窓は別の木なので、ここでも resource-id として引けるようにする
+        Surface(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
             Column(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Text(
                     stringResource(R.string.index_report_title),
