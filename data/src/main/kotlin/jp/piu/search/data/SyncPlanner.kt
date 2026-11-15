@@ -48,6 +48,7 @@ internal data class SyncScope(
  * @property listed [stamps] を組でまとめたもの
  * @property reads 詳細を読む組。値は、読む理由が `retry_once` だけか
  * @property removed 一覧を読めたプロファイルで、一覧から消えた組。読まずに索引から消す
+ * @property changed 変更の番号に出たパッケージ（[SyncScope.sequenceUsable] のときだけ意味を持つ）
  */
 internal class SyncTargets(
     val readable: Set<Long>,
@@ -56,6 +57,7 @@ internal class SyncTargets(
     val listed: Map<PackageKey, List<ActivityStamp>>,
     val reads: Map<PackageKey, Boolean>,
     val removed: Set<PackageKey>,
+    val changed: Set<String> = emptySet(),
 ) {
     /** [IndexSync] が端末から詳細を読む組と、その一覧の入口。 */
     val readTargets: Map<PackageKey, List<ActivityStamp>> get() = reads.keys.associateWith { listed.getValue(it) }
@@ -187,7 +189,7 @@ internal object SyncPlanner {
             if (normal || retry) reads[key] = !normal
         }
         val removed = old.keys.filterTo(HashSet()) { it.profileSerial in readable && it !in listed }
-        return SyncTargets(readable, profiles, stamps, listed, reads, removed)
+        return SyncTargets(readable, profiles, stamps, listed, reads, removed, changed)
     }
 
     // 組の通常の条件（retry_once を除く）。欠けの行があるだけでは読み直さない
@@ -238,6 +240,7 @@ internal object SyncPlanner {
      * @param genres ジャンルの問い合わせの結果。失敗なら null
      * @param candidates [SyncTargets.readTargets] の詳細。プロファイルごと
      * @param today 欠けの行の日（UTC の `YYYY-MM-DD`）
+     * @param currentProfile このアプリが動いているプロファイル（個人用）のシリアル番号。分からなければ null
      */
     @Suppress("LongParameterList")
     fun plan(
@@ -251,6 +254,7 @@ internal object SyncPlanner {
         genres: Map<AppId, List<GenreId>>?,
         candidates: Map<Long, ProfileRead<PackageRead>>,
         today: String,
+        currentProfile: Long? = null,
     ): SyncPlan {
         // 一覧と詳細の両方を読めたプロファイルだけで、読んだ結果と削除を当てる
         val completed =
@@ -273,7 +277,7 @@ internal object SyncPlanner {
                 isPresent(key.profileSerial) && key.profileSerial !in completed &&
                     (scope.mode == SyncMode.FULL_REBUILD || (scope.versionChanged && key in issued)) &&
                     old.getValue(key).any { !it.rebuildPending }
-            }
+            } + missedChanges(scope, targets, old.keys, completed, isPresent, currentProfile)
         val results =
             targets.profiles.mapValues { (serial, listing) ->
                 if (listing.status == ProfileReadStatus.COMPLETE) candidates[serial]?.status ?: listing.status else listing.status
@@ -297,6 +301,23 @@ internal object SyncPlanner {
             profileResults = results,
             profileFailures = failures,
         )
+    }
+
+    // 個人用は変更の番号と時刻で差分を取り、保存する番号はこの回の番号に進む。個人用が読めなかった回の変化は、
+    // 印で覚えないと次の差分の同期で失われる（見直しなら全組、変更の番号なら番号に出た組）
+    private fun missedChanges(
+        scope: SyncScope,
+        targets: SyncTargets,
+        stored: Set<PackageKey>,
+        completed: Set<Long>,
+        isPresent: (Long) -> Boolean,
+        currentProfile: Long?,
+    ): Set<PackageKey> {
+        if (currentProfile == null || currentProfile in completed || !isPresent(currentProfile)) return emptySet()
+        return stored.filterTo(HashSet()) {
+            it.profileSerial == currentProfile &&
+                (scope.mode == SyncMode.FULL_REVIEW || (scope.sequenceUsable && it.packageName in targets.changed))
+        }
     }
 
     private fun packagePlan(

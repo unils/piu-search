@@ -234,8 +234,11 @@ class IndexSyncConcurrencyTest {
         var reads = 0
         private val source =
             object : DeviceApps by device {
-                override fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> {
-                    val result = device.readProfiles(packages)
+                override fun readPackages(
+                    targets: Map<PackageKey, List<ActivityStamp>>,
+                    timeTaken: Boolean,
+                ): Map<Long, ProfileRead<PackageRead>> {
+                    val result = device.readPackages(targets, timeTaken)
                     reads++
                     pause.getAndSet(null)?.let { (entered, release) ->
                         entered.countDown()

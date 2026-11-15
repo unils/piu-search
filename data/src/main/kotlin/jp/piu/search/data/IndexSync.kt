@@ -600,6 +600,7 @@ public class IndexSync internal constructor(
                 genres,
                 candidates,
                 today,
+                readProfileSerial(Process.myUserHandle()),
             )
         return Plan(plan, requestTargets, genreMillis, genreFailure, readTargets.size)
     }

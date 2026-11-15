@@ -51,6 +51,7 @@ class IndexSyncTest {
         existingProfiles: () -> Set<Long>? = { device.existingProfiles() },
         source: DeviceApps = device,
         watch: Boolean = false,
+        appVersionCode: Int = 1,
     ): IndexSync {
         val database = LocalDatabase.open(context, FILE, indexVersion, allowMainThread = true).also(opened::add)
         val generator = SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.parse(emptyList())))
@@ -62,6 +63,7 @@ class IndexSyncTest {
             launcherApps = if (watch) context.getSystemService(LauncherApps::class.java) else null,
             profiles = ProfileReconciler({ database.profiles }, existingProfiles),
             profileSerialOf = context.getSystemService(UserManager::class.java)::getSerialNumberForUser,
+            appVersionCode = appVersionCode,
         )
     }
 
@@ -189,8 +191,9 @@ class IndexSyncTest {
         assertEquals(5, sync.sync().rebuiltApps)
         for (second in listOf(sync.sync(), newSync().sync())) {
             assertEquals(second.toString(), 0, second.rebuiltApps)
-            assertEquals(second.toString(), 0, second.failedPackages)
-            assertEquals(second.toString(), 0, second.failedProfiles)
+            assertEquals(second.toString(), 0, second.readPackages)
+            assertEquals(second.toString(), emptySet<Long>(), second.failedProfiles)
+            assertEquals(second.toString(), 0, second.issueCounts.total)
         }
     }
 
@@ -233,15 +236,15 @@ class IndexSyncTest {
 
     @Test
     @Config(sdk = [28, 37])
-    fun storedPackageWithoutAFingerprintIsRetriedInTheSameBoot() {
+    fun storedPackageWithARebuildMarkIsReadInTheSameBootAndTheMarkIsLowered() {
+        // 0.1.x では「指紋なし」が作り直しの要求を兼ねていた。0.2.0 は印（rebuild_pending）で表し、個人用の指紋は比べない
         device.install(TRANSIT, MAPS)
         newSync().sync()
         val database = opened.single()
         val stored = database.index.load()
-        assertNotNull(stored.apps.single { it.app.id == TRANSIT.entry.id }.apkFingerprint)
         val stale =
             stored.apps.filter { it.app.id == TRANSIT.entry.id }.map {
-                it.copy(app = it.app.copy(label = "古い名前"), apkFingerprint = null)
+                it.copy(app = it.app.copy(label = "古い名前"), rebuildPending = true)
             }
         database.index.update(stale, state = checkNotNull(stored.state))
 
@@ -250,13 +253,15 @@ class IndexSyncTest {
         assertEquals(SyncMode.CHANGES, retried.mode)
         assertEquals(1, retried.rebuiltApps)
         assertEquals(TRANSIT.entry.label, reopened.index.labelOf(TRANSIT.entry.id))
-        assertNotNull(
+        assertEquals(
+            false,
             database.index
                 .load()
                 .apps
                 .single { it.app.id == TRANSIT.entry.id }
-                .apkFingerprint,
+                .rebuildPending,
         )
+        assertEquals(0, reopened.sync().readPackages)
     }
 
     @Test
@@ -533,38 +538,39 @@ class IndexSyncTest {
         assertEquals(SyncMode.FULL_REBUILD, sync.sync().mode)
     }
 
+    // 0.1.x の「不完全なら指紋なしで毎回再試行」を置き換えた。一時的な欠けは 1 回だけ読み直し、また欠けたら通常の条件を待つ
     @Test
-    fun incompleteMaterialHasNoFingerprintAndIsRetriedWithoutASequenceChange() {
+    fun transientLabelFailureIsRetriedOnceAndThenWaitsForANormalCondition() {
         device.install(TRANSIT, MAPS)
         val sync = newSync()
         sync.sync()
-        val incomplete = TRANSIT.copy(label = "更新テスト").copy(complete = false)
-        device.install(incomplete, MAPS.copy(label = "地図更新テスト"))
+        val updated = TRANSIT.copy(label = "更新テスト", updatedAt = 2_000)
+        device.install(updated, MAPS.copy(label = "地図更新テスト"))
+        device.fail(updated, MaterialStage.LABEL, java.io.IOException())
         val partial = sync.sync()
+        // 読めた材料で索引に入れる
+        assertEquals("更新テスト", sync.index.labelOf(TRANSIT.entry.id))
         assertEquals("地図更新テスト", sync.index.labelOf(MAPS.entry.id))
-        assertEquals(1, partial.failedPackages)
-        assertEquals(jp.piu.search.data.SyncFailure.READ, sync.status.failure)
-        org.junit.Assert.assertNull(
-            opened
-                .last()
-                .index
-                .load()
-                .apps
-                .single { it.app.id == TRANSIT.entry.id }
-                .apkFingerprint,
-        )
-        device.install(incomplete.copy(complete = true), silently = true)
-        assertEquals(1, sync.sync().rebuiltApps)
-        org.junit.Assert.assertNotNull(
-            opened
-                .last()
-                .index
-                .load()
-                .apps
-                .single { it.app.id == TRANSIT.entry.id }
-                .apkFingerprint,
-        )
+        assertEquals(IssueCounts(transient = 1, retryPending = 1), partial.issueCounts)
+        assertEquals(SyncOutcome.ISSUES, partial.outcome)
         org.junit.Assert.assertNull(sync.status.failure)
+        assertEquals(mapOf("java.io.IOException" to 1), partial.failureCauses)
+
+        device.reads.clear()
+        val retried = sync.sync()
+        assertEquals(listOf(updated.key), device.reads)
+        assertEquals(IssueCounts(transient = 1), retried.issueCounts)
+
+        device.reads.clear()
+        analyzer.calls = 0
+        assertEquals(0, sync.sync().readPackages)
+        assertEquals(emptyList<PackageKey>(), device.reads)
+        assertEquals(0, analyzer.calls)
+
+        device.failures.clear()
+        device.touch(TRANSIT.entry.id.packageName)
+        assertEquals(SyncOutcome.OK, sync.sync().outcome)
+        assertEquals(emptyList<MaterialIssue>(), opened.last().index.load().issues)
     }
 
     @Test
@@ -576,7 +582,9 @@ class IndexSyncTest {
         device.install(TRANSIT.copy(label = "個人用更新テスト"))
         device.install(WORK_TRANSIT.copy(label = "仕事用更新テスト", updatedAt = 2_000), silently = true)
         val partial = sync.sync()
-        assertEquals(1, partial.failedProfiles)
+        assertEquals(setOf(PERSONAL), partial.failedProfiles)
+        assertEquals(SyncOutcome.PARTIAL, partial.outcome)
+        assertEquals(SyncFailure.PROFILE, sync.status.failure)
         assertEquals("乗換テスト", sync.index.labelOf(TRANSIT.entry.id))
         assertEquals("仕事用更新テスト", sync.index.labelOf(WORK_TRANSIT.entry.id))
         device.failedProfiles.clear()
@@ -669,15 +677,17 @@ class IndexSyncTest {
     }
 
     @Test
-    fun successfulNotificationIsClearedWhileAnIncompletePackageIsRetained() {
+    // 0.1.x は失敗した組の知らせを残して毎回読み直した。読んだ知らせは成否によらず消費し、読み直しは欠けの行に任せる
+    fun notificationIsConsumedEvenWhenThePackageFailsDeterministically() {
         device.install(TRANSIT, MAPS)
         val sync = newSync()
         sync.sync()
-        device.install(TRANSIT.copy(complete = false), silently = true)
-        sync.sync(setOf(TRANSIT.entry.id.packageName, MAPS.entry.id.packageName))
-        device.install(TRANSIT, MAPS.copy(label = "番号にない変更テスト"), silently = true)
-        assertEquals(1, sync.sync().rebuiltApps)
-        assertEquals(MAPS.entry.label, sync.index.labelOf(MAPS.entry.id))
+        device.fail(TRANSIT, MaterialStage.SIGNER, java.security.cert.CertificateException())
+        val failed = sync.sync(setOf(TRANSIT.entry.id.packageName, MAPS.entry.id.packageName))
+        assertEquals(IssueCounts(deterministic = 1), failed.issueCounts)
+        device.reads.clear()
+        assertEquals(0, sync.sync().readPackages)
+        assertEquals(emptyList<PackageKey>(), device.reads)
     }
 
     @Test
@@ -734,15 +744,18 @@ class IndexSyncTest {
         withWatchingSync { sync, callback, workUser ->
             device.install(
                 TRANSIT.copy(label = "個人用更新テスト"),
-                WORK_TRANSIT.copy(label = "仕事用更新テスト").copy(complete = false),
+                WORK_TRANSIT.copy(label = "仕事用更新テスト"),
                 silently = true,
             )
+            device.fail(WORK_TRANSIT, MaterialStage.LABEL, java.io.IOException())
             callback.notifyChanged(TRANSIT.entry.id.packageName, Process.myUserHandle())
             callback.notifyChanged(WORK_TRANSIT.entry.id.packageName, workUser)
             val partial = sync.sync()
             assertEquals(2, partial.rebuiltApps)
-            assertEquals(1, partial.failedPackages)
+            assertEquals(IssueCounts(transient = 1, retryPending = 1), partial.issueCounts)
 
+            // 知らせは両方とも消費した。仕事用は retry_once で 1 回だけ読み直す
+            device.failures.clear()
             device.install(WORK_TRANSIT.copy(label = "仕事用回復テスト"), silently = true)
             assertEquals(1, sync.sync().rebuiltApps)
             assertEquals("個人用更新テスト", sync.index.labelOf(TRANSIT.entry.id))
