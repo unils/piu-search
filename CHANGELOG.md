@@ -8,7 +8,9 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
-最初の公開版（0.1.0）になる予定。
+## [0.1.0] - 2026-11-15
+
+最初の公開版。
 
 ### Added
 
@@ -25,4 +27,5 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 - 索引・学習の読み込みや保存に失敗したときの表示
 - Android 9（API 28）以上に対応。インターネットの権限を持たず、索引・学習・起動の記録・設定をクラウドへのバックアップから外す
 
-[Unreleased]: https://github.com/unils/piu-search/commits/main
+[Unreleased]: https://github.com/unils/piu-search/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/unils/piu-search/releases/tag/v0.1.0
