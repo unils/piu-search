@@ -143,6 +143,63 @@ class IndexSyncInstrumentedTest {
         assertEquals(listOf(TRANSIT_LABELS[0]), rebooted.index.labelsFor("のりかえ"))
     }
 
+    // 端末のすべての入口（テスト用のアプリに限らない）で、同じ状態のまま同期を続けると何も読み直さない。
+    // 読み直しや失敗が残ると、利用者には開くたびの辞書の読み込みと「索引を更新できなかった」の表示になる
+    @Test
+    fun repeatedSyncsOnTheSameDeviceReadNothing() {
+        bootCount = 1
+        val first = newSync().sync()
+        Log.i(TAG, "最初の同期: $first")
+        assertEquals(SyncMode.FULL_REBUILD, first.mode)
+
+        val sameBoot = newSync().sync()
+        Log.i(TAG, "2 回目（変更の番号）: $sameBoot")
+        assertEquals(SyncMode.CHANGES, sameBoot.mode)
+        assertConverged(sameBoot)
+
+        // 再起動の後と同じく、全件の更新時刻と指紋を見直す
+        bootCount = 2
+        val review = newSync().sync()
+        Log.i(TAG, "3 回目（全件の見直し）: $review")
+        assertEquals(SyncMode.FULL_REVIEW, review.mode)
+        assertConverged(review)
+    }
+
+    private fun assertConverged(report: SyncReport) {
+        if (report.rebuiltApps == 0 && report.failedPackages == 0 && report.failedProfiles == 0) return
+        throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
+    }
+
+    // 読み直しの原因になりうるパッケージを並べる。どの入口が収束しないかを、出力だけで追えるようにする
+    private fun unsettledPackages(): String {
+        val stored =
+            opened
+                .last()
+                .index
+                .load()
+                .apps
+        val device = AndroidDeviceApps(context)
+        val failed =
+            device.readProfiles(null).flatMap { (serial, read) ->
+                read.failedPackages.map { "$serial/$it" } +
+                    if (read.status != ProfileReadStatus.COMPLETE) listOf("$serial: ${read.status}") else emptyList()
+            }
+        val withoutFingerprint = stored.filter { it.apkFingerprint == null }.map { "${it.app.id}" }
+        val byId = stored.associateBy { it.app.id }
+        val drifted =
+            device.stampProfiles(withUpdateTime = true).values.flatMap { it.items }.mapNotNull { stamp ->
+                val old = byId[stamp.id] ?: return@mapNotNull "${stamp.id}: 索引にない"
+                if (old.packageUpdatedAt == stamp.packageUpdatedAt &&
+                    (stamp.isCurrentProfile || old.apkFingerprint == stamp.apkFingerprint)
+                ) {
+                    null
+                } else {
+                    "${stamp.id}: 時刻 ${old.packageUpdatedAt} → ${stamp.packageUpdatedAt}、指紋 ${old.apkFingerprint} → ${stamp.apkFingerprint}"
+                }
+            }
+        return "読めなかった: $failed\n指紋のない索引: $withoutFingerprint\n時刻か指紋が変わった: $drifted"
+    }
+
     @Test
     fun changesWhileWatchingAreReflectedWithoutAskingForSync() {
         val sync = newSync(watch = true)

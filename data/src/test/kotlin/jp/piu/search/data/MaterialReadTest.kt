@@ -66,6 +66,22 @@ class MaterialReadTest {
         assertNotEquals(fingerprint, apkFingerprint(info))
     }
 
+    // パッケージの情報を引けないときはファイルの時刻を使う。時刻 0 は値として返し、読めないときだけ不明にする
+    @Test
+    fun fileUpdateTimeOfZeroIsATimeAndAMissingFileIsUnknown() {
+        val base = files.newFile("gone.apk").apply { setLastModified(0) }
+        val info =
+            ApplicationInfo().apply {
+                packageName = GONE
+                sourceDir = base.path
+            }
+        val activity = LaunchableActivity(AppId(GONE, "Main", 0), "名前", Process.myUserHandle(), info, 0)
+        val source = AppSource(context)
+        assertEquals(0L, source.packageUpdatedAt(activity))
+        base.delete()
+        assertNull(source.packageUpdatedAt(activity))
+    }
+
     @Test
     fun localizedLabelFailureMarksThePackageIncompleteAndTheNextReadRetries() {
         val activity = activity(labelRes = 0x7f7fffff)
@@ -100,6 +116,11 @@ class MaterialReadTest {
         shadow.setUserState(user, org.robolectric.shadows.ShadowUserManager.UserState.STATE_RUNNING_LOCKED)
         org.junit.Assert.assertEquals(ProfileReadStatus.UNAVAILABLE, source.profileReadStatus(0))
         org.junit.Assert.assertEquals(ProfileReadStatus.UNAVAILABLE, source.stampProfiles(false).getValue(0).status)
+    }
+
+    private companion object {
+        // 端末に入っていないパッケージ。PackageManager から引けず、ファイルの時刻に落ちる
+        const val GONE = "io.example.gone"
     }
 
     private fun activity(labelRes: Int = 0): LaunchableActivity {

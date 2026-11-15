@@ -32,7 +32,8 @@ internal data class AppRow(
     @ColumnInfo(name = "activity_name") val activityName: String,
     @ColumnInfo(name = "profile_serial") val profileSerial: Long,
     val label: String,
-    // パッケージの最後の更新の時刻（PackageInfo.lastUpdateTime、ミリ秒）。全件の見直しで、作り直すアプリを選ぶため
+    // パッケージの最後の更新の時刻（PackageInfo.lastUpdateTime、ミリ秒）。全件の見直しで、作り直すアプリを選ぶため。
+    // 読めなかった時刻は IndexStore が Long.MIN_VALUE で表す（0 は有効な時刻）
     @ColumnInfo(name = "package_updated_at") val packageUpdatedAt: Long,
     @ColumnInfo(name = "apk_fingerprint") val apkFingerprint: String? = null,
 )

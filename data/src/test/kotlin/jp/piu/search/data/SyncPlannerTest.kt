@@ -62,11 +62,58 @@ class SyncPlannerTest {
             targets(
                 REVIEW,
                 listOf(stored(MAPS), stored(MAIL), stored(CLOCK)),
-                mapOf(PERSONAL to complete(stamp(MAPS), stamp(MAIL, time = 2_000), stamp(CLOCK, time = 0))),
+                mapOf(PERSONAL to complete(stamp(MAPS), stamp(MAIL, time = 2_000), stamp(CLOCK, time = null))),
             )
 
-        // 時刻 0 は取得できなかった時刻なので、同じとみなさない
+        // 読めなかった時刻は、同じとみなさない
         assertEquals(setOf(PackageKey(PERSONAL, MAIL), PackageKey(PERSONAL, CLOCK)), targets.dirty)
+    }
+
+    @Test
+    fun zeroUpdateTimeIsComparedLikeAnyOtherTime() {
+        val targets =
+            targets(
+                REVIEW,
+                listOf(stored(MAPS, time = 0), stored(MAIL, time = 0), stored(CLOCK, time = null)),
+                mapOf(PERSONAL to complete(stamp(MAPS, time = 0), stamp(MAIL, time = 1_000), stamp(CLOCK, time = 0))),
+            )
+
+        // APEX の中の APK は時刻が本当に 0。保存した時刻が不明なら、今の時刻が読めても同じとみなさない
+        assertEquals(setOf(PackageKey(PERSONAL, MAIL), PackageKey(PERSONAL, CLOCK)), targets.dirty)
+    }
+
+    @Test
+    fun secondPlanOnTheSameDeviceReadsNothing() {
+        val stamps =
+            mapOf(
+                PERSONAL to complete(stamp(MAPS), stamp(CLOCK, time = 0, fingerprint = "apk:0")),
+                WORK to complete(stamp(MAIL, WORK), stamp(CLOCK, WORK, time = 0, fingerprint = "apk:0")),
+            )
+        val details =
+            mapOf(
+                PERSONAL to complete(installed(MAPS), installed(CLOCK, time = 0, fingerprint = "apk:0")),
+                WORK to complete(installed(MAIL, WORK), installed(CLOCK, WORK, time = 0, fingerprint = "apk:0")),
+            )
+        val first = plan(FULL, targets(FULL, emptyList(), stamps), details)
+        assertEquals(4, first.rebuild.size)
+        assertTrue(first.failedPackages.isEmpty())
+        val saved =
+            first.rebuild.map {
+                StoredApp(
+                    IndexedApp(it.entry.id, it.entry.label, emptyList()),
+                    it.packageUpdatedAt,
+                    it.apkFingerprint,
+                )
+            }
+
+        // 番号が使えない全件の見直しでも、変更の番号による差分でも、2 回目は何も読まない
+        for (scope in listOf(REVIEW, CHANGES)) {
+            val second = plan(scope, targets(scope, saved, stamps), emptyMap())
+            assertTrue("$scope", second.changedPackages.isEmpty())
+            assertTrue("$scope", second.rebuild.isEmpty())
+            assertTrue("$scope", second.failedPackages.isEmpty())
+            assertEquals(0, second.failedProfiles)
+        }
     }
 
     @Test
@@ -241,6 +288,7 @@ class SyncPlannerTest {
         val SAVED = SyncState(changeSequence = 7, bootCount = 2, locales = "ja-JP", buildFingerprint = "build")
         val CHANGES = SyncScope(SyncMode.CHANGES, 7)
         val REVIEW = SyncScope(SyncMode.FULL_REVIEW, 0)
+        val FULL = SyncScope(SyncMode.FULL_REBUILD, 0)
 
         fun id(
             packageName: String,
@@ -250,7 +298,7 @@ class SyncPlannerTest {
         fun stamp(
             packageName: String,
             profile: Long = PERSONAL,
-            time: Long = 1_000,
+            time: Long? = 1_000,
             fingerprint: String = "apk:1",
         ) = ActivityStamp(id(packageName, profile), time, fingerprint, isCurrentProfile = profile == PERSONAL)
 
@@ -258,13 +306,15 @@ class SyncPlannerTest {
             packageName: String,
             profile: Long = PERSONAL,
             fingerprint: String? = "apk:1",
-        ) = StoredApp(IndexedApp(id(packageName, profile), packageName, emptyList()), 1_000, fingerprint)
+            time: Long? = 1_000,
+        ) = StoredApp(IndexedApp(id(packageName, profile), packageName, emptyList()), time, fingerprint)
 
         fun installed(
             packageName: String,
             profile: Long = PERSONAL,
             fingerprint: String = "apk:1",
-        ) = InstalledApp(AppEntry(id(packageName, profile), packageName), 1_000, fingerprint)
+            time: Long = 1_000,
+        ) = InstalledApp(AppEntry(id(packageName, profile), packageName), time, fingerprint)
 
         fun <T> complete(vararg items: T) = ProfileRead(ProfileReadStatus.COMPLETE, items.toList())
     }

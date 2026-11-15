@@ -14,7 +14,6 @@ import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
 import jp.piu.search.core.search.AppId
-import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -36,14 +35,14 @@ public data class Profile(
  * 入口の識別子と、そのパッケージの最後の更新の時刻（[AppSource.stamps]）。
  *
  * @property id 入口の識別子
- * @property packageUpdatedAt パッケージの最後の更新の時刻（ミリ秒）。引かなかったときは 0
+ * @property packageUpdatedAt パッケージの最後の更新の時刻（ミリ秒）。引かなかった・読めなかったときは null。0 は有効な時刻
  * @property apkFingerprint base と split のパスと時刻。取得不能なら null
  * @property isCurrentProfile 自分のプロファイルなら変更番号を使う
  * @property category ジャンルを毎回判定するためのカテゴリ
  */
 public data class ActivityStamp(
     val id: AppId,
-    val packageUpdatedAt: Long,
+    val packageUpdatedAt: Long?,
     val apkFingerprint: String? = null,
     val isCurrentProfile: Boolean = true,
     val category: Int = ApplicationInfo.CATEGORY_UNDEFINED,
@@ -108,7 +107,7 @@ public class AppSource(
 
     /**
      * すべてのプロファイルの入口の識別子と、パッケージの最後の更新の時刻（[packageUpdatedAt]）。
-     * 表示名は読まないので [activities] より軽い。[withUpdateTime] が false なら時刻は引かず 0 にする。
+     * 表示名は読まないので [activities] より軽い。[withUpdateTime] が false なら時刻は引かず null にする。
      */
     public fun stamps(withUpdateTime: Boolean): List<ActivityStamp> {
         val profiles = stampProfiles(withUpdateTime)
@@ -120,7 +119,7 @@ public class AppSource(
     public fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
         enumerate(null) { infos, profile ->
             val fingerprints = HashMap<String, String?>()
-            val times = HashMap<String, Long>()
+            val times = HashMap<String, Long?>()
             infos.map { info ->
                 val id = AppId(info.componentName.packageName, info.componentName.className, profile.serial)
                 ActivityStamp(
@@ -130,7 +129,7 @@ public class AppSource(
                             id.packageName,
                         ) { updatedAt(id.packageName, info.applicationInfo, profile.isCurrent) }
                     } else {
-                        0
+                        null
                     },
                     fingerprints.getOrPut(id.packageName) { apkFingerprint(info.applicationInfo) },
                     profile.isCurrent,
@@ -188,9 +187,9 @@ public class AppSource(
 
     /**
      * [activity] のパッケージの最後の更新の時刻（ミリ秒）。索引の `packageUpdatedAt` に入れ、全件の見直しで比べる。
-     * 比べるのは同じ式で求めた値どうしなので、変わったかが分かればよい。
+     * 比べるのは同じ式で求めた値どうしなので、変わったかが分かればよい。読めなければ null。
      */
-    public fun packageUpdatedAt(activity: LaunchableActivity): Long =
+    public fun packageUpdatedAt(activity: LaunchableActivity): Long? =
         updatedAt(activity.id.packageName, activity.applicationInfo, activity.user == Process.myUserHandle())
 
     private fun launcherEntries(packages: Set<String>?): List<Pair<LauncherActivityInfo, Profile>> =
@@ -215,7 +214,7 @@ public class AppSource(
         packageName: String,
         applicationInfo: ApplicationInfo,
         isCurrentProfile: Boolean,
-    ): Long {
+    ): Long? {
         if (isCurrentProfile) {
             try {
                 return packageInfo(packageName).lastUpdateTime
@@ -223,7 +222,7 @@ public class AppSource(
                 // 一覧を取った後に消えた。次の同期で消える
             }
         }
-        return applicationInfo.sourceDir?.let { File(it).lastModified() } ?: 0L
+        return applicationInfo.sourceDir?.let { apkAttributes(it)?.lastModifiedTime()?.toMillis() }
     }
 
     private fun packageInfo(packageName: String): PackageInfo =
@@ -272,26 +271,25 @@ public class AppSource(
     }
 }
 
-/**
- * ファイルの不在や読み取りの失敗は成功した指紋として保存しない。順序の揺れは変化に数えない。
- *
- * 時刻は例外で失敗を知らせる NIO で読む。`File.lastModified` は失敗も 0 で返すが、APEX の中の APK
- * （例: Android 15 以降のターミナル）は本当に時刻が 0 で、失敗と区別できないと毎回の同期で読み直して失敗し続けるため。
- */
+/** ファイルの不在や読み取りの失敗は成功した指紋として保存しない。順序の揺れは変化に数えない。 */
 internal fun apkFingerprint(info: ApplicationInfo): String? {
     val base = info.sourceDir?.takeIf { it.isNotBlank() } ?: return null
     val paths = listOf(base) + info.splitSourceDirs.orEmpty().sorted()
-    return try {
-        val attributes = ArrayList<String>()
-        for (path in paths) {
-            val file = Files.readAttributes(Paths.get(path), BasicFileAttributes::class.java)
-            if (!file.isRegularFile) return null
-            attributes += "${path.length}:$path:${file.lastModifiedTime().toMillis()}"
-        }
-        attributes.joinToString("|")
+    val attributes = ArrayList<String>()
+    for (path in paths) {
+        val file = apkAttributes(path) ?: return null
+        attributes += "${path.length}:$path:${file.lastModifiedTime().toMillis()}"
+    }
+    return attributes.joinToString("|")
+}
+
+// 時刻は例外で失敗を知らせる NIO で読む。File.lastModified は失敗も 0 で返すが、APEX の中の APK
+// （例: Android 15 以降のターミナル）は本当に時刻が 0 で、失敗と区別できないと毎回の同期で読み直し続けるため
+private fun apkAttributes(path: String): BasicFileAttributes? =
+    try {
+        Files.readAttributes(Paths.get(path), BasicFileAttributes::class.java).takeIf { it.isRegularFile }
     } catch (_: IOException) {
         null
     } catch (_: SecurityException) {
         null
     }
-}

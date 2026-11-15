@@ -1,0 +1,1 @@
+Fixed "Could not update the index" showing every time the app was opened when a system app with an update time of 0 (such as the Terminal on Android 15 and later) was installed.

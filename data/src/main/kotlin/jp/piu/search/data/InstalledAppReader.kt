@@ -9,13 +9,13 @@ import jp.piu.search.core.search.AppEntry
  * 端末のアプリの入口 1 つの、索引の材料とパッケージの最後の更新の時刻。
  *
  * @property entry 索引の材料
- * @property packageUpdatedAt パッケージの最後の更新の時刻（[AppSource.packageUpdatedAt]）
+ * @property packageUpdatedAt パッケージの最後の更新の時刻（[AppSource.packageUpdatedAt]）。読めなければ null
  * @property apkFingerprint base と split の属性。不完全な読み取りでは保存しない
  * @property complete 別言語名と署名を含めて材料が揃ったか
  */
 public data class InstalledApp(
     val entry: AppEntry,
-    val packageUpdatedAt: Long,
+    val packageUpdatedAt: Long?,
     val apkFingerprint: String? = null,
     val complete: Boolean = true,
 )
