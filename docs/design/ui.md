@@ -156,13 +156,23 @@ OS が起動を拒んだら「開けなかった」を出し、索引を同期�
 
 | 順 | 項目 | 中身 |
 |---|---|---|
-| 1 | 概要 | 索引のアプリの数（仕事用があれば個人用・仕事用に分ける）、最後に更新した時刻（`meta` の最後に保存できた同期の時刻）、このプロセスの最後の同期の結果（更新できた／一部の情報を読めていない／更新できなかった） |
+| 1 | 概要 | 索引のアプリの数（仕事用があれば個人用・仕事用に分ける）、最後に更新した時刻（`meta` の最後に保存できた同期の時刻）、このプロセスの最後の同期の結果（下の表） |
 | 2 | アプリの一覧 | プロファイルごとに「読めた」「一時停止中」「読めなかった」 |
 | 3 | ジャンルの判定 | 「判定できた」か「判定できなかった（前のジャンルで検索している）」 |
 | 4 | 読めていない情報 | 区分ごとの件数と、アプリの一覧（下記） |
-| 5 | 報告 | 「報告用の文を見る」のボタンと、issue のページへのリンク。リンクの横に「報告する前に、同じ報告がないか見てほしい」と書く |
+| 5 | 報告 | 「報告用の文を見る」のボタンと、issue のページへのリンク。リンクの横に「報告する前に、同じ報告がないか見てほしい」と書く。連絡先は issue だけで、メールの宛先は載せない（メンテナの判断、2026-11-15） |
 
-アーカイブ済みのアプリ（Android 15 以降。APK を消してデータを残した状態）は、欠けとして出さない。概要に「うちアーカイブ済み N 個」とだけ出す（[architecture.md](architecture.md#失敗の分け方)）。
+最後の同期の結果（規則は [architecture.md](architecture.md#知らせ)）:
+
+| 結果 | 日本語 | 英語 |
+|---|---|---|
+| `OK` | 更新できた | Updated |
+| `ISSUES` | 更新できた・一部の情報を読めていない | Updated; some information is missing |
+| `PARTIAL` | 一部を更新できなかった | Partly not updated |
+| `FAILED` | 更新できなかった | Not updated |
+| （まだ同期していない） | まだ更新していない | Not updated yet |
+
+アーカイブ済みのアプリ（Android 15 以降。APK を消してデータを残した状態）は、欠けとして出さない。概要に「うちアーカイブ済み N 個」とだけ出す。件数は保存した索引から数えるので、一時停止中の仕事用の分も入る（[architecture.md](architecture.md#失敗の分け方)）。
 
 読めていない情報の一覧は、区分の順（不具合の疑い → 次の更新で読み直す → 読めないまま使っている）、同じ区分の中は表示名の順に並べる。1 行に出すもの:
 
@@ -196,9 +206,9 @@ OS が起動を拒んだら「開けなかった」を出し、索引を同期�
 - 日付は UTC の `YYYY-MM-DD` までにする。時刻と端末の時間帯は入れない。時刻は利用者がいつ検索を開いたかを表し、報告には「いつから欠けているか」で足りるため
 - 端末の製造元と機種（`Build.MANUFACTURER`・`Build.MODEL`）を入れる（メンテナの判断、2026-11-15）。`Build.FINGERPRINT` にも機種の符号は入るが、販売名でないので、`device` の行で読みやすくする
 - 表示名と例外のメッセージは入れない。表示名は端末の言語で変わり、パッケージ名で足りる。メッセージにはパスなどが入りうる
-- `KEYS` の不具合の疑いの行には、表示名の代わりに、その長さと文字種（漢字・かな・英数字・絵文字・その他のどれを含むか）を入れる。`KEYS` の入力は表示名そのもので、Play にないアプリではメンテナが名前を知りえないため。長さと文字種では人もアプリも特定できない
+- `KEYS` の不具合の疑いの行には、表示名の代わりに、欠けの行の `input_summary`（例外が起きた入力の種類・長さ・文字種）を入れる。Play にないアプリではメンテナが入力を知りえないため。長さと文字種では人もアプリも特定できない。失敗したときに保存した値を使い、今の索引から作り直さない（旧索引の行を保った組では、今の表示名は失敗したときの入力と違う）
 - 各行に、その組が system のアプリか・APEX の中の APK か・split の数・鍵があるかを入れる。0.1.0 の不具合（APEX の中の APK だけで起きた）と同じ型を、報告から見分けるため。パスは入れない（パスの乱数の部分は端末ごとに違い、識別子に近い）。これらは報告の文を作るときに `LauncherApps` から読み、読めなければ `?` にする
-- 不具合の疑いの行には、例外の先頭 5 フレームを続けて書く（R8 で変わった名前のまま。メンテナが `mapping.txt` で戻す）
+- 不具合の疑いの行には、行を書いた版（`ver=`、欠けの行の `version_code`）と、例外の先頭 5 フレームを続けて書く（R8 で変わった名前のまま。行の番号は残る。メンテナがその版の `mapping.txt` で戻す）
 - 読めていない情報が 200 件を超えたら、200 件で切り、残りの件数を書く
 
 書式（値は例）:
@@ -217,12 +227,12 @@ profiles: personal=COMPLETE work=UNAVAILABLE
 genres: OK
 issues: retry=0 degraded=1 bug=1
 - DEGRADED LABEL work com.example.app cause=android.content.res.Resources$NotFoundException system=N apex=N splits=0 key=Y since=2026-11-14 last=2026-11-15
-- BUG KEYS personal com.example.other cause=java.lang.IllegalArgumentException system=N apex=N splits=2 key=Y label=len42:kanji,kana since=2026-11-15 last=2026-11-15
+- BUG KEYS personal com.example.other cause=java.lang.IllegalArgumentException system=N apex=N splits=2 key=Y input=label:len42:kanji,kana ver=5 since=2026-11-15 last=2026-11-15
     at a.b.c(SourceFile:12)
     at a.b.d(SourceFile:40)
 ```
 
-`last saved` は最後に保存できた同期の日。`last sync` はこのプロセスの最後の同期で、`result` は `OK`・`ISSUES`（組の欠けがある）・`FAILED`（同期全体）。まだ同期していなければ `last sync: none`。`profiles` の値は `COMPLETE`・`UNAVAILABLE`・`FAILED`。プロファイルはシリアル番号ではなく `personal`・`work`（2 つ目からは `work2`…）で書く。行の先頭の区分（`RETRY`・`DEGRADED`・`BUG`）は、文を作るときに理由から引いたもの。
+`last saved` は最後に保存できた同期の日。`last sync` はこのプロセスの最後の同期で、`result` は上の表の `OK`・`ISSUES`・`PARTIAL`・`FAILED`。まだ同期していなければ `last sync: none`。`profiles` の値は `COMPLETE`・`UNAVAILABLE`・`FAILED`。プロファイルはシリアル番号ではなく `personal`・`work`（2 つ目からは `work2`…）で書く。行の先頭の区分（`RETRY`・`DEGRADED`・`BUG`）は、文を作るときに理由から引いたもの。
 
 ## 見た目とアクセシビリティ
 
