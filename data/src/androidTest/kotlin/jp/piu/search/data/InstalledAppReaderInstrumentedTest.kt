@@ -30,8 +30,11 @@ class InstalledAppReaderInstrumentedTest {
             Expected("browsersecondary", "TestActivity", ja = "別の閲覧テスト", en = "Other Web Probe", genres = listOf("browser")),
             Expected("camera", "TestActivity", ja = "撮影テスト", en = "Lens Probe", genres = listOf("camera")),
             Expected("game", "TestActivity", ja = "将棋テスト", en = "Shogi Test", genres = listOf("game")),
+            // 名前をマニフェストに直に書いた。どの言語でも同じ名前で、別の言語の名前はない
+            Expected("labelinline", "TestActivity", ja = "直書きテスト", en = "直書きテスト", genres = emptyList()),
             Expected("mail", "TestActivity", ja = "テストメール", en = "Test Mail", genres = listOf("email")),
             Expected("maps", "TestActivity", ja = "テスト地図", en = "Test Map", genres = listOf("maps")),
+            Expected("split", "TestActivity", ja = "Split Test", en = "Split Test", genres = emptyList()),
             Expected("transit", "TestActivity", ja = "乗換案内テスト", en = "Transit Test", genres = emptyList()),
             Expected("twolaunchers", "SecondTestActivity", ja = "入口二つテスト 設定", en = "Two Entries Test Settings", genres = emptyList()),
             Expected("twolaunchers", "TestActivity", ja = "入口二つテスト", en = "Two Entries Test", genres = emptyList()),
@@ -46,7 +49,13 @@ class InstalledAppReaderInstrumentedTest {
         entries.forEach { Log.i(TAG, "${it.id.packageName}/${it.id.activityName}: ${it.label} ${it.localizedLabels} ${it.genres}") }
 
         // LAUNCHER を持たない nolauncher は出ず、2 つ持つ twolaunchers は 2 件
-        assertEquals(expected.map { it.key }, entries.map { it.key }.sorted())
+        assertEquals((expected.map { it.key } + JA_ONLY_KEY).sorted(), entries.map { it.key }.sorted())
+
+        // 名前が values-ja/ にだけある。日本語の名前は、表示名か別の言語の名前のどちらかで読める（英語は読めない。欠けは MaterialIssueInstrumentedTest）。
+        // 日本語でない端末の表示名は OS が決める（API 37 のエミュレータでは Activity のクラス名だった。2026-11-16）
+        val jaOnly = entries.single { it.key == JA_ONLY_KEY }
+        Log.i(TAG, "values-ja だけの名前: 表示名 ${jaOnly.label}、別の言語 ${jaOnly.localizedLabels}")
+        assertTrue(jaOnly.localizedLabels.toString(), JA_ONLY_NAME == jaOnly.label || JA_ONLY_NAME in jaOnly.localizedLabels)
 
         val deviceLanguage =
             Resources
@@ -152,6 +161,9 @@ class InstalledAppReaderInstrumentedTest {
     }
 
     private companion object {
+        const val JA_ONLY_KEY = "labeljaonly/TestActivity"
+        const val JA_ONLY_NAME = "日本語だけテスト"
+
         const val PREFIX = "jp.piu.search.testapp."
         const val TAG = "InstalledAppReaderTest"
 
