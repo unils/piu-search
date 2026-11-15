@@ -166,6 +166,35 @@ class IndexSyncTest {
     }
 
     @Test
+    fun secondSyncOnTheSameDeviceReadsNothing() {
+        installWithZeroTimes()
+        assertSecondSyncReadsNothing()
+    }
+
+    @Test
+    fun secondReviewWithoutABootCountReadsNothing() {
+        // 再起動の回数が取れない端末では毎回が全件の見直しになり、時刻の比べ方がそのまま収束を決める
+        device.bootCount = null
+        installWithZeroTimes()
+        assertSecondSyncReadsNothing()
+    }
+
+    // APEX の中の APK は更新時刻が本当に 0 なので、個人用と仕事用の両方に混ぜる
+    private fun installWithZeroTimes() {
+        device.install(TRANSIT, MAPS, WORK_MAIL, TERMINAL.copy(updatedAt = 0), WORK_TERMINAL.copy(updatedAt = 0))
+    }
+
+    private fun assertSecondSyncReadsNothing() {
+        val sync = newSync()
+        assertEquals(5, sync.sync().rebuiltApps)
+        for (second in listOf(sync.sync(), newSync().sync())) {
+            assertEquals(second.toString(), 0, second.rebuiltApps)
+            assertEquals(second.toString(), 0, second.failedPackages)
+            assertEquals(second.toString(), 0, second.failedProfiles)
+        }
+    }
+
+    @Test
     @Config(sdk = [28, 37])
     fun bootCountChangeReviewsACompleteStoredPackageWithAStaleTime() {
         device.install(TRANSIT, MAPS)
@@ -832,7 +861,7 @@ class IndexSyncTest {
 
         fun InstalledApp.copy(
             label: String = entry.label,
-            updatedAt: Long = packageUpdatedAt,
+            updatedAt: Long? = packageUpdatedAt,
         ) = InstalledApp(entry.copy(label = label), updatedAt)
 
         val TRANSIT = app("io.example.transit", "乗換テスト")
@@ -840,5 +869,7 @@ class IndexSyncTest {
         val MAIL = app("io.example.mail", "メールテスト")
         val WORK_TRANSIT = app("io.example.transit", "乗換テスト", WORK)
         val WORK_MAIL = app("io.example.mail", "メールテスト", WORK)
+        val TERMINAL = app("io.example.terminal", "端末テスト")
+        val WORK_TERMINAL = app("io.example.terminal", "端末テスト", WORK)
     }
 }

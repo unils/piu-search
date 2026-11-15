@@ -163,6 +163,21 @@ class IndexStoreTest {
     }
 
     @Test
+    fun zeroAndUnknownUpdateTimesStayDistinctAfterReopening() {
+        val database = open()
+        database.index.replaceAll(listOf(stored(APPS[0], updatedAt = 0), stored(APPS[1], updatedAt = null)), STATE)
+
+        val times =
+            reopen(database)
+                .index
+                .load()
+                .apps
+                .associate { it.app.id to it.packageUpdatedAt }
+        assertEquals(0L, times[APPS[0].id])
+        assertNull(times[APPS[1].id])
+    }
+
+    @Test
     fun updateRemovesEveryActivityOfAReplacedPackage() {
         val database = open()
         val second = AppEntry(AppId(TRANSIT, "$TRANSIT.Second", PERSONAL), "乗換案内 時刻表")
@@ -211,7 +226,7 @@ class IndexStoreTest {
 
     private fun stored(
         entry: AppEntry,
-        updatedAt: Long = 1_000,
+        updatedAt: Long? = 1_000,
     ): StoredApp = StoredApp(IndexedApp(entry.id, entry.label, generator.generate(entry)), updatedAt)
 
     private fun LocalDatabase.count(table: String): Int =

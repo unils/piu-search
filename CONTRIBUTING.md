@@ -210,6 +210,14 @@ public fun withReading(analyzer: ReadingAnalyzer): SearchQuery
 - `core:*` は Android に依存させない（照合と学習を JVM だけで速くテストするため。[docs/design/architecture.md](docs/design/architecture.md)）
 - 画面を変えてスクリーンショットの正解（`app/src/test/screenshots/`）が変わったら、`./gradlew :app:recordRoborazziDebug` で撮り直し、差分を pull request に書く
 
+### 失敗と再試行
+
+書くときとレビューで、次を確かめる。
+
+- 0・null・空を失敗や不明とみなす箇所で、その値が正当に現れる入力はないか（例: APEX の中の APK の更新時刻は本当に 0）
+- 再試行が収束するか。同じ入力でもう一度やって同じ結果なら、何が変わって止まるのか
+- 知らせ（失敗の表示など）を出す条件と消す条件が対になっているか。「成功したら消す」の成功が来ない場合はないか
+
 ### 権限・通信・依存
 
 - `INTERNET` と `QUERY_ALL_PACKAGES` を持たせない（check が確かめる）。端末の中で完結させ、入っているアプリの一覧を外に出さない

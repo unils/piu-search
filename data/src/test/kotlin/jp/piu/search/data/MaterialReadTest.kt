@@ -8,6 +8,7 @@ import android.os.Process
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -44,13 +45,41 @@ class MaterialReadTest {
     }
 
     @Test
-    fun missingFileAndUnknownTimestampHaveNoFingerprint() {
+    fun missingFileHasNoFingerprint() {
         val base = files.newFile("base.apk")
         val info = ApplicationInfo().apply { sourceDir = base.path }
-        base.setLastModified(0)
-        assertNull(apkFingerprint(info))
         base.delete()
         assertNull(apkFingerprint(info))
+        info.sourceDir = files.newFolder("split-dir").path
+        assertNull(apkFingerprint(info))
+    }
+
+    // APEX の中の APK は時刻が 0 になる。読めないことと区別し、指紋を持たせる（毎回の同期で失敗し続けないため）
+    @Test
+    fun fileWithZeroTimestampHasAStableFingerprint() {
+        val base = files.newFile("base.apk").apply { setLastModified(0) }
+        val info = ApplicationInfo().apply { sourceDir = base.path }
+        val fingerprint = apkFingerprint(info)
+        assertNotNull(fingerprint)
+        assertEquals(fingerprint, apkFingerprint(info))
+        info.sourceDir = files.newFile("next-version.apk").apply { setLastModified(0) }.path
+        assertNotEquals(fingerprint, apkFingerprint(info))
+    }
+
+    // パッケージの情報を引けないときはファイルの時刻を使う。時刻 0 は値として返し、読めないときだけ不明にする
+    @Test
+    fun fileUpdateTimeOfZeroIsATimeAndAMissingFileIsUnknown() {
+        val base = files.newFile("gone.apk").apply { setLastModified(0) }
+        val info =
+            ApplicationInfo().apply {
+                packageName = GONE
+                sourceDir = base.path
+            }
+        val activity = LaunchableActivity(AppId(GONE, "Main", 0), "名前", Process.myUserHandle(), info, 0)
+        val source = AppSource(context)
+        assertEquals(0L, source.packageUpdatedAt(activity))
+        base.delete()
+        assertNull(source.packageUpdatedAt(activity))
     }
 
     @Test
@@ -87,6 +116,11 @@ class MaterialReadTest {
         shadow.setUserState(user, org.robolectric.shadows.ShadowUserManager.UserState.STATE_RUNNING_LOCKED)
         org.junit.Assert.assertEquals(ProfileReadStatus.UNAVAILABLE, source.profileReadStatus(0))
         org.junit.Assert.assertEquals(ProfileReadStatus.UNAVAILABLE, source.stampProfiles(false).getValue(0).status)
+    }
+
+    private companion object {
+        // 端末に入っていないパッケージ。PackageManager から引けず、ファイルの時刻に落ちる
+        const val GONE = "io.example.gone"
     }
 
     private fun activity(labelRes: Int = 0): LaunchableActivity {

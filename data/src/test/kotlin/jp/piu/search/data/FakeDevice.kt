@@ -43,9 +43,7 @@ internal class FakeDevice : DeviceApps {
     ) {
         for (app in installed) {
             apps[app.entry.id] =
-                if (app.complete && app.apkFingerprint == null &&
-                    app.packageUpdatedAt != 0L
-                ) {
+                if (app.complete && app.apkFingerprint == null && app.packageUpdatedAt != null) {
                     app.copy(apkFingerprint = "apk:${app.packageUpdatedAt}")
                 } else {
                     app
@@ -99,7 +97,7 @@ internal class FakeDevice : DeviceApps {
             .map {
                 ActivityStamp(
                     it.entry.id,
-                    if (withUpdateTime) it.packageUpdatedAt else 0,
+                    if (withUpdateTime) it.packageUpdatedAt else null,
                     it.apkFingerprint,
                     it.entry.id.profileSerial == PERSONAL,
                 )

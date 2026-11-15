@@ -147,9 +147,10 @@ internal object SyncPlanner {
         val fingerprintChanged =
             !stamp.isCurrentProfile &&
                 (stamp.apkFingerprint == null || old.first().apkFingerprint != stamp.apkFingerprint)
+        // 不明（null）は同じとみなさない。0 は APEX の中の APK の本当の時刻なので、ほかの値と同じく比べる
         val timeChanged =
             !scope.sequenceUsable &&
-                (stamp.packageUpdatedAt == 0L || old.first().packageUpdatedAt != stamp.packageUpdatedAt)
+                (stamp.packageUpdatedAt == null || old.first().packageUpdatedAt != stamp.packageUpdatedAt)
         return key in forced || (scope.sequenceUsable && key.packageName in changed) ||
             old.any { it.apkFingerprint == null } || fingerprintChanged || timeChanged ||
             old.mapTo(HashSet()) { it.app.id } != now.mapTo(HashSet()) { it.id }

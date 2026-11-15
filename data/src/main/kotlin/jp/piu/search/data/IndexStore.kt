@@ -17,11 +17,12 @@ import jp.piu.search.data.db.SearchKeyRow
  *
  * @property apkFingerprint base と split のパスと時刻。材料が不完全か旧版で作った索引なら null にして次回に読み直す
  * @property app 識別子・表示名・検索キー
- * @property packageUpdatedAt パッケージの最後の更新の時刻（`PackageInfo.lastUpdateTime`、ミリ秒）。全件の見直しで、作り直すアプリを選ぶのに使う
+ * @property packageUpdatedAt パッケージの最後の更新の時刻（`PackageInfo.lastUpdateTime`、ミリ秒）。全件の見直しで、作り直すアプリを選ぶのに使う。
+ *   読めなかったときは null で、次の見直しで同じとみなさない
  */
 public data class StoredApp(
     val app: IndexedApp,
-    val packageUpdatedAt: Long,
+    val packageUpdatedAt: Long?,
     val apkFingerprint: String? = null,
 )
 
@@ -173,7 +174,7 @@ public class IndexStore internal constructor(
                     activityName = id.activityName,
                     profileSerial = id.profileSerial,
                     label = stored.app.label,
-                    packageUpdatedAt = stored.packageUpdatedAt,
+                    packageUpdatedAt = stored.packageUpdatedAt ?: UNKNOWN_UPDATED_AT,
                     apkFingerprint = stored.apkFingerprint,
                 ),
             )
@@ -192,8 +193,16 @@ public class IndexStore internal constructor(
 
 private fun MetaRow.toSyncState(): SyncState = SyncState(changeSequence, bootCount, locales, buildFingerprint)
 
+// 列は NOT NULL で、null にするには表の移行が要る。どの端末の時刻にも一致しない値で「不明」を表す。
+// 0 は APEX の中の APK の本当の時刻なので使えない
+private const val UNKNOWN_UPDATED_AT = Long.MIN_VALUE
+
 private fun AppRow.toStoredApp(keys: List<SearchKey>): StoredApp =
-    StoredApp(IndexedApp(AppId(packageName, activityName, profileSerial), label, keys), packageUpdatedAt, apkFingerprint)
+    StoredApp(
+        IndexedApp(AppId(packageName, activityName, profileSerial), label, keys),
+        packageUpdatedAt.takeIf { it != UNKNOWN_UPDATED_AT },
+        apkFingerprint,
+    )
 
 private fun SearchKey.toRow(
     appId: Long,
