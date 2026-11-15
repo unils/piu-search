@@ -25,9 +25,17 @@ Piu Search（日本語の端末では「Piu アプリ検索」）は、端末に
 
 ## インストール
 
-現在、配布の準備中です。準備ができしだい、ここに入手方法を載せます。
+[F-Droid](https://f-droid.org/) の公式リポジトリへの登録を申請する予定です。それまでは、[GitHub Releases](https://github.com/unils/piu-search/releases) の APK（`piu-search-<版>.apk`）を入れてください。F-Droid に載った後も、F-Droid と GitHub Releases の APK は同じもので、どちらから入れても互いに上書きで更新できます。
 
-それまでは、下の「ビルド」の手順で APK を作って入れてください。
+APK はメンテナの鍵で署名しています。入れる前に、署名の証明書の SHA-256 指紋が次の値と同じことを確かめられます（`apksigner verify --print-certs piu-search-<版>.apk` の `certificate SHA-256 digest`）。
+
+指紋（SHA-256）:
+
+```
+43b28f21f64eb56ccf2e690b8744ce1b13da23b440d7fc05eadd6c660736fb07
+```
+
+同じソースから同じ APK ができること（再現可能なビルド）の確かめ方は、[docs/release.md](docs/release.md) にあります。
 
 ## 使い方
 
@@ -67,9 +75,10 @@ APK は `app/build/outputs/apk/debug/` にできます。開発環境の詳し�
 | `benchmark/` | 起動時間の計測と Baseline Profile の生成 |
 | `test-apps/` | 計器テストで端末に入れる、テスト用の小さなアプリ |
 | `tools/dict/` | 辞書データ（ブランド名の読みの表など）の検査 |
+| `tools/reproducible-build/` | 同じソースから同じ APK ができるかの確認 |
 | `config/detekt/` | 静的解析（detekt）の設定 |
-| `docs/` | 要件・設計・調査・決定の記録 |
-| `fastlane/metadata/` | ストア（F-Droid・IzzyOnDroid）向けの説明文 |
+| `docs/` | 要件・設計・調査・決定の記録と、版の出し方 |
+| `fastlane/metadata/` | F-Droid 向けの説明文 |
 
 `core/` の 3 つは Android に依存しない Kotlin のモジュールで、JVM の上だけでテストできます。`release-test/`・`benchmark/`・`test-apps/`・`tools/` の中身は、配布するアプリには含まれません。
 

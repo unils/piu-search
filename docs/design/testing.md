@@ -153,10 +153,10 @@ CI（push のたびに自動でビルドとテストを回す仕組み）は Git
 
 | ジョブ | いつ | 中身 |
 |---|---|---|
-| check | すべての push と pull request | 書式・Lint・単体テスト・評価セット・Robolectric・スクリーンショット・網羅率・依存とライセンスの検査 |
+| check | すべての push と pull request | 書式・Lint・単体テスト・評価セット・Robolectric・スクリーンショット・網羅率・依存とライセンスの検査。debug と release の APK と計器テストの APK も組み立てる |
 | instrumented | 手動のときだけ | エミュレータ（API 28・37）で計器テスト（debug と、R8 を通した版の `:release-test`） |
-| nightly | 毎日 | API 29・33 の計器テスト、依存の更新の確認 |
-| release | 版のタグを付けたとき | 署名つきの APK を作り、GitHub Releases に置く。署名鍵は GitHub の Secrets に置き、リポジトリには入れない |
+
+配布の APK は CI では作らない。メンテナが手元で組み立てて自分の鍵で署名し、GitHub Releases に置く（[release.md](../release.md)）。署名鍵を CI に預けないため。依存の更新の確認は Dependabot が行う。
 
 GitHub Actions の CI には完全にはこだわらない（2026-10-27 のメンテナの判断。課金しておらず、無料の runner ではエミュレータの起動が時間切れになった）。その代わり、**push の前に、手元で CI と同じ形の検査と、エミュレータの計器テストを通す**。エミュレータのジョブは手動のときだけ回す。
 
@@ -212,7 +212,7 @@ API 26 は 2 つの指標が同じ値なので、打てるまでだけを載せ�
 
 ## 公開前の検査（M7）
 
-- 再現可能なビルド: 同じソースから 2 回ビルドして、APK が同じになること（F-Droid の推奨）。APK の Baseline Profile（`assets/dexopt/baseline.prof`）と、起動用のプロファイルで並べ替えた DEX も含めて確かめる。プロファイルの元（`app/src/release/generated/baselineProfiles/` の `baseline-prof.txt` と `startup-prof.txt`）はリポジトリに入れてあり、ビルドのたびには生成しない
+- 再現可能なビルド: 同じソースから 2 回ビルドして、署名なしの APK がバイト単位で同じになること（F-Droid が比べるため）。`tools/reproducible-build/check.sh` が、別の 2 つのディレクトリで順に組み立てて比べる（手順は [release.md](../release.md)）。APK の Baseline Profile（`assets/dexopt/baseline.prof`・`baseline.profm`）と、起動用のプロファイルで並べ替えた DEX も比べる対象に入る。プロファイルの元（`app/src/release/generated/baselineProfiles/` の `baseline-prof.txt` と `startup-prof.txt`）はリポジトリに入れてあり、ビルドのたびには生成しない。2026-11-15 に 0.1.0 の候補のコミットで、`--max-workers` を 4 と 4、4 と 1 にして 2 回ずつ組み立て、4 つの APK がすべて一致した。同じ PC と同じ JDK での結果で、F-Droid の組み立て（Debian の OpenJDK 21）との一致は申請のときに `fdroid build` で確かめる
 - 端末の言語を英語・中国語にしても壊れないこと
 - ライセンスの表示（Kuromoji の Apache-2.0、IPADIC のライセンス、流用した辞書）がアプリ内と NOTICE にあること
 

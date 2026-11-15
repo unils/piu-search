@@ -8,6 +8,9 @@
 
 | 日付 | 決定 | 理由 | 詳細 |
 |---|---|---|---|
+| 2026-11-15 | release の APK に VCS の情報（`vcsInfo`）と依存の情報（`dependenciesInfo`）を入れない。配布の APK は CI では作らず、メンテナが手元で組み立てて署名する。署名は `apksigner sign --alignment-preserved`。Releases の資産の名前は `piu-search-<版>.apk` に固定する（AI） | 組み立てる場所で変わる情報と、F-Droid が中身を確かめられない情報を除き、F-Droid の組み立てと一致させる。build-tools 35 以降の `apksigner` は、この指定がないと ZIP の詰め物を作り直して一致しなくなる。F-Droid は版の番号だけで決まる URL から APK を取る | [release.md](release.md) |
+| 2026-11-15 | 最初の版（0.1.0）は GitHub Releases で出す。F-Droid への申請は、F-Droid の受け入れの方針（3 か月以上の開発）を満たしてから行う。Google の開発者確認の登録（本人確認）は保留する | メンテナの判断 | [release.md](release.md) |
+| 2026-11-14 | 配布は F-Droid の公式リポジトリだけにする。再現可能なビルドにして、メンテナの鍵の署名のまま配ってもらう。F-Droid が比べるため、同じ署名済みの APK を GitHub Releases にも置く。Google Play と IzzyOnDroid には出さない | メンテナの判断。F-Droid でも Releases でも同じ署名の APK になるので、利用者は入手先を替えても上書きで更新でき、Google の開発者確認に登録する場合も鍵の組が 1 つで済む | [release.md](release.md) |
 | 2026-11-14 | その検索語で選んだか救済した学習のあるアプリは、段階をまたいで上に並べる。上げる段数は「回数 − 1 ＋ 救済なら 1 − 30 日使わなければ 1」で、元の段階の差に届けば逆転する。効くのは記録の語と同じ語と、英字で最後の 1 音を打ちかけた形だけ。印（R4）が先に立つ | メンテナの判断（学習した語なら段階をまたいでよい。無条件に最上段ではなく、段階の差と学習の強さの兼ね合いで）。段数の式と効く範囲は AI が決めた。「めーる」でメールのアプリを 3 回選べばメルカリと入れ替わる。評価セットの学習なしの順位は全行変わらない（#14） | [learning.md](design/learning.md#規則)・[matching.md](design/matching.md#照合の段階と順位) |
 | 2026-11-14 | 読みの補いを漢字の検索語側にも使い、辞書の読みを先に残して 8 通りまで組み合わせる（AI） | かなだけの名前による追加評価 7 行で 3 位以内が 2/7 → 7/7。既存評価の順位を保った（T5、#19） | [testing.md](design/testing.md#照合の細部の回帰テストt5) |
 | 2026-11-14 | ブラウザの問い合わせに `MATCH_ALL`、カメラにパッケージ指定を使う（AI） | 既定以外のブラウザと後から入れたカメラをジャンルから落とさない（T7、#12） | [matching.md](design/matching.md#intent-filter-とカテゴリによるジャンル) |
@@ -98,6 +101,5 @@
 
 | 事項 | 選択肢 | メモ |
 |---|---|---|
-| 配布経路 | GitHub Releases・IzzyOnDroid・F-Droid・Google Play | AI の推奨: GitHub Releases と IzzyOnDroid で始め、F-Droid の本体に申請する。Google Play は使わない |
-| Google の開発者確認への対応 | 登録する（本人確認つきの通常の登録／20 台までの限定配布の登録）／登録しない | 2027 年に全世界へ広がり、Google Play で配らないアプリも対象になる。登録しないと、素の Android の利用者は 1 日待つ手順（Advanced Flow）を一度踏む必要がある。GrapheneOS は対象外の見込み。M7 で決める（[android-platform.md](research/android-platform.md#開発者確認の詳細)） |
+| Google の開発者確認への対応 | 登録する（本人確認つきの通常の登録／20 台までの限定配布の登録）／登録しない | 2026-11-15 の状況: 2026-09-30 から、ブラジル・インドネシア・シンガポール・タイで、Google Play など 7 つの参加ストアから入れるアプリにだけ適用されている。F-Droid と直接の APK の導入は、まだ対象でない。2027 年に全世界・すべてのアプリへ広げる予定。通常の登録は本人確認と 25 米ドルで、パッケージ名と署名鍵の組を登録する（鍵で署名した APK を出して所有を示す）。登録しないと、素の Android の利用者は 1 日待つ手順（Advanced Flow）を一度踏む必要がある。F-Droid は制度に反対し、登録を勧めていない。メンテナの鍵のまま配るので、登録するなら鍵の組は 1 つで済む。GrapheneOS は対象外の見込み（[android-platform.md](research/android-platform.md#開発者確認の詳細)） |
 | A3〜A5 の確認 | | [requirements.md](requirements.md) の「AI が補った要件」。設計はこれらを満たす前提で進めている |
