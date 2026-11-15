@@ -8,6 +8,7 @@ import android.os.Process
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -44,13 +45,25 @@ class MaterialReadTest {
     }
 
     @Test
-    fun missingFileAndUnknownTimestampHaveNoFingerprint() {
+    fun missingFileHasNoFingerprint() {
         val base = files.newFile("base.apk")
         val info = ApplicationInfo().apply { sourceDir = base.path }
-        base.setLastModified(0)
-        assertNull(apkFingerprint(info))
         base.delete()
         assertNull(apkFingerprint(info))
+        info.sourceDir = files.newFolder("split-dir").path
+        assertNull(apkFingerprint(info))
+    }
+
+    // APEX の中の APK は時刻が 0 になる。読めないことと区別し、指紋を持たせる（毎回の同期で失敗し続けないため）
+    @Test
+    fun fileWithZeroTimestampHasAStableFingerprint() {
+        val base = files.newFile("base.apk").apply { setLastModified(0) }
+        val info = ApplicationInfo().apply { sourceDir = base.path }
+        val fingerprint = apkFingerprint(info)
+        assertNotNull(fingerprint)
+        assertEquals(fingerprint, apkFingerprint(info))
+        info.sourceDir = files.newFile("next-version.apk").apply { setLastModified(0) }.path
+        assertNotEquals(fingerprint, apkFingerprint(info))
     }
 
     @Test

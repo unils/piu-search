@@ -15,6 +15,10 @@ import android.os.UserHandle
 import android.os.UserManager
 import jp.piu.search.core.search.AppId
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.nio.file.attribute.BasicFileAttributes
 
 /**
  * 索引に入れるプロファイル 1 つ。
@@ -268,19 +272,25 @@ public class AppSource(
     }
 }
 
-/** ファイルの不在や時刻 0 は成功した指紋として保存しない。順序の揺れは変化に数えない。 */
+/**
+ * ファイルの不在や読み取りの失敗は成功した指紋として保存しない。順序の揺れは変化に数えない。
+ *
+ * 時刻は例外で失敗を知らせる NIO で読む。`File.lastModified` は失敗も 0 で返すが、APEX の中の APK
+ * （例: Android 15 以降のターミナル）は本当に時刻が 0 で、失敗と区別できないと毎回の同期で読み直して失敗し続けるため。
+ */
 internal fun apkFingerprint(info: ApplicationInfo): String? {
     val base = info.sourceDir?.takeIf { it.isNotBlank() } ?: return null
     val paths = listOf(base) + info.splitSourceDirs.orEmpty().sorted()
     return try {
         val attributes = ArrayList<String>()
         for (path in paths) {
-            val file = File(path)
-            val time = file.lastModified()
-            if (!file.isFile || time == 0L) return null
-            attributes += "${path.length}:$path:$time"
+            val file = Files.readAttributes(Paths.get(path), BasicFileAttributes::class.java)
+            if (!file.isRegularFile) return null
+            attributes += "${path.length}:$path:${file.lastModifiedTime().toMillis()}"
         }
         attributes.joinToString("|")
+    } catch (_: IOException) {
+        null
     } catch (_: SecurityException) {
         null
     }

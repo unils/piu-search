@@ -8,6 +8,10 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
+### Fixed
+
+- 更新時刻が 0 の APK（APEX に入ったシステムのアプリ。Android 15 以降のターミナルなど）があると、開くたびに「索引を更新できなかった」と出続けた
+
 ## [0.1.0] - 2026-11-15
 
 最初の公開版。
