@@ -164,15 +164,36 @@ class IndexSyncInstrumentedTest {
         assertConverged(review)
     }
 
-    // 0.1.0 型の不具合（system image のアプリで毎回失敗する）を見逃さない。決定的な欠けは記録に残し、image ごとの件数と比べる
+    // 0.1.0 型の不具合（system image のアプリで毎回失敗する）を見逃さない。収束しても、決定的な欠けが増えれば検索の材料が失われるので、
+    // test-apps 以外の入口の欠けを段と理由ごとに数え、system image ごとの既知の件数と比べる（増減の相殺も見逃さない）。
+    // test-apps の分類ごとのアプリの欠けは MaterialIssueInstrumentedTest が厳密に確かめる
     private fun assertConverged(report: SyncReport) {
-        Log.i(TAG, "決定的な欠け: ${report.issueCounts.deterministic} 件 ${opened.last().index.load().issues.map { "${it.stage}:${it.cause}" }}")
-        if (report.readPackages == 0 && report.failedProfiles.isEmpty() && report.issueCounts.retryPending == 0 &&
-            report.issueCounts.suspectedBug == 0
+        val issues =
+            opened
+                .last()
+                .index
+                .load()
+                .issues
+        val breakdown =
+            issues
+                .filterNot { it.key.packageName.startsWith(TEST_APP_PREFIX) }
+                .groupingBy { "${it.stage}:${it.cause}" }
+                .eachCount()
+                .toSortedMap()
+        Log.i(TAG, "決定的な欠け: ${report.issueCounts.deterministic} 件。test-apps 以外の欠け（$IMAGE）: $breakdown")
+        if (report.readPackages != 0 || report.failedProfiles.isNotEmpty() || report.issueCounts.retryPending != 0 ||
+            report.issueCounts.suspectedBug != 0
         ) {
+            throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
+        }
+        assertEquals("報告の件数は保存した行の件数", IssueCounts.of(issues), report.issueCounts)
+        val known = KNOWN_ISSUES[IMAGE]
+        if (known == null) {
+            // 実機など、件数を定めていない image では比べない（入っているアプリで変わるため）
+            Log.w(TAG, "既知の件数のない image（$IMAGE）なので比べない")
             return
         }
-        throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
+        assertEquals("test-apps 以外の欠け（$IMAGE。image を上げたら testing.md のとおり測り直す）", known, breakdown)
     }
 
     // 読み直しの原因になりうるパッケージを並べる。どの入口が収束しないかを、出力だけで追えるようにする
@@ -286,6 +307,20 @@ class IndexSyncInstrumentedTest {
         const val TAG = "IndexSyncTest"
         const val FILE = "index-sync-instrumented.db"
         const val TRANSIT = "jp.piu.search.testapp.transit"
+        const val TEST_APP_PREFIX = "jp.piu.search.testapp."
+
+        /** この端末の system image。CI と手元の AVD の image（AOSP の既定の x86_64 の像。PRODUCT は API 37 が `sdk_phone64_x86_64`、API 28 が `sdk_phone_x86_64`）を見分ける。 */
+        val IMAGE = "${android.os.Build.PRODUCT}/${android.os.Build.VERSION.SDK_INT}"
+
+        /**
+         * system image ごとの、test-apps 以外の入口の欠けの行の件数（`段:理由` ごと）。同期を 2 回続けた後の値。
+         * image を上げたら測り直して直す（testing.md の「読み取りの失敗と材料の欠け」）。
+         */
+        val KNOWN_ISSUES: Map<String, Map<String, Int>> =
+            mapOf(
+                "sdk_phone64_x86_64/37" to emptyMap(),
+                "sdk_phone_x86_64/28" to emptyMap(),
+            )
         const val ORIGINAL_APK = "/data/local/tmp/piu-testapp-transit-original.apk"
         const val UPDATE_APK = "/data/local/tmp/piu-testapp-transit-update.apk"
         const val TIMEOUT_MILLIS = 30_000L

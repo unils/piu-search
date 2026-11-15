@@ -213,6 +213,20 @@ class SyncPlannerTest {
         assertEquals(IssueDecision.Keep, pkg.issues[MaterialStage.SIGNER])
     }
 
+    // 時刻を引かなかった一覧では、鍵を確定する前に指紋が替わりうる。一覧の入口の指紋と確定した鍵が違えば CHANGED_DURING_READ
+    // （表示名は一覧の時点の APK のもの）。読む前と読んだ後が確定した鍵と同じでも見逃さない
+    @Test
+    fun fingerprintMovingBeforeTheKeysAreFixedIsAChangedDuringRead() {
+        val now = listOf(stamp(MAPS, fingerprint = "apk:list", time = null))
+        val fixed = ApkKeys(2_000, "apk:fixed")
+        val read = read(now, before = fixed, after = fixed, listedKeys = fixed)
+        val pkg = plan(CHANGES, targets(CHANGES, emptyList(), now), emptyList(), emptyList(), read).packages.single()
+        assertEquals(MaterialCauses.CHANGED_DURING_READ, pkg.entryFailure?.cause)
+        assertEquals(fixed, pkg.keys)
+        val same = read(now, listedKeys = ApkKeys(2_000, "apk:list"))
+        assertNull(plan(CHANGES, targets(CHANGES, emptyList(), now), emptyList(), emptyList(), same).packages.single().entryFailure)
+    }
+
     @Test
     fun withoutListedKeysTheReadIsNotCompared() {
         val now = listOf(stamp(MAPS, fingerprint = null, time = null))
@@ -414,9 +428,10 @@ class SyncPlannerTest {
         signerFailure: Exception? = null,
         vanish: Set<AppId> = emptySet(),
         labelOf: (AppId) -> String = { it.packageName },
+        listedKeys: ApkKeys? = null,
     ): PackageRead {
         val first = listed.first()
-        val keys = ApkKeys(first.packageUpdatedAt, first.apkFingerprint)
+        val keys = listedKeys ?: ApkKeys(first.packageUpdatedAt, first.apkFingerprint)
         var phase = 0
         return readPackage(
             key = PackageKey(first.id.profileSerial, first.id.packageName),

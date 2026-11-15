@@ -4,6 +4,7 @@ package jp.piu.search.data
 
 import android.content.pm.ApplicationInfo
 import android.os.Process
+import android.os.UserHandle
 import jp.piu.search.core.reading.ReadingAnalyzer
 import jp.piu.search.core.reading.ReadingToken
 import jp.piu.search.core.search.AppEntry
@@ -15,6 +16,15 @@ internal const val PERSONAL = 0L
 
 /** 偽の端末の仕事用プロファイルのシリアル番号。 */
 internal const val WORK = 11L
+
+/** 偽の端末の仕事用プロファイルのユーザー id。 */
+internal const val WORK_USER_ID = 10
+
+/** ユーザー 1 つの uid の幅（AOSP の `UserHandle.PER_USER_RANGE`。公開 API にないので値を写す）。 */
+private const val PER_USER_RANGE = 100_000
+
+/** 偽の端末の入口の表示名の資源の id（[FakeDevice.labelReader] を渡したとき）。 */
+internal const val LABEL_RES = 0x7f0b0001
 
 /**
  * 偽の端末に入れるアプリの入口 1 つ。指紋を省くと、時刻から作る（時刻もなければ鍵なし）。
@@ -37,6 +47,8 @@ internal data class InstalledApp(
  *
  * 段の失敗は「読み切れたか」で渡さず、段ごとの例外か結果で渡す（[fail]・[vanished]・[listingLabelFailures]・[keysDuringRead]）。
  * 組み立てと分類は本物の [readPackage] と [MaterialCauses] を通す（testing.md の「分類」）。
+ * [labelReader]・[signerReader] を渡すと、別の言語の名前と署名も本物の読み手で読む（入力の資源と PackageInfo はテストが偽装する）。
+ * 渡さなければ、入口の [AppEntry.localizedLabels]・[AppEntry.signerNames] と [fail] の例外をそのまま返す。
  */
 internal class FakeDevice : DeviceApps {
     var bootCount: Int? = 1
@@ -60,6 +72,15 @@ internal class FakeDevice : DeviceApps {
     var failUserQuery = false
     var beforeStamps: () -> Unit = {}
     var beforeRead: () -> Unit = {}
+
+    /** 組の詳細の問い合わせの中で呼ぶ（読む前と読んだ後の鍵の観測の間）。 */
+    var duringRead: (PackageKey) -> Unit = {}
+
+    /** 別の言語の名前の本物の読み手。入口の表示名の資源の id は [LABEL_RES]。 */
+    var labelReader: LocalizedLabelReader? = null
+
+    /** 署名の本物の読み手。仕事用の入口の APK のパスはない（`ARCHIVE_UNREADABLE` になる）。 */
+    var signerReader: SignerReader? = null
 
     /** 段の失敗。`ENTRY` は詳細の問い合わせ、`LABEL` は別の言語の名前、`SIGNER` は署名の読み取りで投げる。 */
     val failures = HashMap<Pair<PackageKey, MaterialStage>, Throwable>()
@@ -174,9 +195,12 @@ internal class FakeDevice : DeviceApps {
             isArchived = archived,
         )
 
+    override fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys> =
+        targets.keys.associateWith(::currentKeys)
+
     override fun readPackages(
         targets: Map<PackageKey, List<ActivityStamp>>,
-        timeTaken: Boolean,
+        listedKeys: Map<PackageKey, ApkKeys>,
     ): Map<Long, ProfileRead<PackageRead>> {
         beforeRead()
         return targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
@@ -188,15 +212,7 @@ internal class FakeDevice : DeviceApps {
                     readPackage(
                         key = key,
                         listed = stamps,
-                        listedKeys =
-                            if (timeTaken) {
-                                ApkKeys(
-                                    stamps.first().packageUpdatedAt,
-                                    stamps.first().apkFingerprint,
-                                )
-                            } else {
-                                currentKeys(key)
-                            },
+                        listedKeys = listedKeys.getValue(key),
                         labelOf = { id -> listingLabelFailures[id]?.let { throw it } ?: checkNotNull(listed[id]).entry.label },
                         observeKeys =
                             run {
@@ -204,18 +220,21 @@ internal class FakeDevice : DeviceApps {
                                 { observe(phase++) }
                             },
                         details = {
+                            duringRead(key)
                             failures[key to MaterialStage.ENTRY]?.let { throw it }
                             apps.values.filter { it.key == key && it.entry.id !in vanished }.map { it.activity() }
                         },
                         readLabels = { activity ->
-                            LabelRead(
+                            labelReader?.read(activity) ?: LabelRead(
                                 apps[activity.id]?.entry?.localizedLabels.orEmpty(),
                                 failures[key to MaterialStage.LABEL] as? Exception,
                             )
                         },
                         readSigners = { activity ->
-                            failures[key to MaterialStage.SIGNER]?.let { throw it }
-                            apps[activity.id]?.entry?.signerNames.orEmpty()
+                            signerReader?.read(activity) ?: run {
+                                failures[key to MaterialStage.SIGNER]?.let { throw it }
+                                apps[activity.id]?.entry?.signerNames.orEmpty()
+                            }
                         },
                     )
                 }
@@ -230,8 +249,22 @@ internal class FakeDevice : DeviceApps {
     private fun currentKeys(key: PackageKey): ApkKeys =
         apps.values.firstOrNull { it.key == key }?.let { ApkKeys(it.packageUpdatedAt, it.fingerprint) } ?: ApkKeys(null, null)
 
-    private fun InstalledApp.activity() =
-        LaunchableActivity(entry.id, entry.label, Process.myUserHandle(), ApplicationInfo(), activityLabelRes = 0)
+    private fun InstalledApp.activity(): LaunchableActivity {
+        val info =
+            ApplicationInfo().apply {
+                packageName = entry.id.packageName
+                if (labelReader != null) labelRes = LABEL_RES
+            }
+        val user =
+            if (entry.id.profileSerial ==
+                PERSONAL
+            ) {
+                Process.myUserHandle()
+            } else {
+                UserHandle.getUserHandleForUid(WORK_USER_ID * PER_USER_RANGE)
+            }
+        return LaunchableActivity(entry.id, entry.label, user, info, activityLabelRes = 0)
+    }
 
     override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> {
         genresCalls++

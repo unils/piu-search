@@ -168,6 +168,7 @@ public class IndexSync internal constructor(
     private val profileSerialOf: (UserHandle) -> Long? = device::profileSerial,
     private val appVersionCode: Int = 0,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val warmUpAnalyzer: () -> Boolean = { warmUpKuromoji(analyzer) },
 ) {
     /**
      * 端末の部品で作る。[analyzer] は、漢字の検索語に読みを付ける側（画面）と共有してよい。
@@ -392,8 +393,16 @@ public class IndexSync internal constructor(
             val now = clock()
             val round = plan(before, deviceState, notifications.keys, utcDay(now))
             val plan = round.sync
-            analyzerMillis += warmUpIfNeeded(plan.packages)
-            val built = plan.packages.map { build(it, before) }
+            // 辞書の初期化の失敗の単位は、キーを作る入口。同期全体を止めず、その入口を KEYS の欠けにして旧索引の行か代わりの行で残す
+            // （architecture.md の「材料の欠け」）。Error は捕まえない
+            val warmUpFailure =
+                try {
+                    analyzerMillis += warmUpIfNeeded(plan.packages)
+                    null
+                } catch (e: RuntimeException) {
+                    e
+                }
+            val built = plan.packages.map { build(it, before, warmUpFailure) }
             val next = nextApps(before, plan, built)
             val nextIssues = nextIssues(before, plan, built, next)
             val changed = next != before.apps
@@ -579,6 +588,15 @@ public class IndexSync internal constructor(
                 changes.packages,
                 requestTargets.values.flatten().toHashSet(),
             )
+        val readTargets = targets.readTargets
+        // 保存する鍵は一覧の観測だけ（architecture.md の「鍵の比べ方」）。時刻を引かなかった一覧では、読む組の鍵をここで
+        // （ジャンルと詳細を読む前に）一度に観測して確定し、保存まで保つ。組ごとに読む直前で観測すると、それまでの変化を見逃す
+        val listedKeys =
+            when {
+                readTargets.isEmpty() -> emptyMap()
+                scope.sequenceUsable -> device.listedKeys(readTargets)
+                else -> readTargets.mapValues { (_, stamps) -> ApkKeys(stamps.first().packageUpdatedAt, stamps.first().apkFingerprint) }
+            }
         val genreStarted = SystemClock.elapsedRealtime()
         // 失敗の単位は同期 1 回のジャンルの判定。前のジャンルのキーを保ち、型は報告に残す
         var genreFailure: String? = null
@@ -590,8 +608,7 @@ public class IndexSync internal constructor(
                 null
             }
         val genreMillis = SystemClock.elapsedRealtime() - genreStarted
-        val readTargets = targets.readTargets
-        val candidates = if (readTargets.isEmpty()) emptyMap() else device.readPackages(readTargets, timeTaken = !scope.sequenceUsable)
+        val candidates = if (readTargets.isEmpty()) emptyMap() else device.readPackages(readTargets, listedKeys)
         val plan =
             SyncPlanner.plan(
                 scope,
@@ -629,17 +646,18 @@ public class IndexSync internal constructor(
     private fun warmUpIfNeeded(packages: List<PackagePlan>): Long {
         // 正規化だけの代わりの行は読みを作らないので、辞書は要らない
         if (packages.none { !it.substitute && it.build.isNotEmpty() }) return 0
-        if (analyzer !is KuromojiReadingAnalyzer || analyzer.isLoaded) return 0
         val started = SystemClock.elapsedRealtime()
-        analyzer.warmUp()
-        return SystemClock.elapsedRealtime() - started
+        return if (warmUpAnalyzer()) SystemClock.elapsedRealtime() - started else 0
     }
 
     // 組 1 つの行を作る。失敗の単位は入口 1 つのキーの生成で、ほかの入口とほかの組を止めない。
-    // 一覧の入口は必ず行にする（キーを作れなければ旧索引の行、なければ正規化だけのキー、それも作れなければキー 0 個）
+    // 一覧の入口は必ず行にする（キーを作れなければ旧索引の行、なければ正規化だけのキー、それも作れなければキー 0 個）。
+    // 辞書の初期化が失敗した回（warmUpFailure）は、読みを作る入口のキーを作らず、その例外で KEYS の欠けにする。
+    // 生成に進むと、入口ごとに辞書の読み込みを試し直すため
     private fun build(
         plan: PackagePlan,
         before: Snapshot,
+        warmUpFailure: RuntimeException?,
     ): BuiltPackage {
         val oldById = before.apps.filter { it.key == plan.key }.associateBy { it.app.id }
         var keysFailure: Pair<AppEntry, RuntimeException>? = null
@@ -647,13 +665,18 @@ public class IndexSync internal constructor(
         var rebuilt = 0
         for (entry in plan.build) {
             val keys =
-                try {
-                    rebuilt++
-                    if (plan.substitute) substituteKeys(entry.label) else generator.generate(entry)
-                } catch (e: RuntimeException) {
-                    rebuilt--
-                    keysFailure = keysFailure ?: (entry to e)
+                if (!plan.substitute && warmUpFailure != null) {
+                    keysFailure = keysFailure ?: (entry to warmUpFailure)
                     null
+                } else {
+                    try {
+                        rebuilt++
+                        if (plan.substitute) substituteKeys(entry.label) else generator.generate(entry)
+                    } catch (e: RuntimeException) {
+                        rebuilt--
+                        keysFailure = keysFailure ?: (entry to e)
+                        null
+                    }
                 }
             rows +=
                 if (keys != null) {
@@ -873,6 +896,13 @@ public class IndexSync internal constructor(
                 .toLocalDate()
                 .toString()
     }
+}
+
+/** Kuromoji の辞書をまだ読んでいなければ読む。読んだら真。辞書を読めなければ例外（`RuntimeException`）。 */
+private fun warmUpKuromoji(analyzer: ReadingAnalyzer): Boolean {
+    if (analyzer !is KuromojiReadingAnalyzer || analyzer.isLoaded) return false
+    analyzer.warmUp()
+    return true
 }
 
 /**

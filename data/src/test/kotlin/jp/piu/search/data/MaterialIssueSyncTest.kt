@@ -50,7 +50,10 @@ class MaterialIssueSyncTest {
         context.deleteDatabase(FILE)
     }
 
-    private fun newSync(appVersionCode: Int = 1): IndexSync {
+    private fun newSync(
+        appVersionCode: Int = 1,
+        warmUp: () -> Boolean = { false },
+    ): IndexSync {
         val database = LocalDatabase.open(context, FILE, SearchIndexVersion.CURRENT, allowMainThread = true).also(opened::add)
         val generator = SearchKeyGenerator(analyzer, LatinWordReader(BrandTable.parse(emptyList())))
         return IndexSync(
@@ -63,6 +66,7 @@ class MaterialIssueSyncTest {
             profileSerialOf = { PERSONAL },
             appVersionCode = appVersionCode,
             clock = { now },
+            warmUpAnalyzer = warmUp,
         )
     }
 
@@ -142,6 +146,111 @@ class MaterialIssueSyncTest {
         assertTrue(sync.index.labelOf(newEntry.entry.id) == newEntry.entry.label)
         assertTrue(sync.index.labelOf(newKeys.entry.id) == newKeys.entry.label)
         analyzer.failOn = null
+    }
+
+    // 差分の同期で、一覧・読む前・読んだ後の鍵を別々の値にする。保存する鍵は一覧の時点の値で（読む前の値でも、時刻と指紋の
+    // 別の時点の組み合わせでもない）、次の同期で読み直す。読む前の値を保存すると、一覧の表示名と新しい鍵が組になり、読み直されない
+    @Test
+    fun keysChangingAfterTheListingOfAChangesSyncSaveTheListedKeys() {
+        for (profile in listOf(PERSONAL, WORK)) {
+            closeDatabases()
+            opened.clear()
+            device = FakeDevice()
+            val maps = app("io.example.maps", "地図一", profile)
+            device.install(maps)
+            val sync = newSync()
+            sync.sync()
+
+            val listed = maps.copy(label = "地図二", updatedAt = 2_000)
+            device.install(listed)
+            // 一覧の後（ジャンルと詳細の読み取りの前）に替わり、詳細の問い合わせの中でもう一度替わる。番号には出さない
+            device.beforeRead = {
+                device.install(maps.copy(label = "地図三", updatedAt = 3_000), silently = true)
+                device.beforeRead = {}
+            }
+            val final = maps.copy(label = "地図四", updatedAt = 4_000)
+            device.duringRead = {
+                device.install(final, silently = true)
+                device.duringRead = {}
+            }
+            device.reads.clear()
+            val changed = sync.sync()
+            assertEquals("$profile", SyncMode.CHANGES, changed.mode)
+            assertEquals("$profile", listOf(maps.key), device.reads)
+            val entry = issues().single()
+            assertEquals("$profile", MaterialCauses.CHANGED_DURING_READ, entry.cause)
+            assertTrue("$profile", entry.retryOnce)
+            val saved =
+                opened
+                    .last()
+                    .index
+                    .load()
+                    .apps
+                    .single()
+            assertEquals("$profile", ApkKeys(2_000, "apk:2000"), ApkKeys(saved.packageUpdatedAt, saved.apkFingerprint))
+
+            // 保存した鍵が今の値と違うので読み直し、今の表示名になる。その後は読まない
+            device.reads.clear()
+            sync.sync()
+            assertEquals("$profile", listOf(maps.key), device.reads)
+            assertEquals("$profile", "地図四", sync.index.labelOf(maps.entry.id))
+            assertEquals("$profile", emptyList<MaterialIssue>(), issues())
+            device.reads.clear()
+            sync.sync()
+            assertEquals("$profile", emptyList<PackageKey>(), device.reads)
+        }
+    }
+
+    // 辞書の初期化の失敗も、入口ごとの救済につなぐ。キーを作る入口は KEYS の欠けになり、旧索引の行か代わりの行で検索に残る。
+    // 同期全体を失敗させると、初回なら一覧のどのアプリも索引に入らず、開くたびに同じ初期化を試す
+    @Test
+    fun analyzerWarmUpFailureBecomesKeysIssuesWithFallbackRows() {
+        val maps = app("io.example.maps", "地図テスト")
+        device.install(maps)
+        var failing: Throwable? = null
+        var warmUps = 0
+        val sync =
+            newSync(warmUp = {
+                warmUps++
+                failing?.let { throw it }
+                false
+            })
+        sync.sync()
+
+        failing = IllegalStateException("辞書を読めない")
+        device.install(maps.copy(label = "地図テスト新", updatedAt = 2_000))
+        val transit = app("io.example.transit", "乗換テスト", WORK)
+        device.install(transit)
+        analyzer.calls = 0
+        val report = sync.sync()
+        // 読み直しで辞書を何度も読み込まないよう、キーの生成に進まない
+        assertEquals(0, analyzer.calls)
+        assertEquals(2, warmUps)
+        assertEquals("地図テスト", sync.index.labelOf(maps.entry.id))
+        assertEquals(listOf("乗換テスト"), sync.found("乗換テスト"))
+        val keys = issues().filter { it.stage == MaterialStage.KEYS }
+        assertEquals(setOf(maps.key, transit.key), keys.map { it.key }.toSet())
+        assertEquals(issues(), keys)
+        for (issue in keys) {
+            assertEquals("java.lang.IllegalStateException", issue.cause)
+            assertEquals(IssueCategory.SUSPECTED_BUG, issue.category)
+            assertFalse(issue.retryOnce)
+            assertNotNull(issue.frames)
+        }
+        assertEquals(IssueCounts(suspectedBug = 2), report.issueCounts)
+        assertNull(sync.status.failure)
+
+        // 鍵を保存したので、初期化が失敗し続けても読み直さず、初期化も試さない
+        device.reads.clear()
+        sync.sync()
+        assertEquals(emptyList<PackageKey>(), device.reads)
+        assertEquals(2, warmUps)
+
+        // Error は捕まえない
+        failing = OutOfMemoryError()
+        device.install(maps.copy(label = "地図テスト三", updatedAt = 3_000))
+        org.junit.Assert.assertThrows(OutOfMemoryError::class.java) { sync.sync() }
+        assertEquals("地図テスト", sync.index.labelOf(maps.entry.id))
     }
 
     @Test

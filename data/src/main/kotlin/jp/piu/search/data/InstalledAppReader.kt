@@ -12,7 +12,8 @@ import jp.piu.search.core.search.AppId
  *
  * @property key プロファイルとパッケージの組
  * @property listed 一覧の入口（一覧の観測）
- * @property listedKeys 保存し、前後と比べる鍵。一覧で時刻を引いたなら一覧の値、引かなかったなら詳細を読む前に一覧の情報から観測した値
+ * @property listedKeys 保存し、前後と比べる鍵（一覧の観測）。一覧で時刻を引いたなら一覧の値、引かなかったなら、対象を選んだ直後
+ *   （ジャンルと詳細を読む前）に一覧の情報から時刻と指紋を一度に観測した値（[InstalledAppReader.listedKeys]）
  * @property before 詳細を読む前の鍵
  * @property after 詳細を読んだ後の鍵
  * @property labels 一覧の表示名。取得が例外になった入口は null
@@ -155,8 +156,9 @@ public class InstalledAppReader(
         val listing = source.listing(withUpdateTime = false)
         val stamps = listing.profiles.values.flatMap { it.items }
         val targets = stamps.groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
+        val keys = listedKeys(listing, targets)
         val genreMap = genres.resolveStamps(stamps)
-        return readPackages(listing, targets, timeTaken = false).values.flatMap { profile ->
+        return readPackages(listing, targets, keys).values.flatMap { profile ->
             profile.items.flatMap { read ->
                 read.listed.map {
                     AppEntry(
@@ -172,29 +174,44 @@ public class InstalledAppReader(
     }
 
     /**
+     * 一覧 [listing] の情報で、[targets] の組の鍵（時刻と指紋）を観測する。一覧で時刻を引かなかった差分の同期で、読む組の一覧の観測を
+     * 確定する（architecture.md の「鍵の比べ方」）。対象を選んだ直後、ジャンルと詳細を読む前に呼び、結果を保存まで保つ。
+     * 一覧にない組は返さない。
+     */
+    internal fun listedKeys(
+        listing: Listing,
+        targets: Map<PackageKey, List<ActivityStamp>>,
+    ): Map<PackageKey, ApkKeys> =
+        targets.entries
+            .mapNotNull { (key, listed) ->
+                val profile = listing.profile(key.profileSerial) ?: return@mapNotNull null
+                val info = listing.info(listed.first().id) ?: return@mapNotNull null
+                key to source.observeKeys(info, profile.isCurrent)
+            }.toMap()
+
+    /**
      * [targets] の組を、一覧 [listing] の情報で読む。対象はプロファイルとパッケージの組で、ほかのプロファイルの同じパッケージは読まない。
      *
      * 読み終えた後にプロファイルを確かめ直し、読めなくなっていたら結果を捨てる（読み取り中の一時停止を正常な空にしないため）。
      *
-     * @param timeTaken 一覧で更新の時刻を引いたか。引かなかった組は、詳細を読む前に鍵を観測し、それを一覧の観測とする
+     * @param listedKeys 組ごとの一覧の観測の鍵。保存し、読む前と読んだ後の観測と比べる
      */
     internal fun readPackages(
         listing: Listing,
         targets: Map<PackageKey, List<ActivityStamp>>,
-        timeTaken: Boolean,
+        listedKeys: Map<PackageKey, ApkKeys>,
     ): Map<Long, ProfileRead<PackageRead>> =
         targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
             val profile = listing.profile(serial) ?: return@mapValues ProfileRead(ProfileReadStatus.UNAVAILABLE)
             val reads =
                 packages.map { (key, listed) ->
                     val info = checkNotNull(listing.info(listed.first().id)) { "一覧にない入口" }
-                    val observe = { source.observeKeys(info, profile.isCurrent) }
                     readPackage(
                         key = key,
                         listed = listed,
-                        listedKeys = if (timeTaken) ApkKeys(listed.first().packageUpdatedAt, listed.first().apkFingerprint) else observe(),
+                        listedKeys = listedKeys.getValue(key),
                         labelOf = { id -> checkNotNull(listing.info(id)).label.toString() },
-                        observeKeys = observe,
+                        observeKeys = { source.observeKeys(info, profile.isCurrent) },
                         details = { source.details(key.packageName, profile) },
                         readLabels = labels::read,
                         readSigners = signers::read,

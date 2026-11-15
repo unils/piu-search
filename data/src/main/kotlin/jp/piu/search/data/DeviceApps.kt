@@ -37,13 +37,19 @@ internal interface DeviceApps {
     fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>>
 
     /**
+     * 直前の [stampProfiles] の一覧で、[targets] の組の鍵（時刻と指紋）を一度に観測する（[InstalledAppReader.listedKeys]）。
+     * 時刻を引かなかった一覧で、読む組の一覧の観測を確定する。ジャンルと詳細を読む前に呼ぶ。
+     */
+    fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys>
+
+    /**
      * 直前の [stampProfiles] の一覧で、[targets] の組の詳細を段ごとに読む。
      *
-     * @param timeTaken 一覧で時刻を引いたか（[InstalledAppReader.readPackages]）
+     * @param listedKeys 組ごとの一覧の観測の鍵（[InstalledAppReader.readPackages]）
      */
     fun readPackages(
         targets: Map<PackageKey, List<ActivityStamp>>,
-        timeTaken: Boolean,
+        listedKeys: Map<PackageKey, ApkKeys>,
     ): Map<Long, ProfileRead<PackageRead>>
 
     /** APK の変化によらないジャンルの材料を毎回問い合わせる。 */
@@ -110,11 +116,18 @@ internal class AndroidDeviceApps(
         return next.profiles.mapValues { (_, result) -> result.copy(items = result.items.filter { it.id.packageName != ownPackage }) }
     }
 
+    override fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys> =
+        reader.listedKeys(checkNotNull(listing) { "一覧の前に鍵を観測した" }, targets.filterKeys { it.packageName != ownPackage })
+
     override fun readPackages(
         targets: Map<PackageKey, List<ActivityStamp>>,
-        timeTaken: Boolean,
+        listedKeys: Map<PackageKey, ApkKeys>,
     ): Map<Long, ProfileRead<PackageRead>> =
-        reader.readPackages(checkNotNull(listing) { "一覧の前に詳細を読んだ" }, targets.filterKeys { it.packageName != ownPackage }, timeTaken)
+        reader.readPackages(
+            checkNotNull(listing) { "一覧の前に詳細を読んだ" },
+            targets.filterKeys { it.packageName != ownPackage },
+            listedKeys,
+        )
 
     override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> = genreResolver.resolveStamps(stamps)
 }

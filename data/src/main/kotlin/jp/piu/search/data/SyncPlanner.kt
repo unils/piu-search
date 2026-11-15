@@ -388,11 +388,17 @@ internal object SyncPlanner {
         }
     }
 
-    // 一覧の時点で鍵が取れなければ前後を比べない（片方がない比較では替わったかを決められない）
+    // 一覧の時点で鍵が取れなければ前後を比べない（片方がない比較では替わったかを決められない）。
+    // 時刻を引かなかった一覧では、鍵を確定した値と一覧の入口の指紋も比べる（一覧の後、鍵を確定するまでに替わった。表示名は一覧の時点のもの）
     private fun changedDuringRead(read: PackageRead): ReadFailure? {
         val listed = read.listedKeys
+        val listingMoved = read.listed.first().apkFingerprint != listed.fingerprint
         val fingerprintMoved =
-            listed.fingerprint != null && (read.before.fingerprint != listed.fingerprint || read.after.fingerprint != listed.fingerprint)
+            listingMoved ||
+                (
+                    listed.fingerprint != null &&
+                        (read.before.fingerprint != listed.fingerprint || read.after.fingerprint != listed.fingerprint)
+                )
         val timeMoved = listed.updatedAt != null && (read.before.updatedAt != listed.updatedAt || read.after.updatedAt != listed.updatedAt)
         return if (fingerprintMoved || timeMoved) ReadFailure.code(MaterialCauses.CHANGED_DURING_READ) else null
     }

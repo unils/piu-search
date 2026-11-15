@@ -163,11 +163,14 @@ T7 の作業では計器テスト・エミュレータ・adb を実行してい�
 - `IndexSyncTest`: 仕事用が一時停止中にこのアプリの版が変わり、個人用だけを読んで版を保存した後、仕事用の再開後に、仕事用の欠けの行のある組を読み直すこと。版の保存と印が同じトランザクションであること（保存の前に止めたら、どちらも書かれない）
 - `IndexSyncTest`: 仕事用を一時停止 → 変更なしで再開したとき、作り直しが 0 であること（停止のたびに印を立てない）。停止中に言語を変えた場合だけ、再開後に仕事用を作り直すこと
 - `IndexSyncTest`: アーカイブ済みの組（`FakeDevice` に `isArchived` の組を足す）で `LABEL`・`SIGNER` を読まず、欠けの行を書かず、`SyncReport` のアーカイブの件数に入ること。`LABEL`・`SIGNER` の欠けの行のある組をアーカイブすると、その行が消えること。個人用の組を、変更番号に出さずに復元しても読み直すこと（`archived` の比較で）。仕事用が一時停止中でも、アーカイブの件数が保存した索引どおりに数えられること
-- `IndexSyncInstrumentedTest`: 端末の全入口で同期を 2 回続け、2 回目に何も読み直さず、再試行待ちと不具合の疑いの行がないこと。決定的な欠けの件数を `SyncReport` で assert し、system image ごとの既知の件数と比べる（image を上げたら数を直す）。0.1.0 型の不具合（system image のアプリで決定的に失敗する）を CI で見逃さないため
+- `MaterialIssueSyncTest`: 差分の同期（時刻を引かない一覧）で、一覧・読む前・読んだ後の鍵を別々にし（一覧の後と詳細の問い合わせの中で APK を替える）、個人用と仕事用の両方で、`CHANGED_DURING_READ` になり保存した鍵が一覧の時点の値であること、次の同期で読み直して今の表示名になり、その次は読まないこと。`SyncPlannerTest`: 一覧の入口の指紋と、確定した鍵の指紋が違えば `CHANGED_DURING_READ` になること
+- `MaterialIssueSyncTest`: 形態素解析の辞書の初期化が `RuntimeException` を投げても同期は終わり、キーを作る入口が `KEYS` の欠け（不具合の疑い）になり、既存の入口は旧索引の行、新しい入口は代わりの行で引けること。キーの生成に進まないこと。次の同期で読み直さず初期化も試さないこと。`Error` は捕まえないこと
+- `IndexSyncInstrumentedTest`: 端末の全入口で同期を 2 回続け、2 回目に何も読み直さず、再試行待ちと不具合の疑いの行がないこと。test-apps 以外の入口の欠けの行を段と理由ごとに数え、system image ごとの既知の件数（`KNOWN_ISSUES`。image は `Build.PRODUCT` と API で見分ける）と比べる（image を上げたら測り直して数を直す）。0.1.0 型の不具合（system image のアプリで決定的に失敗する）を CI で見逃さないため。内訳まで比べるのは、増減の相殺を見逃さないため。test-apps の分類ごとのアプリの欠けは `MaterialIssueInstrumentedTest` が別に厳密に確かめる。既知の件数のない image（実機など）では比べない。2026-11-16 の値は、API 37（`sdk_phone64_x86_64`）・API 28（`sdk_phone_x86_64`）のどちらも 0 件
 
 **分類**（本物の OS のどの値が、どの区分に落ちるか）
 
-- `FakeDevice` は「読み切れたか」を直に渡さず、段ごとの例外か結果を渡す。分類は本物の読み手（`InstalledAppReader`・`LocalizedLabelReader`・`SignerReader`）を通す。今の `FakeDevice` は `InstalledApp.complete` を直に持つので `install(...)` の形ごと変わり、既存の約 60 本の `IndexSyncTest` を書き直す。実装の初めに量を見積もる
+- `FakeDevice` は「読み切れたか」を直に渡さず、段ごとの例外か結果を渡す。組み立てと分類は本物の `readPackage` と `MaterialCauses` を通す。既定の経路は、別の言語の名前と署名を入口の値と段の例外のまま返す（既存のテストの入力の書き方を保つため）
+- `MaterialReaderSyncTest`: `FakeDevice` に本物の `LocalizedLabelReader`・`SignerReader` を渡し、読み手の入力（言語ごとの資源と、PackageManager の `PackageInfo`・証明書）だけを偽装して、読み手の結果が同期・保存・再試行までつながること。表示名が日本語の資源にだけある組は `LABEL` の決定的な欠けで日本語の名前では引けること、署名が空の組は `NO_SIGNERS`、PackageManager から引けない組は一時的で 1 回だけ読み直すこと、仕事用で APK のパスがない組は `ARCHIVE_UNREADABLE` であること。開き直しても同じ行を読み戻し、版の変更で 1 回読み直し、材料が直れば行が消えること。言語ごとの資源は、`LocalizedLabelReader` の資源の取得を差し替える継ぎ目（`internal` のコンストラクタ）で偽装する（Robolectric の資源は本物と同じ条件で `Resources.NotFoundException` を投げないため。下の計器テストで本物を確かめる）
 - `MaterialReadTest`: [失敗の分け方](architecture.md#失敗の分け方)の表の行ごとに、例外を投げる偽の部品で区分と理由を確かめる。このアプリの例外・ライブラリの例外・Kotlin の例外の理由が、`java.`・`android.` で始まる最寄りの親のクラス名になること。不具合の疑いの行にだけ先頭 5 フレームと `version_code` が残り、例外のメッセージがどこにも保存されないこと
 - `MaterialReadTest`: 分類 → 保存 → 読み戻し → 分類で区分が変わらないこと。`DeadObjectException` を原因に持つ `RuntimeException` の理由が `android.os.DeadObjectException` で、読み戻しても一時的なこと。読み込めないクラス名の理由は不具合の疑いになること
 - `MaterialReadTest`: `KEYS` の例外を、表示名・別の言語の名前・DN のそれぞれで起こし、`input_summary` の入力の種類・長さ・文字種が正しく、文字列そのものが入らないこと
