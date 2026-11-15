@@ -8,6 +8,8 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-15
+
 ### Fixed
 
 - 更新時刻が 0 の APK（APEX に入ったシステムのアプリ。Android 15 以降のターミナルなど）があると、開くたびに「索引を更新できなかった」と出続けた。時刻 0 を読み取りの失敗とみなしていた
@@ -32,5 +34,6 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 - 索引・学習の読み込みや保存に失敗したときの表示
 - Android 9（API 28）以上に対応。インターネットの権限を持たず、索引・学習・起動の記録・設定をクラウドへのバックアップから外す
 
-[Unreleased]: https://github.com/unils/piu-search/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/unils/piu-search/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/unils/piu-search/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/unils/piu-search/releases/tag/v0.1.0
