@@ -122,7 +122,7 @@ T7 の作業では計器テスト・エミュレータ・adb を実行してい�
 - `GenreResolverTest` と `IndexSyncTest`: 偽の PackageManager の intent 問い合わせ結果を切り替える。APK と変更番号が同じでもジャンルが追従し、名前のキー・入口の行・形態素解析の呼び出し数が変わらないこと
 - `IndexSyncConcurrencyTest`: 実行中に追加された 20 件の要求が 1 回の後続同期になり、二重に計算しないこと。計算中の記録保存とプロファイル削除の R3 の境界も維持すること
 - `DatabaseSchemaTest`: Room 4 → 5 の移行で学習・起動の記録・インストールの印を保つこと
-- `IndexLifecycleTest`・`AppIconsTest`・`SyncFailureScreenTest`: 背景では通知を保持し、次の検索で同期すること。更新したパッケージだけのアイコン失効、読み込みとの競合、表示中のアイコンの再読み込み、失敗の表示と回復
+- `IndexLifecycleTest`・`AppIconsTest`・`SyncFailureScreenTest`（0.2.0 で `SyncNoticeScreenTest` に置き換える）: 背景では通知を保持し、次の検索で同期すること。更新したパッケージだけのアイコン失効、読み込みとの競合、表示中のアイコンの再読み込み、失敗の表示と回復
 
 2026-11-14、API 37 のエミュレータでの測定。release の APK を debug の鍵で署名し、システムのアプリを含む 19 個を索引に入れた。
 
@@ -136,6 +136,46 @@ T7 の作業では計器テスト・エミュレータ・adb を実行してい�
 `GenreResolverTest.measureGenreResolutionForFiveHundredEntries` は、500 入口のジャンル判定を 3 回準備してから 10 回測り、中央値・最小・最大を出す。Robolectric の偽の PackageManager の値であり、端末の IPC の費用は含まない。`IndexSyncExtremeTest` も 3,000 入口の全件生成と、保存済み索引の読み直しを測る。R4 の値は単体テストの標準出力に残す。今回の API 37・JDK 21・Robolectric 4.17 の値は、ジャンル 500 入口が中央値 **3.23 ms**（2.37〜8.07 ms）。3,000 入口の全件生成と保存は **971 ms**、保存済み索引の読み直しと変更なしの同期は **129 ms**（各 1 回）。後者は偽の端末を使い、個人用の単純な読み取りと形態素解析・Room の費用を含む。差分の IPC の速さを表す値ではない。
 
 測定を広げるときは、同じ端末・API・APK・入口数・仕事用数・辞書が読み込み済みかを記録し、`PiuIndexSync` の `SyncReport` の `totalMillis`・`analyzerLoadMillis`・`genreMillis` を使う。全件は新規索引、差分は 1 パッケージ更新、変更なしを各 10 回測り、中央値と範囲を記す。今回の測定にない 1 パッケージ更新の時間も対象にする。既存の `IndexSyncInstrumentedTest` の同期結果も同じ欄を持つ。既定ブラウザの切り替えと仕事用の split 更新は、実機・エミュレータでの追試が残る。
+
+### 読み取りの失敗と材料の状態（0.2.0）
+
+2026-11-15 の設計（[architecture.md](architecture.md#材料の状態)）で足すテスト。実装の段で書く。0.1.0 の不具合（時刻 0 の APK を毎回読み切れなかった扱いにした）は、計器テストが自作のアプリだけを見て、同期を 1 回しか回さず、偽の端末が「読み切れたか」を直に渡して分類を飛ばしていたので見つからなかった。この 3 つを埋める。
+
+**収束**（同じ状態のまま同期を続けたら、いつか何も読み直さなくなること）
+
+- `SyncPlannerTest`: 状態ごとに、同じ入力で 2 回目の計画を作る。`COMPLETE`・`DEGRADED`・`ERROR` は 2 回目に読み直さない。`RETRY` は一時的な失敗を 3 回続けると `DEGRADED` になり、4 回目からは読み直さない。上限は定数（`MATERIAL_RETRY_LIMIT`）で固定する
+- `SyncPlannerTest`: `DEGRADED`・`ERROR` が、指紋の変化・Callback・全件の作り直し・このアプリの版の変更でだけ読み直されること。読み直して読めたら行が消え、一時的な失敗なら回数 1 の `RETRY` になること
+- `SyncPlannerTest`: 鍵の比べ方の 4 通り（[鍵の比べ方](architecture.md#鍵の比べ方)）。両方とも鍵のない組を、変更番号が使えない（毎回が全件の見直しの）端末でも 2 回目に読み直さないこと。鍵も時刻もない仕事用の組を、再起動の回数が変わったときだけ読み直すこと
+- `IndexSyncTest`: 段ごとの失敗を混ぜた端末で、同期を 3 回以上続ける。回数が進むのは実際に読んだ同期だけで、一時停止中には進まないこと。読んだ Callback の知らせは成否によらず消費され、`DEGRADED` の組を毎回読み直さないこと。2 回目以降に形態素解析の辞書を読み込まないこと
+- `IndexSyncInstrumentedTest`: 端末の全入口で同期を 2 回続け、2 回目に何も読み直さず、`RETRY` と `ERROR` の組がないこと。`DEGRADED` は test-apps で狙ったもの以外を標準出力に出す（system image の差で落とさない）
+
+**分類**（本物の OS のどの値が、どの状態に落ちるか）
+
+- `FakeDevice` は「読み切れたか」を直に渡さず、段ごとの例外か結果を渡す。分類は本物の読み手（`InstalledAppReader`・`LocalizedLabelReader`・`SignerReader`）を通す
+- `MaterialReadTest`: [失敗の分け方](architecture.md#失敗の分け方)の表の行ごとに、例外を投げる偽の部品で状態と理由を確かめる。理由の文字列が R8 で変わらない値であること、例外のメッセージを保存しないこと
+- test-apps に、分類ごとのアプリを足し、計器テストで状態を確かめる（Robolectric の偽の資源は、本物と同じ条件で `Resources.NotFoundException` を投げないため）
+  - 表示名が `values-ja/` にだけある（既定の `values/` にない）: 英語の名前が `DEGRADED`（`LABEL`）。日本語の名前と表示名では引ける
+  - 表示名をマニフェストに直に書いた: `COMPLETE`（正常な不在）
+  - split を持つ: `COMPLETE`。split を替えると仕事用で指紋が変わる
+- `MaterialReadTest`: 指紋に大きさが入り、時刻が同じでも大きさが違えば違う指紋になること。ファイルが読めないときは鍵なし（失敗ではない）になること
+
+**移行**
+
+- `DatabaseSchemaTest`: Room 5 → 6 で、学習・起動の記録・インストールの印が残ること。`app` と `search_key` の行が残り、`PRAGMA foreign_key_check` が空であること。`Long.MIN_VALUE` の時刻が NULL に、0 の時刻は 0 のままになること。指紋が NULL の行に作り直しの印が立ち、ほかの行には立たないこと。API 28 と 37 で回す（SQLite の版が違い、表の名前の付け替えで外部キーの扱いが違うため）
+- `IndexSyncTest`: 5 の DB から開いた最初の同期で、印の組と仕事用の組だけを読み、2 回目には何も読まないこと。索引の版の変更（全入口に印）と、一時停止中の仕事用の再開後の作り直しが、印で今までどおり働くこと
+- `DeviceTransferTest`・`ProfileStoreTest`: 端末間転送の整理とプロファイルの削除で、`material_issue` の行も消えること
+
+**画面**
+
+- `SyncNoticeScreenTest`（`SyncFailureScreenTest` を置き換える）: [知らせ](architecture.md#知らせ)の表の行ごとに、出す条件で出て、消す条件で消えること。組の失敗とジャンルの失敗だけでは出ないこと。同期全体とプロファイルが同時なら同期全体の文を出すこと。押すと「索引の状態」が開くこと
+- `IndexStatusScreenTest`: 件数 0 でも各項目が出ること。一覧の並び順。「報告用の文を見る」で見せる文と、コピーした文が同じであること。API 33 以上では自前の Toast を出さないこと
+- スクリーンショット: 検索画面の知らせ（4 つの文）と「索引の状態」（問題なし・欠けあり）を、日本語と英語、文字の大きさ 200% で撮る
+- TalkBack: 知らせがボタンとして読まれ、一覧の 1 行が 1 つの項目として読まれること
+
+**版を出す前**
+
+- Baseline Profile をこの版で作り直す（設定の画面と同期の経路が変わるため）。`:release-test` で、R8 を通した版でも「索引の状態」が開き、報告用の文の理由が R8 で変わった名前になっていないことを確かめる
+- 実機の確認（[release.md](../release.md)）: 画面を 3 回開き、2 回目以降の `SyncReport` で作り直しが 0、`RETRY`・`ERROR` が 0 であること。「索引の状態」に予期しない欠けがないこと。0.1.1 から上書きで入れた場合も確かめる
 
 ## 静的な検査
 

@@ -14,7 +14,7 @@ pull request で、次の 4 か所を一度に直す。
 
 ## 2. 実機で確かめる
 
-タグの前に、版を上げた main を 4〜6 と同じ手順で組み立てて署名し、その APK を実機に入れて画面を 3 回開く（開くたびに閉じる）。logcat（タグ `PiuIndexSync`）の `SyncReport` が、2 回目以降 `rebuiltApps=0`・`failedPackages=0`・`failedProfiles=0` であることを確かめる。仕事用プロファイルを作れる端末なら、ある状態で確かめる。エミュレータの計器テストは自作のテスト用のアプリと system image のアプリしか見ないので、利用者の端末にだけある APK（APEX の中のアプリなど）で同期が収束しない不具合はここで見つける。
+タグの前に、版を上げた main を 4〜6 と同じ手順で組み立てて署名し、その APK を実機に入れて画面を 3 回開く（開くたびに閉じる）。logcat（タグ `PiuIndexSync`）の `SyncReport` が、2 回目以降 `rebuiltApps=0`・`failedPackages=0`・`failedProfiles=0` であることを確かめる（0.2.0 からは `failedPackages` の代わりに、`RETRY` と `ERROR` の組が 0 であることと、設定の「索引の状態」に予期しない欠けがないことを見る）。仕事用プロファイルを作れる端末なら、ある状態で確かめる。エミュレータの計器テストは自作のテスト用のアプリと system image のアプリしか見ないので、利用者の端末にだけある APK（APEX の中のアプリなど）で同期が収束しない不具合はここで見つける。
 
 ```bash
 adb logcat -s PiuIndexSync:I
