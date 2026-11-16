@@ -180,7 +180,9 @@ class ReleaseApkTest {
         val own = frames.filter { it.className.startsWith("$APP.") && !it.className.startsWith("$APP.releasetest.") }
         assertTrue("アプリのフレーム: ${frames.joinToString()}", own.any { it.className == "$APP.SearchTileService" && it.methodName == "onClick" })
         for (frame in own) {
-            assertEquals("ファイル名は一律に SourceFile: $frame", "SourceFile", frame.fileName)
+            // R8 は元のファイル名を残さない。API 28 の ART はファイル名を null（Unknown Source）で見せ、新しい版は SourceFile と見せる。
+            // retrace に要るのは行の番号と mapping.txt なので、元の名前が出ないことだけを確かめる
+            assertTrue("元のファイル名は出ない: $frame", frame.fileName == null || frame.fileName == "SourceFile")
             assertTrue("行の番号が残る: $frame", frame.lineNumber > 0)
         }
     }
