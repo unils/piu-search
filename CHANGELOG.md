@@ -8,6 +8,8 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
 ### Added
 
 - 設定に「索引の状態」を足した。検索に使うアプリの一覧の数・最後に更新した時刻・最後の更新の結果と、情報を読めていないアプリ（別の言語の名前・提供元など）を、理由と一緒に見られる
@@ -50,6 +52,7 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 - 索引・学習の読み込みや保存に失敗したときの表示
 - Android 9（API 28）以上に対応。インターネットの権限を持たず、索引・学習・起動の記録・設定をクラウドへのバックアップから外す
 
-[Unreleased]: https://github.com/unils/piu-search/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/unils/piu-search/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/unils/piu-search/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/unils/piu-search/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/unils/piu-search/releases/tag/v0.1.0
