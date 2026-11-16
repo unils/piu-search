@@ -176,8 +176,8 @@ class ReleaseApkTest {
                 e.targetException
             }
         val frames = checkNotNull(failure) { "OS に結び付けずに呼んだので、Context がなく例外になるはず" }.stackTrace
-        // このテストのフレーム（jp.piu.search.releasetest）は R8 にかからないので除く
-        val own = frames.filter { it.className.startsWith("$APP.") && !it.className.startsWith(javaClass.packageName) }
+        // このテストのフレーム（jp.piu.search.releasetest）は R8 にかからないので除く。Class.getPackageName は API 29 からなので使わない
+        val own = frames.filter { it.className.startsWith("$APP.") && !it.className.startsWith("$APP.releasetest.") }
         assertTrue("アプリのフレーム: ${frames.joinToString()}", own.any { it.className == "$APP.SearchTileService" && it.methodName == "onClick" })
         for (frame in own) {
             assertEquals("ファイル名は一律に SourceFile: $frame", "SourceFile", frame.fileName)
