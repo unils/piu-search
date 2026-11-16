@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 中身のない機能のモジュールは split の APK にならないので、使わない資源を 1 つ置く -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="split_feature_marker" tools:ignore="UnusedResources">split</string>
+</resources>

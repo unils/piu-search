@@ -9,7 +9,7 @@ public interface ProfileStorage {
     /** 索引・学習・起動の記録に保存したシリアル番号の和集合。索引だけに頼らず孤立した学習も見つける。 */
     public fun serials(): Set<Long>
 
-    /** [serials] の索引・検索キー・学習・起動の記録を、1 つのトランザクションで消す。 */
+    /** [serials] の索引・検索キー・材料の欠け・学習・起動の記録を、1 つのトランザクションで消す。 */
     public fun delete(serials: Set<Long>)
 }
 
@@ -26,6 +26,7 @@ public class ProfileStore internal constructor(
             serials.forEach { serial ->
                 // 索引への外部キーを張らない記録も、同じ確定の境界で消す必要があるため
                 database.indexDao().deleteProfile(serial)
+                database.indexDao().deleteProfileIssues(serial)
                 dao.deleteLearning(serial)
                 dao.deleteLaunchStats(serial)
             }

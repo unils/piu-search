@@ -8,6 +8,7 @@ import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -28,6 +29,8 @@ import org.junit.runner.RunWith
  * - Kuromoji の辞書（`Tokenizer$Builder` からの相対の資源）: 漢字の名前の索引と、漢字の検索語「乗り換え」
  * - Room（`_Impl` をリフレクションで探す）: 止めて開き直すと、保存した索引から差分で同期し、起動の記録が残る
  * - 呼び出しの入口（アシスタント・タイル）: マニフェストから引く Activity と TileService
+ * - 「索引の状態」と報告用の文: 欠けの理由が `java.`・`android.` の名前のまま残る（R8 で変わらない名前だけを保存するため）。
+ *   不具合の疑いの行に残すフレームが、行の番号とファイル名 `SourceFile` を持つ（proguard-rules.pro の属性の規則）
  */
 @RunWith(AndroidJUnit4::class)
 class ReleaseApkTest {
@@ -127,6 +130,73 @@ class ReleaseApkTest {
         assertEquals("アシスタントとタイルから開いた画面の数", 1, records)
     }
 
+    @Test
+    fun indexStatusOpensAndTheReportKeepsStableCauseNames() {
+        // 設定は OS のアプリ情報の入口（ACTION_APPLICATION_PREFERENCES）から開く。exported なので shell から開ける
+        shell("am start -W -n $APP/.SettingsActivity")
+        checkNotNull(device.wait(Until.findObject(By.res(SETTINGS)), TIMEOUT_MILLIS)) { "設定が開かない" }
+        waitFor("設定に「索引の状態」が出る") { scrolledTo(SETTINGS_INDEX_STATUS, SETTINGS) }
+        checkNotNull(device.findObject(By.res(SETTINGS_INDEX_STATUS))).click()
+        waitFor("「索引の状態」が開く") { scrolledTo(INDEX_STATUS_REPORT, INDEX_STATUS) }
+        waitFor("同期が済む", detail = { "同期の記録: ${syncLog()}" }) { syncLog().any { "索引を同期した" in it } }
+        checkNotNull(device.findObject(By.res(INDEX_STATUS_REPORT))).click()
+        val text = checkNotNull(device.wait(Until.findObject(By.res(INDEX_REPORT_TEXT)), TIMEOUT_MILLIS)) { "報告用の文が出ない" }.text
+        val lines = text.lines()
+        assertEquals("Piu Search index status", lines.first())
+        // values-ja/ にだけ名前のあるテスト用のアプリは、英語の名前で Resources.NotFoundException になる（決定的な欠け）
+        val jaOnly = lines.singleOrNull { " $JA_ONLY " in it }
+        assertTrue("欠けの行: $text", jaOnly != null && jaOnly.startsWith("- DETERMINISTIC LABEL personal $JA_ONLY "))
+        assertTrue("理由が R8 で変わらない名前のまま: $jaOnly", "cause=android.content.res.Resources\$NotFoundException " in jaOnly!!)
+        // 理由は java.・android. の名前か固定の符号だけ
+        val causes = lines.filter { it.startsWith("- ") }.map { it.substringAfter("cause=").substringBefore(' ') }
+        assertTrue("理由: $causes", causes.all { it.startsWith("java.") || it.startsWith("android.") || it.matches(Regex("[A-Z_]+")) })
+    }
+
+    /**
+     * 不具合の疑いの行に残すフレーム（architecture.md の「失敗の分け方」）が、R8 を通した版で行の番号を持ち、ファイル名が SourceFile になる。
+     *
+     * 外から本物の不具合を起こす手段がないので、入れた APK のクラスをこのテストのプロセスに読み込み、マニフェストにあって名前の残る
+     * SearchTileService の onClick を、OS に結び付けずに呼んで例外を起こす。テストの側に keep の規則は要らない（名前で引くだけ）
+     */
+    @Test
+    fun appFramesKeepLineNumbersAndSourceFile() {
+        val apk =
+            shell("pm path $APP")
+                .lines()
+                .first { it.endsWith("base.apk") }
+                .removePrefix("package:")
+                .trim()
+        val loader = dalvik.system.PathClassLoader(apk, null)
+        val tile = loader.loadClass("$APP.SearchTileService")
+        val failure =
+            try {
+                tile.getMethod("onClick").invoke(tile.getDeclaredConstructor().newInstance())
+                null
+            } catch (e: java.lang.reflect.InvocationTargetException) {
+                e.targetException
+            }
+        val frames = checkNotNull(failure) { "OS に結び付けずに呼んだので、Context がなく例外になるはず" }.stackTrace
+        // このテストのフレーム（jp.piu.search.releasetest）は R8 にかからないので除く。Class.getPackageName は API 29 からなので使わない
+        val own = frames.filter { it.className.startsWith("$APP.") && !it.className.startsWith("$APP.releasetest.") }
+        assertTrue("アプリのフレーム: ${frames.joinToString()}", own.any { it.className == "$APP.SearchTileService" && it.methodName == "onClick" })
+        for (frame in own) {
+            // R8 は元のファイル名を残さない。API 28 の ART はファイル名を null（Unknown Source）で見せ、新しい版は SourceFile と見せる。
+            // retrace に要るのは行の番号と mapping.txt なので、元の名前が出ないことだけを確かめる
+            assertTrue("元のファイル名は出ない: $frame", frame.fileName == null || frame.fileName == "SourceFile")
+            assertTrue("行の番号が残る: $frame", frame.lineNumber > 0)
+        }
+    }
+
+    // 探す項目は画面の下にある。小さい画面では、縦に送る部品 [container] を送ってから探す
+    private fun scrolledTo(
+        target: String,
+        container: String,
+    ): Boolean {
+        if (device.findObject(By.res(target)) != null) return true
+        device.findObject(By.res(container))?.scroll(Direction.DOWN, 1f)
+        return device.findObject(By.res(target)) != null
+    }
+
     private fun openSearch() {
         shell("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $APP/.SearchActivity")
         searchField()
@@ -222,6 +292,14 @@ class ReleaseApkTest {
         // アプリの testTag（SearchScreen.kt・OnboardingCard.kt）。testTagsAsResourceId で resource-id として見える
         const val SEARCH_FIELD = "search_field"
         const val ONBOARDING_CLOSE = "onboarding_close"
+
+        // SettingsScreen.kt・IndexStatusScreen.kt の testTag
+        const val SETTINGS = "settings"
+        const val SETTINGS_INDEX_STATUS = "settings_index_status"
+        const val INDEX_STATUS = "index_status"
+        const val INDEX_STATUS_REPORT = "index_status_report"
+        const val INDEX_REPORT_TEXT = "index_report_text"
+        const val JA_ONLY = "jp.piu.search.testapp.labeljaonly"
         const val SYNC_TAG = "PiuIndexSync"
         const val FAILED = "索引の同期に失敗した"
 

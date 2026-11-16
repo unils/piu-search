@@ -48,15 +48,7 @@ class AppSourceTest {
         assertEquals(expected, source.activities().map { it.id.activityName }.toSet())
         assertEquals(expected, source.activities(setOf(packageName)).map { it.id.activityName }.toSet())
         assertEquals(expected, source.stamps(false).map { it.id.activityName }.toSet())
-        assertEquals(
-            expected,
-            source
-                .launcherProfiles(setOf(packageName))
-                .getValue(0)
-                .items
-                .map { it.componentName.className }
-                .toSet(),
-        )
+        assertEquals(expected, source.details(packageName, source.profiles().single()).map { it.id.activityName }.toSet())
     }
 
     /** OS が合成した入口も LauncherApps に並べ、アプリ側の除外だけを確かめる。 */

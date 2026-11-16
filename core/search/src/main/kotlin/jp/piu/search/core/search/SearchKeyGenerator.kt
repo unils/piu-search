@@ -47,25 +47,50 @@ public class SearchKeyGenerator(
         require(maxReadingCombinations >= 1) { "読みの組み合わせの上限は 1 以上: $maxReadingCombinations" }
     }
 
-    /** [app] の検索キーの一覧。厳密形のキーが先、緩い形のキーが後に並ぶ。中の順は毎回同じ。 */
+    /**
+     * [app] の検索キーの一覧。厳密形のキーが先、緩い形のキーが後に並ぶ。中の順は毎回同じ。
+     *
+     * 入力 1 つの処理が例外になったら、どの入力かを [KeyGenerationException] に包んで投げる。
+     * 呼び出し側が、文字列を残さずに入力の種類と形だけを報告に残せるようにするため（architecture.md の「失敗の分け方」）。
+     */
     public fun generate(app: AppEntry): List<SearchKey> {
         val keys = KeyCollector()
         val seenNames = HashSet<String>()
-        (listOf(app.label) + app.localizedLabels).forEach { raw ->
-            val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
-            val strict = TextNormalizer.strict(nfkc)
-            // 別の言語の名前は、表示名か先の名前と同じなら作らない
-            if (strict.isEmpty || !seenNames.add(strict.value)) return@forEach
-            val kind = if (seenNames.size == 1) SearchKeyKind.NAME else SearchKeyKind.LOCALIZED_NAME
-            addNameKeys(nfkc, strict, kind, keys)
+        (listOf(app.label) + app.localizedLabels).forEachIndexed { i, raw ->
+            val input = if (i == 0) KeyInput.LABEL else KeyInput.LOCALIZED_LABEL
+            attributed(input, if (i == 0) 0 else i - 1) {
+                val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
+                val strict = TextNormalizer.strict(nfkc)
+                // 別の言語の名前は、表示名か先の名前と同じなら作らない
+                if (strict.isEmpty || !seenNames.add(strict.value)) return@attributed
+                val kind = if (seenNames.size == 1) SearchKeyKind.NAME else SearchKeyKind.LOCALIZED_NAME
+                addNameKeys(nfkc, strict, kind, keys)
+            }
         }
-        val packageWords = packageWords(app.id.packageName)
-        packageWords.forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) }
-        // 読みは語の後に置く（同じ文字列なら語の方を残すため）。会社の名前を、かなや漢字（楽天 → らくてん）で引けるように
-        packageWords.forEach { word -> latinReader.readings(word.value).forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) } }
+        attributed(KeyInput.PACKAGE_NAME, 0) {
+            val packageWords = packageWords(app.id.packageName)
+            packageWords.forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) }
+            // 読みは語の後に置く（同じ文字列なら語の方を残すため）。会社の名前を、かなや漢字（楽天 → らくてん）で引けるように
+            packageWords.forEach { word ->
+                latinReader.readings(word.value).forEach { keys.add(SearchKey(it, SearchKeyKind.PACKAGE_NAME)) }
+            }
+        }
         publisherKeys(app.signerNames).forEach(keys::add)
         app.genres.forEach { keys.add(SearchKey(NormalizedText(it.value), SearchKeyKind.GENRE)) }
         return keys.build()
+    }
+
+    // Error は包まない。続けて動かせる状態ではないため
+    private inline fun attributed(
+        input: KeyInput,
+        index: Int,
+        block: () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (e: RuntimeException) {
+            throw KeyGenerationException(input, index, e)
+        }
     }
 
     private fun addNameKeys(
@@ -125,29 +150,37 @@ public class SearchKeyGenerator(
     private fun publisherKeys(signerNames: List<String>): List<SearchKey> {
         val spellings = ArrayList<NormalizedText>()
         val readings = ArrayList<NormalizedText>()
-        for (organization in signerNames.flatMap(PublisherWords::organizations)) {
-            val nfkc = Normalizer.normalize(organization, Normalizer.Form.NFKC)
-            for (word in splitNameWords(nfkc, analyzer.analyze(nfkc), latinReader)) {
-                val spelling = TextNormalizer.strict(word.surface)
-                when (word.kind) {
-                    WordKind.LATIN -> {
-                        if (!PublisherWords.isPublisherWord(spelling.value)) continue
-                        spellings.add(spelling)
-                        readings.addAll(latinReader.readings(spelling.value))
+        val words =
+            signerNames.flatMapIndexed { i, signer ->
+                val found = ArrayList<NameWord>()
+                attributed(KeyInput.SIGNER, i) {
+                    for (organization in PublisherWords.organizations(signer)) {
+                        val nfkc = Normalizer.normalize(organization, Normalizer.Form.NFKC)
+                        found += splitNameWords(nfkc, analyzer.analyze(nfkc), latinReader)
                     }
-
-                    WordKind.JAPANESE -> {
-                        if (spelling.isEmpty || PublisherWords.isJapaneseLegalWord(word.surface)) continue
-                        spellings.add(spelling)
-                        word.reading
-                            ?.let { TextNormalizer.strict(it) }
-                            ?.takeUnless { it.isEmpty }
-                            ?.let(readings::add)
-                    }
-
-                    // 数字・ほかの用字の語は読みを付けられず、提供元の手がかりとして弱い
-                    WordKind.OTHER, WordKind.PLUS -> {}
                 }
+                found
+            }
+        for (word in words) {
+            val spelling = TextNormalizer.strict(word.surface)
+            when (word.kind) {
+                WordKind.LATIN -> {
+                    if (!PublisherWords.isPublisherWord(spelling.value)) continue
+                    spellings.add(spelling)
+                    readings.addAll(latinReader.readings(spelling.value))
+                }
+
+                WordKind.JAPANESE -> {
+                    if (spelling.isEmpty || PublisherWords.isJapaneseLegalWord(word.surface)) continue
+                    spellings.add(spelling)
+                    word.reading
+                        ?.let { TextNormalizer.strict(it) }
+                        ?.takeUnless { it.isEmpty }
+                        ?.let(readings::add)
+                }
+
+                // 数字・ほかの用字の語は読みを付けられず、提供元の手がかりとして弱い
+                WordKind.OTHER, WordKind.PLUS -> {}
             }
         }
         return (spellings + readings).distinct().map { SearchKey(it, SearchKeyKind.PUBLISHER) }
@@ -414,3 +447,30 @@ private val SearchKeyKind.space: KeySpace
             SearchKeyKind.GENRE -> KeySpace.GENRE
             else -> KeySpace.TEXT
         }
+
+/** 検索キーの入力の種類（[KeyGenerationException.input]）。 */
+public enum class KeyInput {
+    /** 表示名（[AppEntry.label]）。 */
+    LABEL,
+
+    /** 別の言語の名前（[AppEntry.localizedLabels]）。 */
+    LOCALIZED_LABEL,
+
+    /** パッケージ名。 */
+    PACKAGE_NAME,
+
+    /** 署名の DN（[AppEntry.signerNames]）。 */
+    SIGNER,
+}
+
+/**
+ * 検索キーの生成が、入力 [input] の処理で例外になった。元の例外は [cause]。
+ *
+ * @property input どの種類の入力か
+ * @property index その種類の一覧の中の位置。[KeyInput.LABEL] と [KeyInput.PACKAGE_NAME] は 0
+ */
+public class KeyGenerationException(
+    public val input: KeyInput,
+    public val index: Int,
+    cause: RuntimeException,
+) : RuntimeException(cause)

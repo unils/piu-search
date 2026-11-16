@@ -14,7 +14,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * すべての表を消すので、起動の記録と学習まで消えるため。索引の表だけなら、移行の中で消して作り直してよい。
  */
 @Database(
-    entities = [AppRow::class, SearchKeyRow::class, MetaRow::class, LaunchStatRow::class, LearnedRow::class, InstallationRow::class],
+    entities = [
+        AppRow::class,
+        SearchKeyRow::class,
+        MetaRow::class,
+        LaunchStatRow::class,
+        LearnedRow::class,
+        InstallationRow::class,
+        MaterialIssueRow::class,
+    ],
     version = PiuRoomDatabase.VERSION,
     exportSchema = true,
 )
@@ -29,10 +37,10 @@ internal abstract class PiuRoomDatabase : RoomDatabase() {
 
     companion object {
         /** 表の定義の版。 */
-        const val VERSION = 5
+        const val VERSION = 6
 
         /** 版の移行。古い版から開くときに順に当てる。 */
-        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3, Migration3To4, Migration4To5)
+        val MIGRATIONS: Array<Migration> = arrayOf(Migration1To2, Migration2To3, Migration3To4, Migration4To5, Migration5To6)
     }
 }
 
@@ -71,5 +79,28 @@ internal object Migration4To5 : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE app ADD COLUMN apk_fingerprint TEXT")
         db.execSQL("ALTER TABLE meta ADD COLUMN build_fingerprint TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+/**
+ * 5 → 6: 材料の欠けの表と、作り直しの印・アーカイブ済みか・このアプリの版・最後に保存できた時刻の列を足す（0.2.0）。
+ *
+ * `ADD COLUMN` と `CREATE TABLE` だけにし、`app` を作り直さない。`search_key` の外部キー（連鎖削除）と、SQLite の版による
+ * 表の名前の付け替えの違いに触れないため。0.1.x で指紋が NULL の行（読み切れなかった組と、読めなかったプロファイルの組）には
+ * 作り直しの印を立て、移行の後の最初の同期で 1 回読ませる。索引の版は上げない（キーの中身は変わらない）。
+ */
+internal object Migration5To6 : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE app ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE app ADD COLUMN rebuild_pending INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE app SET rebuild_pending = 1 WHERE apk_fingerprint IS NULL")
+        db.execSQL("ALTER TABLE meta ADD COLUMN app_version_code INTEGER")
+        db.execSQL("ALTER TABLE meta ADD COLUMN last_saved_at INTEGER")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `material_issue` (`profile_serial` INTEGER NOT NULL, `package_name` TEXT NOT NULL, " +
+                "`stage` TEXT NOT NULL, `cause` TEXT NOT NULL, `frames` TEXT, `input_summary` TEXT, `version_code` INTEGER NOT NULL, " +
+                "`retry_once` INTEGER NOT NULL, `first_failed_on` TEXT NOT NULL, `last_failed_on` TEXT NOT NULL, " +
+                "PRIMARY KEY(`profile_serial`, `package_name`, `stage`))",
+        )
     }
 }

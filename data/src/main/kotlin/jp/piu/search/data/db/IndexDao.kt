@@ -58,4 +58,37 @@ internal interface IndexDao {
 
     @Query("DELETE FROM meta")
     fun deleteMeta()
+
+    // 索引の版の変更で、全入口に作り直しの印を立てる（architecture.md の「プロファイルと同期全体の失敗」）
+    @Query("UPDATE app SET rebuild_pending = 1")
+    fun markAllPending()
+
+    @Query("UPDATE app SET rebuild_pending = 1 WHERE profile_serial = :profileSerial AND package_name = :packageName")
+    fun markPending(
+        profileSerial: Long,
+        packageName: String,
+    )
+
+    @Query("SELECT * FROM material_issue ORDER BY profile_serial, package_name, stage")
+    fun issues(): List<MaterialIssueRow>
+
+    @Upsert
+    fun putIssue(issue: MaterialIssueRow)
+
+    @Query("DELETE FROM material_issue WHERE profile_serial = :profileSerial AND package_name = :packageName AND stage = :stage")
+    fun deleteIssue(
+        profileSerial: Long,
+        packageName: String,
+        stage: String,
+    )
+
+    @Query("DELETE FROM material_issue WHERE profile_serial = :profileSerial")
+    fun deleteProfileIssues(profileSerial: Long)
+
+    // 次の索引にない組の行。アンインストールと入口の消滅は、ここで行が消える
+    @Query(
+        "DELETE FROM material_issue WHERE NOT EXISTS (SELECT 1 FROM app WHERE app.profile_serial = material_issue.profile_serial " +
+            "AND app.package_name = material_issue.package_name)",
+    )
+    fun deleteOrphanIssues()
 }

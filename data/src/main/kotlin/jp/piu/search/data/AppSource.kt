@@ -32,13 +32,14 @@ public data class Profile(
 )
 
 /**
- * 入口の識別子と、そのパッケージの最後の更新の時刻（[AppSource.stamps]）。
+ * 一覧の観測の、入口 1 つ（[AppSource.stampProfiles]）。組の入口の集合・アーカイブ済みか・鍵を、保存した値と比べるのに使う。
  *
  * @property id 入口の識別子
  * @property packageUpdatedAt パッケージの最後の更新の時刻（ミリ秒）。引かなかった・読めなかったときは null。0 は有効な時刻
- * @property apkFingerprint base と split のパスと時刻。取得不能なら null
+ * @property apkFingerprint base と split のパス・時刻・大きさ。作れなければ null（失敗ではない）
  * @property isCurrentProfile 自分のプロファイルなら変更番号を使う
  * @property category ジャンルを毎回判定するためのカテゴリ
+ * @property isArchived アーカイブ済みか（`ApplicationInfo.isArchived`。API 34 以下は常に偽）
  */
 public data class ActivityStamp(
     val id: AppId,
@@ -46,7 +47,34 @@ public data class ActivityStamp(
     val apkFingerprint: String? = null,
     val isCurrentProfile: Boolean = true,
     val category: Int = ApplicationInfo.CATEGORY_UNDEFINED,
+    val isArchived: Boolean = false,
 )
+
+/**
+ * 組の変化の検出の鍵（architecture.md の「鍵の比べ方」）。作れなかった値は null で、失敗ではない。
+ *
+ * @property updatedAt パッケージの最後の更新の時刻（ミリ秒）。0 は有効な時刻
+ * @property fingerprint base と split の APK の指紋
+ */
+public data class ApkKeys(
+    val updatedAt: Long?,
+    val fingerprint: String?,
+)
+
+/**
+ * 一覧の観測と、その入口の `LauncherActivityInfo`。詳細を読む組の表示名と鍵の観測は、一覧の段の情報から取る。
+ *
+ * @property profiles プロファイルごとの一覧
+ */
+internal class Listing(
+    val profiles: Map<Long, ProfileRead<ActivityStamp>>,
+    private val infos: Map<AppId, LauncherActivityInfo>,
+    private val users: Map<Long, Profile>,
+) {
+    fun info(id: AppId): LauncherActivityInfo? = infos[id]
+
+    fun profile(serial: Long): Profile? = users[serial]
+}
 
 /**
  * ランチャーに並ぶ Activity 1 つ（起動の入口）。[AppSource] が作る。
@@ -95,8 +123,7 @@ public class AppSource(
     }
 
     /** 一時停止・ロック中の一覧は正常な空と区別するため、読み取りの対象から外す。 */
-    public fun readableProfiles(): List<Profile> =
-        profiles().filter { !userManager.isQuietModeEnabled(it.user) && userManager.isUserUnlocked(it.user) }
+    public fun readableProfiles(): List<Profile> = profiles().filter(::isReadable)
 
     /**
      * すべてのプロファイルの起動の入口。1 つのアプリが入口を 2 つ持てば 2 件になる。
@@ -106,71 +133,86 @@ public class AppSource(
         launcherEntries(packages).map { (info, profile) -> toLaunchable(info, profile) }
 
     /**
-     * すべてのプロファイルの入口の識別子と、パッケージの最後の更新の時刻（[packageUpdatedAt]）。
-     * 表示名は読まないので [activities] より軽い。[withUpdateTime] が false なら時刻は引かず null にする。
+     * すべてのプロファイルの一覧の観測。表示名は読まないので [activities] より軽い。[withUpdateTime] が false なら時刻は引かず null にする。
+     * 一覧を読めなかったプロファイルがあれば [IllegalStateException]。
      */
     public fun stamps(withUpdateTime: Boolean): List<ActivityStamp> {
         val profiles = stampProfiles(withUpdateTime)
-        if (profiles.values.any { it.status == ProfileReadStatus.FAILED }) throw MaterialReadException()
+        check(profiles.values.none { it.status == ProfileReadStatus.FAILED }) { "入口の一覧を読めないプロファイルがある" }
         return profiles.values.flatMap { it.items }
     }
 
-    /** 一覧の失敗を空のプロファイルにしない。仕事用の APK 属性は変更番号によらず毎回読む。 */
-    public fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
-        enumerate(null) { infos, profile ->
-            val fingerprints = HashMap<String, String?>()
-            val times = HashMap<String, Long?>()
-            infos.map { info ->
-                val id = AppId(info.componentName.packageName, info.componentName.className, profile.serial)
-                ActivityStamp(
-                    id,
-                    if (withUpdateTime) {
-                        times.getOrPut(
-                            id.packageName,
-                        ) { updatedAt(id.packageName, info.applicationInfo, profile.isCurrent) }
-                    } else {
-                        null
-                    },
-                    fingerprints.getOrPut(id.packageName) { apkFingerprint(info.applicationInfo) },
-                    profile.isCurrent,
-                    info.applicationInfo.category,
-                )
+    /** 一覧の失敗を空のプロファイルにしない。仕事用の APK の指紋は変更番号によらず毎回読む。 */
+    public fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> = listing(withUpdateTime).profiles
+
+    internal fun listing(withUpdateTime: Boolean): Listing {
+        val infos = HashMap<AppId, LauncherActivityInfo>()
+        val users = HashMap<Long, Profile>()
+        val profiles =
+            profiles().associate { profile ->
+                users[profile.serial] = profile
+                profile.serial to enumerate(profile) { list -> list.map { stamp(it, profile, withUpdateTime, infos) } }
             }
-        }
+        return Listing(profiles, infos, users)
+    }
 
-    /** 詳細の変換失敗をパッケージごとに残し、ほかのパッケージを読み続ける。 */
-    internal fun launcherProfiles(packages: Set<String>?): Map<Long, ProfileRead<LauncherActivityInfo>> =
-        enumerate(packages) { infos, _ -> infos }
-
-    internal fun launchable(
+    private fun stamp(
         info: LauncherActivityInfo,
-        serial: Long,
-    ): LaunchableActivity = toLaunchable(info, Profile(info.user, serial, info.user == Process.myUserHandle()))
+        profile: Profile,
+        withUpdateTime: Boolean,
+        infos: MutableMap<AppId, LauncherActivityInfo>,
+    ): ActivityStamp {
+        val id = AppId(info.componentName.packageName, info.componentName.className, profile.serial)
+        infos[id] = info
+        val applicationInfo = info.applicationInfo
+        return ActivityStamp(
+            id,
+            if (withUpdateTime) updatedAt(id.packageName, applicationInfo, profile.isCurrent) else null,
+            apkFingerprint(applicationInfo),
+            profile.isCurrent,
+            applicationInfo.category,
+            isArchived(applicationInfo),
+        )
+    }
 
-    private fun <T> enumerate(
-        packages: Set<String>?,
-        convert: (List<LauncherActivityInfo>, Profile) -> List<T>,
-    ): Map<Long, ProfileRead<T>> =
-        profiles().associate { profile ->
-            val result =
-                try {
-                    if (!isReadable(profile)) {
-                        ProfileRead<T>(ProfileReadStatus.UNAVAILABLE)
-                    } else {
-                        val infos =
-                            launcherApps
-                                .getActivityList(null, profile.user)
-                                .filter { isAppEntry(it) && (packages == null || it.componentName.packageName in packages) }
-                        if (!isReadable(profile)) {
-                            ProfileRead(ProfileReadStatus.UNAVAILABLE)
-                        } else {
-                            ProfileRead(ProfileReadStatus.COMPLETE, convert(infos, profile))
-                        }
-                    }
-                } catch (_: RuntimeException) {
-                    ProfileRead<T>(ProfileReadStatus.FAILED)
+    /** 一覧の段の情報から、組の鍵を観測する。読み取りの前後の比較と、一覧で時刻を引かなかった組に使う。 */
+    internal fun observeKeys(
+        info: LauncherActivityInfo,
+        isCurrentProfile: Boolean,
+    ): ApkKeys =
+        ApkKeys(
+            updatedAt(info.componentName.packageName, info.applicationInfo, isCurrentProfile),
+            apkFingerprint(info.applicationInfo),
+        )
+
+    /** パッケージの入口の詳細。一覧を取った後に消えたら空。例外は呼び出し側（組の `ENTRY` の段）で扱う。 */
+    internal fun details(
+        packageName: String,
+        profile: Profile,
+    ): List<LaunchableActivity> =
+        launcherApps
+            .getActivityList(packageName, profile.user)
+            .filter(::isAppEntry)
+            .map { toLaunchable(it, profile) }
+
+    // 失敗の単位はプロファイル。一覧そのものの例外だけをここで捕まえる。組の鍵の例外は鍵を「なし」にするので、ここまで来ない
+    private fun enumerate(
+        profile: Profile,
+        convert: (List<LauncherActivityInfo>) -> List<ActivityStamp>,
+    ): ProfileRead<ActivityStamp> =
+        try {
+            if (!isReadable(profile)) {
+                ProfileRead(ProfileReadStatus.UNAVAILABLE)
+            } else {
+                val infos = launcherApps.getActivityList(null, profile.user).filter(::isAppEntry)
+                if (!isReadable(profile)) {
+                    ProfileRead(ProfileReadStatus.UNAVAILABLE)
+                } else {
+                    ProfileRead(ProfileReadStatus.COMPLETE, convert(infos))
                 }
-            profile.serial to result
+            }
+        } catch (e: RuntimeException) {
+            ProfileRead(ProfileReadStatus.FAILED, failure = MaterialCauses.causeOf(e))
         }
 
     /** 材料の読み取り中の一時停止も、正常な空として保存しないために再確認する。 */
@@ -209,7 +251,8 @@ public class AppSource(
 
     // 自分のプロファイルは PackageInfo.lastUpdateTime（architecture.md の「データの保存」）。
     // 仕事用プロファイルのパッケージは PackageManager から引けないので、APK のファイルの更新の時刻を使う。
-    // 通常の更新時刻の比較用。仕事用の差分では別に base と split の指紋を毎回比べる
+    // 鍵が作れないことは失敗にしない（architecture.md の「鍵の比べ方」）。ここの例外をプロファイル全体の失敗に広げると、
+    // 1 つの組の時刻のためにプロファイルのすべての組が古いまま残るので、組の時刻を「なし」にして続ける
     private fun updatedAt(
         packageName: String,
         applicationInfo: ApplicationInfo,
@@ -219,7 +262,9 @@ public class AppSource(
             try {
                 return packageInfo(packageName).lastUpdateTime
             } catch (_: PackageManager.NameNotFoundException) {
-                // 一覧を取った後に消えた。次の同期で消える
+                // 一覧を取った後に消えたか、アーカイブ済み（既定の問い合わせには出ない）。ファイルの時刻に落ちる
+            } catch (_: RuntimeException) {
+                return null
             }
         }
         return applicationInfo.sourceDir?.let { apkAttributes(it)?.lastModifiedTime()?.toMillis() }
@@ -271,25 +316,32 @@ public class AppSource(
     }
 }
 
-/** ファイルの不在や読み取りの失敗は成功した指紋として保存しない。順序の揺れは変化に数えない。 */
+/** アーカイブは API 35 から。それより前は常に偽。 */
+internal fun isArchived(info: ApplicationInfo): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && info.isArchived
+
+/**
+ * base と split の APK のパス・時刻・大きさを並べた指紋。ファイルの不在や読み取りの失敗では作らない（null。失敗ではない）。
+ * 順序の揺れは変化に数えない。大きさは、時刻が 0 に固定される APEX の中の APK でも、版の違いを拾う見込みが高いため。
+ */
 internal fun apkFingerprint(info: ApplicationInfo): String? {
     val base = info.sourceDir?.takeIf { it.isNotBlank() } ?: return null
     val paths = listOf(base) + info.splitSourceDirs.orEmpty().sorted()
     val attributes = ArrayList<String>()
     for (path in paths) {
         val file = apkAttributes(path) ?: return null
-        attributes += "${path.length}:$path:${file.lastModifiedTime().toMillis()}"
+        attributes += "${path.length}:$path:${file.lastModifiedTime().toMillis()}:${file.size()}"
     }
     return attributes.joinToString("|")
 }
 
 // 時刻は例外で失敗を知らせる NIO で読む。File.lastModified は失敗も 0 で返すが、APEX の中の APK
-// （例: Android 15 以降のターミナル）は本当に時刻が 0 で、失敗と区別できないと毎回の同期で読み直し続けるため
+// （例: Android 15 以降のターミナル）は本当に時刻が 0 で、失敗と区別できないと毎回の同期で読み直し続けるため。
+// 鍵が作れないことは失敗にしないので、例外の型によらず「なし」にする
 private fun apkAttributes(path: String): BasicFileAttributes? =
     try {
         Files.readAttributes(Paths.get(path), BasicFileAttributes::class.java).takeIf { it.isRegularFile }
     } catch (_: IOException) {
         null
-    } catch (_: SecurityException) {
+    } catch (_: RuntimeException) {
         null
     }

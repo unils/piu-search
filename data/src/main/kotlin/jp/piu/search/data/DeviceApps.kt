@@ -30,42 +30,27 @@ internal interface DeviceApps {
     /** [sequence] より後に変わったパッケージと、今の変更の番号（`PackageManager.getChangedPackages`）。 */
     fun changedPackages(sequence: Int): PackageChanges
 
-    /** 今回読めるプロファイルのシリアル番号。一覧にないことは、ユーザーが消えたことを意味しない。 */
-    fun profileSerials(): Set<Long>
+    /**
+     * 一覧の観測（入口の集合・アーカイブ済みか・鍵）をプロファイルごとに返す。[withUpdateTime] が false なら時刻は null。
+     * 一覧を読めなかったプロファイルを正常な空にしない。
+     */
+    fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>>
 
-    /** すべての入口の識別子。[withUpdateTime] が false なら時刻は 0。 */
-    fun stamps(withUpdateTime: Boolean): List<ActivityStamp>
+    /**
+     * 直前の [stampProfiles] の一覧で、[targets] の組の鍵（時刻と指紋）を一度に観測する（[InstalledAppReader.listedKeys]）。
+     * 時刻を引かなかった一覧で、読む組の一覧の観測を確定する。ジャンルと詳細を読む前に呼ぶ。
+     */
+    fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys>
 
-    /** [packages] のパッケージの入口を、索引の材料にして読む（null ならすべて）。 */
-    fun read(packages: Set<String>?): List<InstalledApp>
-
-    /** 一覧の完全性をプロファイルごとに保つ。 */
-    fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> {
-        val before = profileSerials()
-        val entries = stamps(withUpdateTime).groupBy { it.id.profileSerial }
-        val after = profileSerials()
-        return (before + after).associateWith { serial ->
-            if (serial in before && serial in after) {
-                ProfileRead(ProfileReadStatus.COMPLETE, entries[serial].orEmpty())
-            } else {
-                ProfileRead(ProfileReadStatus.UNAVAILABLE)
-            }
-        }
-    }
-
-    /** 詳細を読めなかったプロファイルを正常な空にしない。 */
-    fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> {
-        val before = profileSerials()
-        val entries = read(packages).groupBy { it.entry.id.profileSerial }
-        val after = profileSerials()
-        return (before + after).associateWith { serial ->
-            if (serial in before && serial in after) {
-                ProfileRead(ProfileReadStatus.COMPLETE, entries[serial].orEmpty())
-            } else {
-                ProfileRead(ProfileReadStatus.UNAVAILABLE)
-            }
-        }
-    }
+    /**
+     * 直前の [stampProfiles] の一覧で、[targets] の組の詳細を段ごとに読む。
+     *
+     * @param listedKeys 組ごとの一覧の観測の鍵（[InstalledAppReader.readPackages]）
+     */
+    fun readPackages(
+        targets: Map<PackageKey, List<ActivityStamp>>,
+        listedKeys: Map<PackageKey, ApkKeys>,
+    ): Map<Long, ProfileRead<PackageRead>>
 
     /** APK の変化によらないジャンルの材料を毎回問い合わせる。 */
     fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> = emptyMap()
@@ -122,23 +107,27 @@ internal class AndroidDeviceApps(
         return PackageChanges(changed.sequenceNumber, changed.packageNames.toSet())
     }
 
-    override fun profileSerials(): Set<Long> = reader.source.readableProfiles().mapTo(LinkedHashSet()) { it.serial }
+    // 同期は 1 つずつ（IndexSync の syncLock）なので、直前の一覧を持っておき、詳細を読む組の表示名と鍵の観測に使う
+    @Volatile private var listing: Listing? = null
 
-    override fun stamps(withUpdateTime: Boolean): List<ActivityStamp> =
-        reader.source.stamps(withUpdateTime).filter { it.id.packageName != ownPackage }
+    override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> {
+        val next = reader.source.listing(withUpdateTime)
+        listing = next
+        return next.profiles.mapValues { (_, result) -> result.copy(items = result.items.filter { it.id.packageName != ownPackage }) }
+    }
 
-    override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> =
-        reader.source.stampProfiles(withUpdateTime).mapValues { (_, result) ->
-            result.copy(items = result.items.filter { it.id.packageName != ownPackage })
-        }
+    override fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys> =
+        reader.listedKeys(checkNotNull(listing) { "一覧の前に鍵を観測した" }, targets.filterKeys { it.packageName != ownPackage })
 
-    override fun readProfiles(packages: Set<String>?): Map<Long, ProfileRead<InstalledApp>> =
-        reader.readProfiles(packages?.minus(ownPackage)).mapValues { (_, result) ->
-            result.copy(items = result.items.filter { it.entry.id.packageName != ownPackage })
-        }
+    override fun readPackages(
+        targets: Map<PackageKey, List<ActivityStamp>>,
+        listedKeys: Map<PackageKey, ApkKeys>,
+    ): Map<Long, ProfileRead<PackageRead>> =
+        reader.readPackages(
+            checkNotNull(listing) { "一覧の前に詳細を読んだ" },
+            targets.filterKeys { it.packageName != ownPackage },
+            listedKeys,
+        )
 
     override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> = genreResolver.resolveStamps(stamps)
-
-    override fun read(packages: Set<String>?): List<InstalledApp> =
-        reader.read(packages?.minus(ownPackage)).filter { it.entry.id.packageName != ownPackage }
 }

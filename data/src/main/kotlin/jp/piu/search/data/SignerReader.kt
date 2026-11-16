@@ -9,7 +9,6 @@ import android.content.pm.Signature
 import android.os.Build
 import android.os.Process
 import java.io.ByteArrayInputStream
-import java.security.cert.CertificateException
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
@@ -24,29 +23,32 @@ import java.security.cert.X509Certificate
 public class SignerReader(
     private val packageManager: PackageManager,
 ) {
-    /** [activity] のパッケージの署名者の DN（RFC 2253 の形）。読み取り失敗は例外で知らせ、再試行の対象にする。 */
+    /**
+     * [activity] のパッケージの署名者の DN（RFC 2253 の形）。読めなければ元の型の例外か、符号つきの例外で知らせる。
+     *
+     * - 自分のプロファイル: `PackageManager` から引く。`NameNotFoundException`（一覧の後に消えた。一時的）はそのまま投げ、
+     *   APK のファイルの読み取りに流さない。流すと、消えたアプリが `ARCHIVE_UNREADABLE`（決定的）に化けるため
+     * - 仕事用: APK のファイルから読む。解釈できなければ [MaterialCauses.ARCHIVE_UNREADABLE]
+     * - 署名が空なら [MaterialCauses.NO_SIGNERS]
+     */
     public fun read(activity: LaunchableActivity): List<String> {
         val info =
             if (activity.user == Process.myUserHandle()) {
                 installedInfo(activity.id.packageName)
             } else {
-                null
-            } ?: activity.applicationInfo.sourceDir?.let(::archiveInfo)
-        val signatures = info?.let(::signatures)?.takeIf { it.isNotEmpty() } ?: throw MaterialReadException()
+                activity.applicationInfo.sourceDir?.let(::archiveInfo)
+                    ?: throw MaterialReadException(MaterialCauses.ARCHIVE_UNREADABLE)
+            }
+        val signatures = signatures(info).takeIf { it.isNotEmpty() } ?: throw MaterialReadException(MaterialCauses.NO_SIGNERS)
         return signatures.map(::subjectOf).distinct()
     }
 
-    private fun installedInfo(packageName: String): PackageInfo? =
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(flags().toLong()))
-            } else {
-                @Suppress("DEPRECATION")
-                packageManager.getPackageInfo(packageName, flags())
-            }
-        } catch (_: PackageManager.NameNotFoundException) {
-            // 一覧を取った後に消えた。次の同期で消える
-            null
+    private fun installedInfo(packageName: String): PackageInfo =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(flags().toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, flags())
         }
 
     private fun archiveInfo(path: String): PackageInfo? =
@@ -71,15 +73,12 @@ public class SignerReader(
             .distinct()
     }
 
-    private fun subjectOf(signature: Signature): String =
-        try {
-            val certificate =
-                CertificateFactory
-                    .getInstance("X.509")
-                    .generateCertificate(ByteArrayInputStream(signature.toByteArray())) as X509Certificate
-            certificate.subjectX500Principal.name
-        } catch (_: CertificateException) {
-            // 正常な署名の不在にすると欠けた提供元が固定されるため、次回に再試行する
-            throw MaterialReadException()
-        }
+    // CertificateException は元の型のまま投げる（決定的。証明書は APK が替わるまで同じ）
+    private fun subjectOf(signature: Signature): String {
+        val certificate =
+            CertificateFactory
+                .getInstance("X.509")
+                .generateCertificate(ByteArrayInputStream(signature.toByteArray())) as X509Certificate
+        return certificate.subjectX500Principal.name
+    }
 }

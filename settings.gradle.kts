@@ -62,4 +62,8 @@ include(
     ":test-apps:yahoo",
     ":test-apps:no-launcher",
     ":test-apps:two-launchers",
+    ":test-apps:label-ja-only",
+    ":test-apps:label-inline",
+    ":test-apps:split",
+    ":test-apps:split:feature",
 )

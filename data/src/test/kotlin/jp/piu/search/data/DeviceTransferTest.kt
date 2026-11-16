@@ -80,6 +80,13 @@ class DeviceTransferTest {
                 .isEmpty(),
         )
         assertNull(restored.index.load().state)
+        // 前の端末の欠けの行も索引と一緒に捨てる
+        assertTrue(
+            restored.index
+                .load()
+                .issues
+                .isEmpty(),
+        )
         device.install(InstalledApp(AppEntry(PERSONAL_APP, "移行先の名前"), 1000))
         assertEquals(SyncMode.FULL_REBUILD, sync(restored).sync().mode)
         assertEquals(
@@ -415,6 +422,26 @@ class DeviceTransferTest {
         )
         return open().also { db ->
             sync(db).sync()
+            val state = checkNotNull(db.index.load().state)
+            val issue =
+                MaterialIssue(
+                    PackageKey(PERSONAL, PERSONAL_APP.packageName),
+                    MaterialStage.LABEL,
+                    "java.io.IOException",
+                    null,
+                    null,
+                    1,
+                    true,
+                    "2026-11-15",
+                    "2026-11-15",
+                )
+            check(db.index.saveIfCurrent(state, IndexChange(false, emptyList(), putIssues = listOf(issue), state = state, savedAt = 1)))
+            check(
+                db.index
+                    .load()
+                    .issues
+                    .isNotEmpty(),
+            )
             db.launchStats.record(PERSONAL_APP, 100)
             db.launchStats.record(WORK_APP, 200)
             val memory = LearnedMemory.EMPTY.recorded(LearningDecision(PERSONAL_PAIR, listOf(WORK_PAIR)), 300)

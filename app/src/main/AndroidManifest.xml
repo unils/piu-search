@@ -73,6 +73,15 @@
             </intent-filter>
         </activity>
 
+        <!--
+            索引の状態。設定画面と、検索の画面の索引の知らせから開く。ほかのアプリからは開かせない。
+            報告用の文はクリップボードに入れるだけで、送らない
+        -->
+        <activity
+            android:name=".IndexStatusActivity"
+            android:exported="false"
+            android:label="@string/index_status_title" />
+
         <!-- ライセンスの画面。設定画面から開く -->
         <activity
             android:name=".LicensesActivity"

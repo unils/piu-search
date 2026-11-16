@@ -18,6 +18,7 @@ import jp.piu.search.core.search.SearchKeyGenerator
 import jp.piu.search.core.search.SearchQuery
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -71,22 +72,38 @@ class IndexStoreTest {
         }
     }
 
+    // 0.1.x は指紋を消して作り直しを表した。0.2.0 は指紋（鍵）を保ち、作り直しの印を立てる。欠けの行は消さない
     @Test
-    fun indexVersionChangeKeepsOldKeysAndInvalidatesFingerprintsUntilRebuilt() {
+    fun indexVersionChangeKeepsOldKeysAndMarksEveryEntryUntilRebuilt() {
         val database = open(indexVersion = 4)
         val original = stored(APPS[0]).copy(apkFingerprint = "unchanged-apk")
         database.index.replaceAll(listOf(original), STATE)
+        val issue =
+            MaterialIssue(
+                PackageKey(PERSONAL, TRANSIT),
+                MaterialStage.SIGNER,
+                "java.security.cert.CertificateException",
+                null,
+                null,
+                1,
+                false,
+                "2026-11-15",
+                "2026-11-15",
+            )
+        database.index.saveIfCurrent(STATE, IndexChange(false, emptyList(), putIssues = listOf(issue), state = STATE, savedAt = 5))
 
         val newer = reopen(database, indexVersion = 5)
         val loaded = newer.index.load()
 
-        assertEquals(listOf(original.copy(apkFingerprint = null)), loaded.apps)
+        assertEquals(listOf(original.copy(rebuildPending = true)), loaded.apps)
+        assertEquals(listOf(issue), loaded.issues)
+        assertEquals(5L, loaded.lastSavedAt)
         assertNull("作り直しが要ることを同期に伝える", loaded.state)
         assertEquals(1, newer.count("app"))
         assertEquals(original.app.keys.size, newer.count("search_key"))
         assertEquals(0, newer.count("meta"))
-        // 同期前にプロセスが終わっても、旧索引を保ち、作り直しの印を失わない
-        assertEquals(loaded, reopen(newer, indexVersion = 5).index.load())
+        // 同期前にプロセスが終わっても、旧索引を保ち、作り直しの印を失わない（最後に保存した時刻は meta と一緒に消える）
+        assertEquals(loaded.copy(lastSavedAt = null), reopen(newer, indexVersion = 5).index.load())
     }
 
     @Test
@@ -223,6 +240,71 @@ class IndexStoreTest {
             open(indexVersion = 5).let { it.index.update(apps = emptyList(), state = STATE) }
         }
     }
+
+    // 番兵の Long.MIN_VALUE は IndexStore の外に出ない（読み出しは null、null の書き込みは番兵）
+    @Test
+    fun unknownTimeSentinelStaysInsideTheStore() {
+        val database = open()
+        database.index.replaceAll(listOf(stored(APPS[0], updatedAt = null)), STATE)
+        assertEquals(Long.MIN_VALUE, database.longValue("SELECT package_updated_at FROM app"))
+        assertNull(
+            reopen(database)
+                .index
+                .load()
+                .apps
+                .single()
+                .packageUpdatedAt,
+        )
+    }
+
+    // 次の索引にない組の欠けの行は保存のときに消え、last_saved_at は保存と同じトランザクションで書く
+    @Test
+    fun issuesOfPackagesMissingFromTheNextIndexAreDeleted() {
+        val database = open()
+        database.index.replaceAll(APPS.take(2).map(::stored), STATE)
+        val issues =
+            APPS.take(2).map {
+                MaterialIssue(
+                    PackageKey(PERSONAL, it.id.packageName),
+                    MaterialStage.LABEL,
+                    "java.io.IOException",
+                    null,
+                    null,
+                    1,
+                    true,
+                    "2026-11-14",
+                    "2026-11-15",
+                )
+            }
+        assertTrue(database.index.saveIfCurrent(STATE, IndexChange(false, emptyList(), putIssues = issues, state = STATE, savedAt = 7)))
+        assertEquals(
+            issues.toSet(),
+            database.index
+                .load()
+                .issues
+                .toSet(),
+        )
+        assertTrue(
+            database.index.saveIfCurrent(
+                STATE,
+                IndexChange(false, emptyList(), removed = listOf(PackageKey(PERSONAL, TRANSIT)), state = STATE, savedAt = 8),
+            ),
+        )
+        val reopened = reopen(database)
+        val loaded = reopened.index.load()
+        assertEquals(issues.drop(1), loaded.issues)
+        assertEquals(8L, loaded.lastSavedAt)
+        // 状態が違えば書かない（このアプリの版も照合に入る）
+        assertFalse(
+            reopened.index.saveIfCurrent(STATE.copy(appVersionCode = 9), IndexChange(false, emptyList(), state = STATE, savedAt = 9)),
+        )
+    }
+
+    private fun LocalDatabase.longValue(sql: String): Long =
+        room.openHelper.readableDatabase.query(sql).use { cursor ->
+            cursor.moveToFirst()
+            cursor.getLong(0)
+        }
 
     private fun stored(
         entry: AppEntry,

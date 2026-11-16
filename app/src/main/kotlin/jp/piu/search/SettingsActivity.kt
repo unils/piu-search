@@ -12,16 +12,23 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import jp.piu.search.data.IndexSyncStatus
 
 /**
  * 設定画面（[SettingsScreen]）。検索の画面の検索窓の中の歯車と、OS の「アプリ情報」の歯車（`ACTION_APPLICATION_PREFERENCES`）から開く。
  *
  * 値は [SettingsStore] に選んだその場で書く。検索の画面は開くたび（`onStart`）に読み直すので、戻ればすぐ効く。
+ * 「索引の状態」の件数は、同期が終わるたびに読み直す。
  */
 class SettingsActivity : ComponentActivity() {
     private lateinit var entrySetup: EntrySetup
     private var settings by mutableStateOf(SearchSettings())
+    private var indexSummary by mutableStateOf(IndexSummary(0, 0))
+    private val statusListener: (IndexSyncStatus) -> Unit = {
+        ContextCompat.getMainExecutor(this).execute(::readIndexSummary)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -53,10 +60,33 @@ class SettingsActivity : ComponentActivity() {
                             onOpenSource = ::openSource,
                             onOpenLicenses = { startActivity(Intent(this, LicensesActivity::class.java)) },
                             onClearLaunchHistory = ::clearLaunchHistory,
+                            onOpenIndexStatus = { startActivity(Intent(this, IndexStatusActivity::class.java)) },
                         ),
+                    indexSummary = indexSummary,
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val sync = appContainer.indexSync
+        sync.addStatusListener(statusListener)
+        readIndexSummary()
+        // OS のアプリ情報から先に開いたときは、まだ保存した索引を読んでいない。学習の一覧と同じく読み込みを頼む
+        sync.requestSync()
+    }
+
+    override fun onStop() {
+        appContainer.indexSync.removeStatusListener(statusListener)
+        super.onStop()
+    }
+
+    private fun readIndexSummary() {
+        if (isDestroyed) return
+        val sync = appContainer.indexSync
+        val status = IndexStatus.of(sync.index, sync.materialIssues, sync.lastSavedAt, sync.status, appContainer.users.ownSerial)
+        indexSummary = IndexSummary(status.totalApps, status.counts.total)
     }
 
     /**

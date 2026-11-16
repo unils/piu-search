@@ -7,6 +7,7 @@ import android.os.Build
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -76,6 +77,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -120,6 +122,9 @@ const val PROFILE_SWITCH_TAG = "profile_switch"
 
 /** テストから一時停止中の知らせを探すための印。 */
 const val WORK_PAUSED_TAG = "work_paused"
+
+/** テストから索引の知らせを探すための印。 */
+const val INDEX_NOTICE_TAG = "index_notice"
 
 /** テストから設定のボタン（検索窓の中）を探すための印。 */
 const val SETTINGS_BUTTON_TAG = "settings_button"
@@ -168,7 +173,8 @@ data class ProfileSwitch(
  * @param onScrolled 結果の一覧をスクロールしたとき
  * @param searchBarOnTop 検索窓を画面の上に置く（設定）
  * @param showReasons 出た理由を行に出す（設定）。出さなくても、長押しのメニューの出し分けには理由を使う
- * @param syncFailed 索引の更新に失敗した知らせを控えめに出す
+ * @param indexNotice 索引の知らせ（ui.md の「索引の知らせ」）。なければ null
+ * @param onIndexNotice 索引の知らせを押したとき（「索引の状態」を開く）
  * @param noticeBaseMillis 救済の知らせを出す時間の基準（ミリ秒）。ユーザー補助の「操作の時間」の設定があれば、それに合わせて延ばす
  * @param openRecordFailed 前にアプリを開いたときの、起動の記録か学習の保存の失敗を控えめに出す
  * @param workPausedNotice 仕事用アプリが一時停止中である知らせを出す。既定は、切り替えで仕事用を選んでいて一時停止中のとき
@@ -201,7 +207,8 @@ fun SearchScreen(
     showReasons: Boolean = true,
     workPausedNotice: Boolean = profileSwitch?.let { it.selected == ProfileTab.WORK && it.workPaused } ?: false,
     onOpenSettings: (() -> Unit)? = null,
-    syncFailed: Boolean = false,
+    indexNotice: IndexNotice? = null,
+    onIndexNotice: () -> Unit = {},
     openRecordFailed: Boolean = false,
     noticeBaseMillis: Long = NOTICE_MILLIS,
 ) {
@@ -221,7 +228,7 @@ fun SearchScreen(
                     SearchBarRow(query, onQueryChange, onSearchAction, showingAllApps, onShowAllApps, autoFocus, focusKey, onOpenSettings)
                 }
                 val profile: @Composable () -> Unit = {
-                    if (syncFailed) QuietNotice(stringResource(R.string.index_sync_failed))
+                    indexNotice?.let { IndexNoticeRow(it, onIndexNotice) }
                     if (openRecordFailed) QuietNotice(stringResource(R.string.open_record_failed))
                     if (searchBarOnTop) {
                         profileSwitch?.let { ProfileSwitchRow(it.selected, onSelectProfile) }
@@ -453,6 +460,40 @@ private fun QuietNotice(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * 索引の知らせの 1 行。行全体を押せるボタンにし（高さ 48 dp 以上）、末尾に「詳細」を付ける。
+ * 検索を妨げないよう、文は小さく控えめな色にする。
+ */
+@Composable
+private fun IndexNoticeRow(
+    notice: IndexNotice,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable(role = Role.Button, onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .testTag(INDEX_NOTICE_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(notice.text),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            stringResource(R.string.index_notice_details),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 @Composable

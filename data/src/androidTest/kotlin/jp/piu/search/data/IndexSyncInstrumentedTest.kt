@@ -116,7 +116,6 @@ class IndexSyncInstrumentedTest {
         val stale =
             stored.apps
                 .filter { it.app.id.packageName == TRANSIT && it.app.id.profileSerial == mySerial }
-                // 指紋を落とすと不完全な材料として即座に再試行され、再起動による時刻の見直しを試せなくなる
                 .map { it.copy(app = it.app.copy(label = "古い名前"), packageUpdatedAt = 0) }
         assertEquals(1, stale.size)
         assertNotNull(stale.single().apkFingerprint)
@@ -165,39 +164,55 @@ class IndexSyncInstrumentedTest {
         assertConverged(review)
     }
 
+    // 0.1.0 型の不具合（system image のアプリで毎回失敗する）を見逃さない。収束しても、決定的な欠けが増えれば検索の材料が失われるので、
+    // test-apps 以外の入口の欠けを段と理由ごとに数え、system image ごとの既知の件数と比べる（増減の相殺も見逃さない）。
+    // test-apps の分類ごとのアプリの欠けは MaterialIssueInstrumentedTest が厳密に確かめる
     private fun assertConverged(report: SyncReport) {
-        if (report.rebuiltApps == 0 && report.failedPackages == 0 && report.failedProfiles == 0) return
-        throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
-    }
-
-    // 読み直しの原因になりうるパッケージを並べる。どの入口が収束しないかを、出力だけで追えるようにする
-    private fun unsettledPackages(): String {
-        val stored =
+        val issues =
             opened
                 .last()
                 .index
                 .load()
-                .apps
-        val device = AndroidDeviceApps(context)
-        val failed =
-            device.readProfiles(null).flatMap { (serial, read) ->
-                read.failedPackages.map { "$serial/$it" } +
-                    if (read.status != ProfileReadStatus.COMPLETE) listOf("$serial: ${read.status}") else emptyList()
-            }
-        val withoutFingerprint = stored.filter { it.apkFingerprint == null }.map { "${it.app.id}" }
-        val byId = stored.associateBy { it.app.id }
+                .issues
+        val breakdown =
+            issues
+                .filterNot { it.key.packageName.startsWith(TEST_APP_PREFIX) }
+                .groupingBy { "${it.stage}:${it.cause}" }
+                .eachCount()
+                .toSortedMap()
+        Log.i(TAG, "決定的な欠け: ${report.issueCounts.deterministic} 件。test-apps 以外の欠け（$IMAGE）: $breakdown")
+        if (report.readPackages != 0 || report.failedProfiles.isNotEmpty() || report.issueCounts.retryPending != 0 ||
+            report.issueCounts.suspectedBug != 0
+        ) {
+            throw AssertionError("同じ状態の同期で読み直しか失敗が残った: $report\n${unsettledPackages()}")
+        }
+        assertEquals("報告の件数は保存した行の件数", IssueCounts.of(issues), report.issueCounts)
+        val known = KNOWN_ISSUES[IMAGE]
+        if (known == null) {
+            // 実機など、件数を定めていない image では比べない（入っているアプリで変わるため）
+            Log.w(TAG, "既知の件数のない image（$IMAGE）なので比べない")
+            return
+        }
+        assertEquals("test-apps 以外の欠け（$IMAGE。image を上げたら testing.md のとおり測り直す）", known, breakdown)
+    }
+
+    // 読み直しの原因になりうるパッケージを並べる。どの入口が収束しないかを、出力だけで追えるようにする
+    private fun unsettledPackages(): String {
+        val loaded = opened.last().index.load()
+        val byId = loaded.apps.associateBy { it.app.id }
         val drifted =
-            device.stampProfiles(withUpdateTime = true).values.flatMap { it.items }.mapNotNull { stamp ->
+            AndroidDeviceApps(context).stampProfiles(withUpdateTime = true).values.flatMap { it.items }.mapNotNull { stamp ->
                 val old = byId[stamp.id] ?: return@mapNotNull "${stamp.id}: 索引にない"
                 if (old.packageUpdatedAt == stamp.packageUpdatedAt &&
-                    (stamp.isCurrentProfile || old.apkFingerprint == stamp.apkFingerprint)
+                    (stamp.isCurrentProfile || old.apkFingerprint == stamp.apkFingerprint) && old.archived == stamp.isArchived
                 ) {
                     null
                 } else {
                     "${stamp.id}: 時刻 ${old.packageUpdatedAt} → ${stamp.packageUpdatedAt}、指紋 ${old.apkFingerprint} → ${stamp.apkFingerprint}"
                 }
             }
-        return "読めなかった: $failed\n指紋のない索引: $withoutFingerprint\n時刻か指紋が変わった: $drifted"
+        val pending = loaded.apps.filter { it.rebuildPending }.map { "${it.app.id}" }
+        return "欠けの行: ${loaded.issues}\n作り直しの印: $pending\n時刻か指紋が変わった: $drifted"
     }
 
     @Test
@@ -292,6 +307,20 @@ class IndexSyncInstrumentedTest {
         const val TAG = "IndexSyncTest"
         const val FILE = "index-sync-instrumented.db"
         const val TRANSIT = "jp.piu.search.testapp.transit"
+        const val TEST_APP_PREFIX = "jp.piu.search.testapp."
+
+        /** この端末の system image。CI と手元の AVD の image（AOSP の既定の x86_64 の像。PRODUCT は API 37 が `sdk_phone64_x86_64`、API 28 が `sdk_phone_x86_64`）を見分ける。 */
+        val IMAGE = "${android.os.Build.PRODUCT}/${android.os.Build.VERSION.SDK_INT}"
+
+        /**
+         * system image ごとの、test-apps 以外の入口の欠けの行の件数（`段:理由` ごと）。同期を 2 回続けた後の値。
+         * image を上げたら測り直して直す（testing.md の「読み取りの失敗と材料の欠け」）。
+         */
+        val KNOWN_ISSUES: Map<String, Map<String, Int>> =
+            mapOf(
+                "sdk_phone64_x86_64/37" to emptyMap(),
+                "sdk_phone_x86_64/28" to emptyMap(),
+            )
         const val ORIGINAL_APK = "/data/local/tmp/piu-testapp-transit-original.apk"
         const val UPDATE_APK = "/data/local/tmp/piu-testapp-transit-update.apk"
         const val TIMEOUT_MILLIS = 30_000L

@@ -91,10 +91,13 @@ class SettingsTest {
     }
 
     @Test
-    fun rowsOpenLearningLicensesAndSource() {
+    fun rowsOpenLearningIndexStatusLicensesAndSource() {
         ActivityScenario.launch(SettingsActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_LEARNED_TAG).performScrollTo().performClick()
             assertEquals(LearnedListActivity::class.java.name, nextStarted(scenario)?.component?.className)
+
+            compose.onNodeWithTag(SETTINGS_INDEX_STATUS_TAG).performScrollTo().performClick()
+            assertEquals(IndexStatusActivity::class.java.name, nextStarted(scenario)?.component?.className)
 
             compose.onNodeWithTag(SETTINGS_LICENSES_TAG).performScrollTo().performClick()
             assertEquals(LicensesActivity::class.java.name, nextStarted(scenario)?.component?.className)

@@ -16,24 +16,46 @@ import java.util.Locale
  * アプリの資源を日本語・英語・端末の言語の `Configuration` で開き、表示名の資源を引く。
  * 「Google マップ」を「Maps」でも引けるようにするため。
  */
-public class LocalizedLabelReader(
+public class LocalizedLabelReader internal constructor(
     private val context: Context,
+    // 言語を指定したアプリの資源。テストで、言語ごとの資源の有無を偽装するために差し替える
+    // （Robolectric の資源は、本物と同じ条件で Resources.NotFoundException を投げないため。testing.md の「分類」）
+    private val resourcesFor: (LaunchableActivity, Configuration) -> Resources,
 ) {
+    /** 端末の部品で作る。 */
+    public constructor(
+        context: Context,
+    ) : this(context, { activity, configuration -> applicationResources(context, activity, configuration) })
+
     private val packageManager = context.packageManager
 
     /**
      * [activity] の日本語・英語・端末の言語での表示名。表示名（[LaunchableActivity.label]）と同じもの、空のもの、重なりは除く。
-     * 名前が資源でない（マニフェストに直に書いた）アプリは空。資源の読み取り失敗は例外で知らせ、再試行の対象にする。
+     * 名前が資源でない（マニフェストに直に書いた）アプリは空で、失敗ではない。
+     *
+     * 言語ごとに読み、読めなかった言語があれば最初の例外を [LabelRead.failure] に元の型のまま返す
+     * （`values-ja/` にだけある名前は、英語で `Resources.NotFoundException` になっても日本語では読める）。
      */
-    public fun read(activity: LaunchableActivity): List<String> {
+    public fun read(activity: LaunchableActivity): LabelRead {
         val labelRes = labelResource(activity)
-        if (labelRes == 0) return emptyList()
+        if (labelRes == 0) return LabelRead(emptyList(), null)
         val names = LinkedHashSet<String>()
+        var failure: Exception? = null
         for (locale in locales()) {
-            val name = loadText(activity, labelRes, locale) ?: continue
+            // 失敗の単位は言語 1 つ。型の分類は段の境界（MaterialCauses）で行う
+            val name =
+                try {
+                    loadText(activity, labelRes, locale)
+                } catch (e: PackageManager.NameNotFoundException) {
+                    failure = failure ?: e
+                    continue
+                } catch (e: RuntimeException) {
+                    failure = failure ?: e
+                    continue
+                }
             if (name.isNotBlank() && name != activity.label) names += name
         }
-        return names.toList()
+        return LabelRead(names.toList(), failure)
     }
 
     /** 引く資源の id。0 は引かない。 */
@@ -69,35 +91,41 @@ public class LocalizedLabelReader(
         activity: LaunchableActivity,
         labelRes: Int,
         locale: Locale,
-    ): String? {
+    ): String {
         val configuration = Configuration(context.resources.configuration).apply { setLocale(locale) }
-        return try {
-            resourcesFor(activity, configuration).getText(labelRes).toString().trim()
-        } catch (_: PackageManager.NameNotFoundException) {
-            throw MaterialReadException()
-        } catch (_: Resources.NotFoundException) {
-            throw MaterialReadException()
-        }
+        return resourcesFor(activity, configuration).getText(labelRes).toString().trim()
+    }
+}
+
+/**
+ * 言語を指定したアプリの資源。
+ *
+ * API 31 以上は `ApplicationInfo` から作るので、仕事用プロファイルのアプリにも使える。
+ * API 30 以前は自分のプロファイルのパッケージの `Context` から作る（`Resources` の古いコンストラクタは
+ * `AssetManager` を共有して言語を書き換え、同じアプリの表示名の読み込みを乱すので使わない）。
+ * そのため API 30 以前の仕事用プロファイルでは、同じパッケージが主プロファイルにあるときだけ読める。
+ */
+private fun applicationResources(
+    context: Context,
+    activity: LaunchableActivity,
+    configuration: Configuration,
+): Resources =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        context.packageManager.getResourcesForApplication(activity.applicationInfo, configuration)
+    } else {
+        context
+            .createPackageContext(activity.id.packageName, 0)
+            .createConfigurationContext(configuration)
+            .resources
     }
 
-    /**
-     * 言語を指定したアプリの資源。
-     *
-     * API 31 以上は `ApplicationInfo` から作るので、仕事用プロファイルのアプリにも使える。
-     * API 30 以前は自分のプロファイルのパッケージの `Context` から作る（`Resources` の古いコンストラクタは
-     * `AssetManager` を共有して言語を書き換え、同じアプリの表示名の読み込みを乱すので使わない）。
-     * そのため API 30 以前の仕事用プロファイルでは、同じパッケージが主プロファイルにあるときだけ読める。
-     */
-    private fun resourcesFor(
-        activity: LaunchableActivity,
-        configuration: Configuration,
-    ): Resources =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            packageManager.getResourcesForApplication(activity.applicationInfo, configuration)
-        } else {
-            context
-                .createPackageContext(activity.id.packageName, 0)
-                .createConfigurationContext(configuration)
-                .resources
-        }
-}
+/**
+ * 別の言語の名前の読み取り結果。
+ *
+ * @property names 読めた名前
+ * @property failure 読めなかった言語の最初の例外（元の型のまま）。なければ null
+ */
+public class LabelRead(
+    public val names: List<String>,
+    public val failure: Exception?,
+)
