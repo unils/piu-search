@@ -1,28 +1,37 @@
 # 版の出し方
 
-配布するのは、F-Droid の公式リポジトリと GitHub Releases の 2 か所だけ。どちらも同じ APK（メンテナの鍵で署名したもの）を配る（[decisions.md](decisions.md) の 2026-11-14）。
+配布先は、F-Droid の公式リポジトリと GitHub Releases の 2 か所だけである。どちらもメンテナの鍵で署名した同じ APK を配る（[decisions.md](decisions.md) の 2026-11-14）。
 
-F-Droid は、タグのソースから自分で署名なしの APK を組み立て、GitHub Releases に置いたメンテナの APK から署名を写して貼り、検証が通るか（ZIP としてバイト単位で一致するか）を確かめる。通れば、メンテナの APK をそのまま配る。通らなければ、その版は F-Droid に出ない。このため、メンテナの手元の組み立ても、F-Droid の組み立ても、同じソースから同じ APK にならなければならない（再現可能なビルド）。
+F-Droid は、タグのソースコードから署名なしの APK を自分で組み立て、GitHub Releases に置いたメンテナの APK から署名を写して貼り、検証が通るか（ZIP としてバイト単位で一致するか）を確かめる。通ればメンテナの APK をそのまま配り、通らなければその版は F-Droid に出ない。このため、メンテナの手元の組み立ても F-Droid の組み立ても、同じソースから同じ APK にならなければならない（再現可能なビルド）。
 
 ## 1. 版を上げる
 
-pull request で、次の 4 か所を一度に直す。
+pull request で、次の 4 か所を一度に更新する。
 
 - `app/build.gradle.kts` の `versionCode`（1 ずつ増やす）と `versionName`（[Semantic Versioning](https://semver.org/lang/ja/)）
-- `CHANGELOG.md`: `[Unreleased]` の中身を `## [<版>] - <タグの日付>` の節に移し、空の `[Unreleased]` を残す。末尾の比較のリンクも足す
-- `fastlane/metadata/android/ja-JP/changelogs/<versionCode>.txt` と `en-US/changelogs/<versionCode>.txt`: F-Droid のアプリに出る、その版の短い説明（500 字まで）
+- `CHANGELOG.md`: `[Unreleased]` の中身を `## [<版>] - <タグの日付>` の節に移し、空の `[Unreleased]` を残す。末尾の比較リンクも足す
+- `fastlane/metadata/android/ja-JP/changelogs/<versionCode>.txt` と `en-US/changelogs/<versionCode>.txt`: F-Droid のクライアントに出る、その版の短い説明（500 字以内）
 
 ## 2. 実機で確かめる
 
-タグの前に、版を上げた main を 4〜6 と同じ手順で組み立てて署名し、その APK を実機に入れて画面を 3 回開く（開くたびに閉じる）。logcat（タグ `PiuIndexSync`）の `SyncReport` が、2 回目以降 `rebuiltApps=0`・`failedPackages=0`・`failedProfiles=0` であることを確かめる（0.2.0 からは `failedPackages` の代わりに、再試行待ちと不具合の疑いの欠けが 0 であることと、設定の「索引の状態」に予期しない欠けがないことを見る）。仕事用プロファイルを作れる端末なら、ある状態で確かめる。エミュレータの計器テストは自作のテスト用のアプリと system image のアプリしか見ないので、利用者の端末にだけある APK（APEX の中のアプリなど）で同期が収束しない不具合はここで見つける。
+タグを付ける前に、版を上げた `main` を手順 4〜6 と同じ方法で組み立てて署名し、実機に入れて検索画面を 3 回開く（開くたびに閉じる）。
 
 ```bash
 adb logcat -s PiuIndexSync:I
 ```
 
+logcat（タグ `PiuIndexSync`）に出る `SyncReport` が、2 回目以降の同期で次の条件を満たすことを確かめる（0.1.x では `rebuiltApps=0`・`failedPackages=0`・`failedProfiles=0`）。
+
+- `rebuiltApps=0`・`readPackages=0`（同じ状態で作り直しや読み直しが起きないこと）
+- `issueCounts` の `retryPending=0`・`suspectedBug=0`（再試行待ちと不具合の疑いの欠けが 0 であること）
+- `genreFailure=null`、かつ `profileResults` に `FAILED` がないこと
+- 設定の「索引の状態」に予期しない欠けがないこと
+
+仕事用プロファイルを作れる端末では、仕事用プロファイルがある状態で確かめる。エミュレータの計器テストは自作のテスト用アプリとシステムイメージのアプリしか見ないため、実機にだけある APK（APEX の中のアプリなど）で同期が収束しない不具合はここで見つける。
+
 ## 3. タグを付ける
 
-merge した main のコミットに、`v<版>`（例: `v0.1.0`）のタグを付けて push する。F-Droid は `v` と数字と点だけのタグを新しい版として拾うので、ほかの形のタグを付けない。
+merge した `main` のコミットに、`v<版>`（例: `v0.1.0`）のタグを付けて push する。F-Droid は `v` と数字と点だけのタグを新しい版として拾うため、他の形のタグは付けない。
 
 ```bash
 git switch main && git pull
@@ -32,7 +41,7 @@ git push origin v0.1.0
 
 ## 4. 署名なしの APK を組み立てる
 
-タグを取り出した、変更のない作業ツリーで組み立てる。ビルドキャッシュを使わず、`clean` から始める。
+タグを取り出した、変更のない作業ツリーで組み立てる。ビルドキャッシュは使わず、`clean` から始める。
 
 ```bash
 git switch --detach v0.1.0
@@ -40,25 +49,31 @@ git status --short   # 何も出ないこと
 ./gradlew --no-daemon --no-build-cache clean :app:assembleRelease
 ```
 
-出力は `app/build/outputs/apk/release/app-release-unsigned.apk`。
+出力は `app/build/outputs/apk/release/app-release-unsigned.apk` である。
 
-APK に、組み立てる場所で変わるもの（git のリモートの URL とコミット、Google Play 向けの依存の情報）は入れていない（`app/build.gradle.kts` の `vcsInfo` と `dependenciesInfo`）。Baseline Profile はリポジトリに入れたものを使い、組み立てのたびには生成しない。
+組み立てる環境によって変わる情報（git のリモートの URL とコミット、Google Play 向けの暗号化された依存情報）は APK に入れていない（`app/build.gradle.kts` の `vcsInfo` と `dependenciesInfo`）。Baseline Profile もリポジトリにコミットしたものを使い、ビルドのたびには生成しない。
 
 ## 5. 再現できることを確かめる
 
-同じタグを 2 つの別のディレクトリに置いて順に組み立て、署名なしの APK が一致するかを比べる。
+同じタグを 2 つの別のディレクトリに展開して順に組み立て、署名なしの APK がバイト単位で一致するかを比べる。
 
 ```bash
 tools/reproducible-build/check.sh v0.1.0
 ```
 
-一致すれば終了コード 0。一致しなければ、違うファイルの一覧を出し、比べた APK を `build/reproducible-build/` に残す。2 回の組み立ての並列の度合いを変えるなら、`WORKERS_A=4 WORKERS_B=2` のように渡す。
+一致すれば終了コード 0 で終わる。一致しなければ、異なるファイルの一覧を出し、比べた APK を `build/reproducible-build/` に残す。2 回の組み立てで並列の度合いを変えて試すときは、`WORKERS_A=4 WORKERS_B=2` のように環境変数を渡す。
 
-これは同じ PC での確かめで、F-Droid の組み立て（Debian の OpenJDK 21）との一致までは保証しない。F-Droid の環境での確かめは、fdroidserver の `fdroid build` で行う（下の 8）。
+この検査は同じ PC 上での確認であり、F-Droid のビルド環境（Debian の OpenJDK 21）との一致までは保証しない。F-Droid の環境での確認は、fdroidserver の `fdroid build` で行う（手順 8）。
 
 ## 6. メンテナの鍵で署名する
 
-Android SDK の build-tools（36.0.0）の `apksigner` で署名する。鍵はリポジトリと CI の外にあり、メンテナだけが持つ。
+まず、署名なしの APK の揃え（zipalign）が済んでいることを確かめる。
+
+```bash
+zipalign -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+次に、Android SDK の build-tools（36.0.0）の `apksigner` で署名する。署名鍵はリポジトリと CI の外にあり、メンテナだけが持つ。
 
 ```bash
 apksigner sign --alignment-preserved --ks <メンテナの鍵> \
@@ -66,39 +81,36 @@ apksigner sign --alignment-preserved --ks <メンテナの鍵> \
 apksigner verify --verbose --print-certs piu-search-0.1.0.apk
 ```
 
-`--alignment-preserved` は必ず付ける。build-tools 35 以降の `apksigner` は、付けないと署名のときに ZIP の詰め物（揃えのための余白）を作り直す。すると署名なしの APK とバイトの並びが変わり、F-Droid が署名を貼っても検証が通らない。揃え（圧縮しない資源や `.so` を 4 バイトや 16 KB の境目に置き、端末がファイルを展開せずにそのまま読めるようにすること）は、AGP が組み立てのときに済ませている。付けても揃えの効果は変わらず、詰め物の作り方が変わらないだけになる。署名の後に `zipalign` も掛けない。その代わり、署名の前に揃っていることを確かめる。
+`--alignment-preserved` は必ず付ける。build-tools 35 以降の `apksigner` は、この指定がないと署名時に ZIP の詰め物（揃えのための余白）を作り直す。その結果、署名なしの APK とバイトの並びが変わり、F-Droid が署名を写して貼っても検証が通らなくなる。揃え（非圧縮の資源や `.so` を 4 バイトや 16 KB の境界に置き、端末がファイルを展開せずにそのまま読めるようにすること）は、AGP が組み立ての時点で済ませている。`--alignment-preserved` を付けても揃えの効果は変わらず、詰め物の作り方が変わらないだけになる。署名の後に `zipalign` を掛けてはならない。
 
-```bash
-zipalign -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
-```
-
-`verify` の出力の `Signer #1 certificate SHA-256 digest` が、README の「インストール」に載せた指紋と同じであることを確かめる。
+`apksigner verify` の出力の `Signer #1 certificate SHA-256 digest` が、[README.md](../README.md#インストール) の「インストール」に載せた指紋と同じであることを確かめる。
 
 ## 7. GitHub Releases に置く
 
-タグ `v<版>` の Release を作り、署名した APK を `piu-search-<版>.apk` の名前で置く。F-Droid はこの URL（`https://github.com/unils/piu-search/releases/download/v<版>/piu-search-<版>.apk`）から APK を取るので、名前を変えない。説明には CHANGELOG のその版の節を写す。
+タグ `v<版>` の Release を作り、次の 2 つのファイルを添付する。説明には `CHANGELOG.md` のその版の節を写す。
 
-同じ Release に、4 の組み立てでできた R8 の名前の対応表（`app/build/outputs/mapping/release/mapping.txt`）を `piu-search-<版>-mapping.txt` の名前で置く。報告用の文の不具合の疑いの行には、R8 で名前が変わった例外のフレーム（行の番号は残し、ファイル名は `SourceFile` に替えてある）と、行を書いた版（`ver=`）が入るので、メンテナはその版の対応表で元の名前に戻す（[architecture.md](design/architecture.md#失敗の分け方)）。対応表はソースから作れるもので、秘密の情報は入らない。再現可能なビルドなのでタグから作り直しても同じものが得られるが、報告を読むたびに組み立てずに済むよう置いておく。
+- `piu-search-<版>.apk`: 署名済みの APK。F-Droid は `https://github.com/unils/piu-search/releases/download/v<版>/piu-search-<版>.apk` から APK を取得するため、ファイル名を変えない
+- `piu-search-<版>-mapping.txt`: 手順 4 で出力された R8 の名前の対応表（`app/build/outputs/mapping/release/mapping.txt`）。報告用の文の不具合の疑いの行には、R8 で名前が変わった例外のフレーム（行番号は残し、ファイル名は `SourceFile` に置換）と、記録した版（`ver=`）が入るため、メンテナはその版の対応表で元のクラス名とメソッド名に戻す（[architecture.md](design/architecture.md#失敗の分け方)）。対応表に秘密の情報は含まれず、再現可能なビルドなのでタグから作り直せるが、報告を読むたびにビルドせずに済むよう Release に置いておく
 
 ```bash
 gh release create v0.1.0 piu-search-0.1.0.apk piu-search-0.1.0-mapping.txt --title "0.1.0" --notes-file <CHANGELOG の節>
 ```
 
-F-Droid の組み立てより先に置く。APK がないと、F-Droid は比べられない。
+F-Droid のビルドが走るより先に Release を公開する。APK が置かれていないと、F-Droid は署名を比較できない。
 
 ## 8. F-Droid
 
-F-Droid の組み立てのレシピは、F-Droid のリポジトリ（fdroiddata）の `metadata/jp.piu.search.yml` に置く。このリポジトリには置かない。要点は次のとおり。
+F-Droid のビルドレシピは、F-Droid のリポジトリ（fdroiddata）の `metadata/jp.piu.search.yml` に置き、このリポジトリには置かない。レシピの要点は次のとおりである。
 
 - `subdir: app`、`gradle: [yes]` で `assembleRelease` を回す
-- `Binaries:` に上の Releases の URL（版は `%v`）、`AllowedAPKSigningKeys:` にメンテナの証明書の SHA-256（コロンなしの小文字）を書く。これで、メンテナの署名のまま配る形になる
-- `UpdateCheckMode: Tags ^v[0-9.]+$` と `AutoUpdateMode: Version` で、新しいタグから次の版を足す
+- `Binaries:` に上の GitHub Releases の URL（版は `%v`）、`AllowedAPKSigningKeys:` にメンテナの証明書の SHA-256 指紋（コロンなしの小文字）を指定し、メンテナの署名のまま配信する形にする
+- `UpdateCheckMode: Tags ^v[0-9.]+$` と `AutoUpdateMode: Version` で、新しいタグから次の版を自動で追加する
 - `prebuild` で、`settings.gradle.kts` と `build-logic/settings.gradle.kts` から foojay のプラグインの行を消す（`sed -i -e '/foojay/d' ../settings.gradle.kts ../build-logic/settings.gradle.kts`）
 
-foojay のプラグインは、PC に JDK 21 がないとき Gradle に取得させるためのもので、開発者の手元では残す（[CONTRIBUTING.md](../CONTRIBUTING.md#java)）。F-Droid の組み立てでは JDK の自動の取得を止めていて、サーバーにある JDK 21 を使うので、プラグインは要らない。
+foojay のプラグインは、開発者の手元に JDK 21 がないとき Gradle に自動取得させるためのものであり、リポジトリには残す（[CONTRIBUTING.md](../CONTRIBUTING.md#java)）。一方、F-Droid のビルド環境では JDK の自動取得を止めてサーバー上の JDK 21 を使うため、ビルド前に取り除く。
 
-最初の申請は、fdroiddata への merge request で行う。merge の前に、手元で `fdroid lint` と `fdroid build -v -l jp.piu.search` を通し、できた署名なしの APK が上の 4 のものと一致することを確かめておく。2 回目以降は、タグを push して Releases に APK を置けば、F-Droid が自動で拾う。
+初回の申請は fdroiddata への merge request で行う。申請の前に、手元で `fdroid lint` と `fdroid build -v -l jp.piu.search` を通し、できた署名なしの APK が手順 4 のものと一致することを確かめておく。2 回目以降は、タグを push して GitHub Releases に APK を置けば、F-Droid が自動で検出してビルドする。
 
 ## 鍵について
 
-メンテナの鍵をなくすと、同じアプリとして更新を出せなくなる（Android は、署名の違う APK での上書きを拒む）。鍵とパスワードは、リポジトリと CI の外に控えを置いて守る。
+メンテナの署名鍵を失うと、同じアプリとして更新を出せなくなる（Android は署名の異なる APK による上書きを拒む）。鍵とパスワードは、リポジトリと CI の外に控えを置いて守る。

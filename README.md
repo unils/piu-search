@@ -3,20 +3,20 @@
 [![CI](https://github.com/unils/piu-search/actions/workflows/ci.yml/badge.svg)](https://github.com/unils/piu-search/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Piu Search（日本語の端末では「Piu アプリ検索」）は、端末に入っているアプリを日本語で探すための Android アプリです。
+Piu Search（日本語の端末での表示名は「Piu アプリ検索」）は、端末に入っているアプリを日本語の読み・表記ゆれ・ジャンル・提供元で探すための Android アプリです。
 
-「のりかえ」「乗り換え」「norikae」のどれで打っても乗換案内のアプリが見つかるように、ひらがな・カタカナ・漢字・ローマ字の違いや送り仮名のゆれを吸収します。ホーム画面アプリ（ランチャー）ではないので、今使っているホーム画面はそのままで使えます。
+「のりかえ」「乗り換え」「norikae」のどれで打っても乗換案内のアプリが見つかるように、ひらがな・カタカナ・漢字・ローマ字の違いや送り仮名のゆれを吸収します。ホーム画面アプリ（ランチャー）ではないため、今使っているホーム画面のまま使えます。
 
 ## 特徴
 
-- **読みで探せる** — 漢字の名前のアプリも、読みのひらがなやローマ字で見つかります。入力の途中（「のりk」）でも候補が出ます
-- **英語の名前もカタカナの読みで** — 「やふー」で Yahoo! のアプリが、「ぐーぐる」で Google のアプリが出ます
-- **ジャンルで探せる** — 「ちず」と打つと、Google マップと Yahoo!マップの両方が出ます
-- **提供元で探せる** — 「楽天」と打つと、名前に「楽天」が入っていない楽天グループのアプリも出ます
-- **使うほど賢くなる** — 別の言葉で探して開いたアプリは、次からその言葉でも出るようになります。覚えた内容は設定画面で確認・削除できます
-- **すぐ呼び出せる** — アシスタントとして登録すれば、電源ボタンの長押しや画面の隅からのスワイプで開けます（端末によって操作は異なります）。クイック設定のタイルからも開けます
-- **仕事用プロファイルに対応**
-- **通信しません** — インターネットの権限を持たず、検索も学習もすべて端末の中で行います
+- **読みで探せる** — 漢字の名前のアプリも、ひらがなやローマ字の読みで見つかります。ローマ字の入力途中（「のりk」など）でも候補が出ます
+- **英語の名前も読みで探せる** — 「やふー」で Yahoo! のアプリが、「ぐーぐる」で Google のアプリが出ます
+- **ジャンルで探せる** — 「ちず」と打つと、Google マップや Yahoo!マップなど地図のアプリがまとめて出ます
+- **提供元で探せる** — 「楽天」と打つと、アプリの名前に「楽天」が入っていない楽天グループのアプリも出ます
+- **使うほど賢くなる** — 検索で見つからずに別の言葉や「すべてのアプリ」の一覧から開いたアプリは、次から最初の言葉でも出るようになります。よく選ぶアプリは上に並びます。覚えた内容は設定画面で確認・削除・書き出し・読み込みができます
+- **すぐ呼び出せる** — デジタルアシスタントに設定すれば、電源ボタンの長押しや画面の隅からのスワイプで開けます（操作は端末によって異なります）。クイック設定のタイルからも開けます
+- **仕事用プロファイルに対応** — 個人用と仕事用のアプリを切り替えるか、混ぜて検索できます
+- **通信しない** — `INTERNET` の権限を持たず、検索も学習もすべて端末の中で完結します
 
 ## 動作環境
 
@@ -25,32 +25,32 @@ Piu Search（日本語の端末では「Piu アプリ検索」）は、端末に
 
 ## インストール
 
-[F-Droid](https://f-droid.org/) の公式リポジトリへの登録を申請する予定です。それまでは、[GitHub Releases](https://github.com/unils/piu-search/releases) の APK（`piu-search-<版>.apk`）を入れてください。F-Droid に載った後も、F-Droid と GitHub Releases の APK は同じもので、どちらから入れても互いに上書きで更新できます。
+[F-Droid](https://f-droid.org/) の公式リポジトリへの登録を申請する予定です。それまでは、[GitHub Releases](https://github.com/unils/piu-search/releases) から APK（`piu-search-<版>.apk`）を取得してインストールしてください。F-Droid と GitHub Releases ではメンテナの鍵で署名した同じ APK を配布するため、どちらから入れた場合も互いに上書きで更新できます。
 
-APK はメンテナの鍵で署名しています。入れる前に、署名の証明書の SHA-256 指紋が次の値と同じことを確かめられます（`apksigner verify --print-certs piu-search-<版>.apk` の `certificate SHA-256 digest`）。
-
-指紋（SHA-256）:
+インストールする前に、`apksigner verify --print-certs piu-search-<版>.apk` の出力にある `certificate SHA-256 digest` が次の指紋と一致することを確かめられます。
 
 ```
 43b28f21f64eb56ccf2e690b8744ce1b13da23b440d7fc05eadd6c660736fb07
 ```
 
-同じソースから同じ APK ができること（再現可能なビルド）の確かめ方は、[docs/release.md](docs/release.md) にあります。
+公開しているソースコードから同じ APK ができること（再現可能なビルド）の確かめ方は、[docs/release.md](docs/release.md) にあります。
 
 ## 使い方
 
-初めて開くと、呼び出し方の設定を案内します。あとから設定画面でも変えられます。
+初回起動時に呼び出し方の設定を案内します。あとから設定画面の「呼び出しの設定」でも開けます。
 
 - **アシスタントとして使う**: 端末の設定で「デジタル アシスタント アプリ」に Piu アプリ検索を選びます
-- **タイルから使う**: クイック設定の編集画面で、タイル「アプリ検索」を追加します
+- **タイルから使う**: クイック設定の編集画面で、タイル「アプリ検索」を追加します（Android 13 以上では初回の案内から追加を依頼できます）
 
 ## プライバシー
 
-Piu Search は外部に情報を送信しません。端末の中に、検索のための索引・学習・このアプリから開いたアプリごとの起動回数と最後に開いた時刻・設定を保存します。起動の記録は、検索語が空のときの「最近使ったアプリ」「よく使うアプリ」と検索結果の並べ替えに使い、設定の「起動の記録を消す」で削除できます。これらはすべて Google ドライブへのバックアップから外しています。端末間の転送では、設定と主ユーザー（個人用）の学習・起動の記録を残し、索引を作り直して仕事用の記録を捨てます。詳しくは [PRIVACY.md](PRIVACY.md) をご覧ください。
+Piu Search は外部に情報を一切送信しません。検索のための索引・学習・起動の記録・設定はすべて端末の中に保存し、クラウド（Google ドライブ）への自動バックアップから外しています。学習と起動の記録は設定画面からいつでも消去できます。
+
+保存するデータの内訳や端末間の移行での扱い、権限の詳細は [PRIVACY.md](PRIVACY.md) をご覧ください。
 
 ## ビルド
 
-Java 17 以上（JRE で構いません）と Android SDK が必要です。コンパイルに使う JDK 21 は、Gradle が自動で取得します。
+手元でビルドするには、Java 17 以上の実行環境（JRE で構いません）と Android SDK が必要です。コンパイルとテストに使う JDK 21 は Gradle が自動で取得します。
 
 ```bash
 git clone https://github.com/unils/piu-search.git
@@ -59,7 +59,7 @@ echo "sdk.dir=$HOME/Android/Sdk" > local.properties
 ./gradlew :app:assembleDebug
 ```
 
-APK は `app/build/outputs/apk/debug/` にできます。開発環境の詳しい作り方とテストの実行方法は [CONTRIBUTING.md](CONTRIBUTING.md) にあります。
+組み立てた APK は `app/build/outputs/apk/debug/` に出力されます。Android SDK の導入手順やテスト・検査の実行方法は [CONTRIBUTING.md](CONTRIBUTING.md) にあります。
 
 ## ディレクトリの構成
 
@@ -78,13 +78,16 @@ APK は `app/build/outputs/apk/debug/` にできます。開発環境の詳し�
 | `tools/reproducible-build/` | 同じソースから同じ APK ができるかの確認 |
 | `config/detekt/` | 静的解析（detekt）の設定 |
 | `docs/` | 要件・設計・調査・決定の記録と、版の出し方 |
-| `fastlane/metadata/` | F-Droid 向けの説明文 |
+| `fastlane/metadata/` | F-Droid 向けの説明文と更新履歴 |
 
-`core/` の 3 つは Android に依存しない Kotlin のモジュールで、JVM の上だけでテストできます。`release-test/`・`benchmark/`・`test-apps/`・`tools/` の中身は、配布するアプリには含まれません。
+`core/` の 3 モジュールは Android に依存しない純粋な Kotlin で書かれており、JVM の上だけでテストできます。`release-test/`・`benchmark/`・`test-apps/`・`tools/` はテストと検査のためのもので、配布する APK には含まれません。
 
 ## 開発に参加する
 
-不具合の報告や要望は [Issues](https://github.com/unils/piu-search/issues) へどうぞ。探したアプリが見つからなかったときは、専用の報告のテンプレートがあります。コードの変更を送る前に [CONTRIBUTING.md](CONTRIBUTING.md) を読んでください。参加する方には[行動規範](CODE_OF_CONDUCT.md)を守っていただくようお願いしています。脆弱性の報告は [SECURITY.md](SECURITY.md) の手順でお願いします。設計の考え方は [docs/](docs/) にまとめています。
+- 不具合の報告や要望は [Issues](https://github.com/unils/piu-search/issues) へお寄せください。探したアプリが見つからなかったときは、専用のテンプレートから報告できます
+- 脆弱性は公開の issue には書かず、[SECURITY.md](SECURITY.md) の手順で非公開でお知らせください
+- コードや文書の変更を送る前に [CONTRIBUTING.md](CONTRIBUTING.md) を読んでください。参加する方には [行動規範](CODE_OF_CONDUCT.md) を守っていただくようお願いしています
+- 要件・設計・技術的な決定の記録は [docs/](docs/) にまとめています
 
 このアプリのコードの多くは、メンテナのレビューのもとで AI（Claude）が書いています。
 
@@ -92,4 +95,4 @@ APK は `app/build/outputs/apk/debug/` にできます。開発環境の詳し�
 
 [Apache License 2.0](LICENSE) で公開しています。
 
-アプリには、形態素解析器 [Kuromoji](https://github.com/atilika/kuromoji) とその辞書（IPADIC）をはじめ、第三者のソフトウェアが含まれます。それぞれのライセンスは [NOTICE](NOTICE) とアプリ内の「ライセンス」画面で確認できます。
+アプリには、形態素解析器 [Kuromoji](https://github.com/atilika/kuromoji) とその辞書（IPADIC）をはじめ、第三者のオープンソースソフトウェアが含まれます。それぞれのライセンスと注意書きは [NOTICE](NOTICE) およびアプリ内の「ライセンス」画面で確認できます。
