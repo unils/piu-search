@@ -49,16 +49,16 @@ class IndexStatusScreenTest {
     fun eachLastSyncIsDescribedAsDesigned() {
         val cases =
             listOf(
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE), failure = SyncFailure.SYNC) to "最後の更新: 更新できなかった",
+                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE), failure = SyncFailure.SYNC) to "最後の更新: 更新できませんでした",
                 IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to FAILED), failure = SyncFailure.PROFILE) to
-                    "最後の更新: 一部を更新できなかった",
+                    "最後の更新: 一部を更新できませんでした",
                 IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, genreFailure = "java.lang.SecurityException")) to
-                    "最後の更新: 一部を更新できなかった",
+                    "最後の更新: 一部を更新できませんでした",
                 IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE).copy(issueCounts = IssueCounts(deterministic = 1))) to
-                    "最後の更新: 更新できた・一部の情報を読めていない",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to UNAVAILABLE)) to "最後の更新: 更新できた",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE)) to "最後の更新: 更新できた",
-                IndexSyncStatus() to "最後の更新: まだ更新していない",
+                    "最後の更新: 更新できました（一部の情報を読めていません）",
+                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to UNAVAILABLE)) to "最後の更新: 更新できました",
+                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE)) to "最後の更新: 更新できました",
+                IndexSyncStatus() to "最後の更新: まだ更新していません",
             )
         var status by mutableStateOf(IndexStatus())
         compose.setContent { PiuTheme { IndexStatusScreen(status, "2026/11/15 10:23", null, IndexStatusActions()) } }
@@ -75,9 +75,9 @@ class IndexStatusScreenTest {
         show(IndexStatus.of(MIXED_INDEX, emptyList(), 1L, sync, PERSONAL))
         compose.onNodeWithText("個人用: 4 個のアプリ").assertExists()
         compose.onNodeWithText("仕事用: 1 個のアプリ").assertExists()
-        compose.onNodeWithText("個人用: 読めた").assertExists()
+        compose.onNodeWithText("個人用: 読めました").assertExists()
         compose.onNodeWithText("仕事用: 一時停止中").assertExists()
-        compose.onNodeWithText("判定できなかった（前のジャンルで検索している）").assertExists()
+        compose.onNodeWithText("判定できませんでした（前のジャンルで検索しています）").assertExists()
         compose.onNodeWithText("うちアーカイブ済み: なし").assertExists()
         compose.onNodeWithText("最後に更新した時刻: 2026/11/15 10:23").assertExists()
     }
@@ -95,12 +95,12 @@ class IndexStatusScreenTest {
             savedAt = null,
         )
         compose.onNodeWithText("Piu Search の不具合の疑い: なし").assertExists()
-        compose.onNodeWithText("一時的に読めない: なし").assertExists()
-        compose.onNodeWithText("読めないまま使っている: なし").assertExists()
-        compose.onNodeWithText("判定できた").assertExists()
+        compose.onNodeWithText("一時的に読めないもの: なし").assertExists()
+        compose.onNodeWithText("読めないまま使っているもの: なし").assertExists()
+        compose.onNodeWithText("判定できました").assertExists()
         // アーカイブ済みは件数だけ
         compose.onNodeWithText("うちアーカイブ済み 2 個").assertExists()
-        compose.onNodeWithText("最後に更新した時刻: まだ更新していない").assertExists()
+        compose.onNodeWithText("最後に更新した時刻: まだ更新していません").assertExists()
         compose.onAllNodesWithTag(INDEX_ISSUE_ROW_TAG).assertCountEquals(0)
     }
 
@@ -108,8 +108,8 @@ class IndexStatusScreenTest {
     fun issueRowsAreOrderedAndWordedFromTheCauseAndRetryMark() {
         show(IndexStatus.of(MIXED_INDEX, MIXED_ISSUES, 1L, IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE)), PERSONAL))
         compose.onNodeWithText("Piu Search の不具合の疑い: 1 件").assertExists()
-        compose.onNodeWithText("一時的に読めない: 2 件（うち次の更新で読み直す 1 件）").assertExists()
-        compose.onNodeWithText("読めないまま使っている: 1 件").assertExists()
+        compose.onNodeWithText("一時的に読めないもの: 2 件（うち次の更新で読み直す 1 件）").assertExists()
+        compose.onNodeWithText("読めないまま使っているもの: 1 件").assertExists()
         val rows = compose.onAllNodesWithTag(INDEX_ISSUE_ROW_TAG)
         rows.assertCountEquals(4)
         // 1 行は 1 つの項目として、名前・パッケージ名・中身・理由の順に読まれる
@@ -117,14 +117,14 @@ class IndexStatusScreenTest {
             listOf(
                 "仕事の予定・仕事用",
                 "com.example.work",
-                "検索の語の作成・Piu Search の不具合の疑い。前の情報で検索している。新しく入れたアプリなら、名前の文字どおりでだけ出る",
+                "検索の語の作成・Piu Search の不具合の疑い。前の情報で検索しています。新しく入れたアプリなら、名前の文字どおりでだけ出ます",
                 "理由: java.lang.IllegalArgumentException・初めて読めなかった日: 2026-11-14",
             ),
             texts(rows[0]),
         )
-        assertEquals("提供元（署名）・一時的に読めない・次の更新で読み直す。提供元の名前では出ない", texts(rows[1])[2])
-        assertEquals("アプリの情報・一時的に読めない・読み直しても読めなかった。前の情報で検索している。新しく入れたアプリなら、名前でだけ出る", texts(rows[2])[2])
-        assertEquals("別の言語の名前・読めないまま使っている。その言語の名前では出ない", texts(rows[3])[2])
+        assertEquals("提供元（署名）・一時的に読めないもの・次の更新で読み直します。提供元の名前では出ません", texts(rows[1])[2])
+        assertEquals("アプリの情報・一時的に読めないもの・読み直しても読めませんでした。前の情報で検索しています。新しく入れたアプリなら、名前でだけ出ます", texts(rows[2])[2])
+        assertEquals("別の言語の名前・読めないまま使っているもの。その言語の名前では出ません", texts(rows[3])[2])
         assertEquals("地図", texts(rows[3])[0])
     }
 
@@ -148,8 +148,8 @@ class IndexStatusScreenTest {
         }
         compose
             .onNodeWithText(
-                "アプリのパッケージ名と、端末の製造元・機種・OS の版が入る。仕事用のアプリのパッケージ名からは、勤め先が分かることがある。" +
-                    "Piu Search はこれを送信しない。貼る前に確かめ、出したくない行は消してほしい",
+                "アプリのパッケージ名と、端末の製造元・機種・OS の版が入ります。仕事用のアプリのパッケージ名からは、勤め先が分かることがあります。" +
+                    "Piu Search はこれを送信しません。貼る前に確かめ、出したくない行は消してください",
             ).assertExists()
         assertEquals(listOf(report), texts(compose.onNodeWithTag(INDEX_REPORT_TEXT_TAG)))
         compose.onNodeWithTag(INDEX_REPORT_COPY_TAG).performClick()
@@ -174,7 +174,7 @@ class IndexStatusScreenTest {
         }
         compose.onNodeWithTag(INDEX_STATUS_REPORT_TAG).performScrollTo().performClick()
         compose.onNodeWithTag(INDEX_STATUS_ISSUES_TAG).performScrollTo().performClick()
-        compose.onNodeWithText("報告する前に、同じ報告がないか見てほしい").assertExists()
+        compose.onNodeWithText("報告する前に、同じ報告がないか確かめてください").assertExists()
         compose.runOnIdle {
             assertEquals(1, shown)
             assertEquals(1, issues)
@@ -225,7 +225,7 @@ class IndexStatusActivityTest {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 assertNull("OS が知らせるので自分では出さない", ShadowToast.getTextOfLatestToast())
             } else {
-                assertEquals("コピーした", ShadowToast.getTextOfLatestToast())
+                assertEquals("コピーしました", ShadowToast.getTextOfLatestToast())
             }
         }
     }

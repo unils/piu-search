@@ -48,10 +48,10 @@ class SyncNoticeScreenTest {
         }
         val texts =
             mapOf(
-                IndexNotice.SYNC_FAILED to "アプリの一覧を更新できなかった。前の一覧で検索している",
-                IndexNotice.NO_INDEX to "アプリの一覧を読めなかった",
-                IndexNotice.PERSONAL_FAILED to "個人用のアプリの一覧を読めなかった。前の一覧で検索している",
-                IndexNotice.WORK_FAILED to "仕事用のアプリの一覧を読めなかった。前の一覧で検索している",
+                IndexNotice.SYNC_FAILED to "アプリの一覧を更新できませんでした。前の一覧で検索しています",
+                IndexNotice.NO_INDEX to "アプリの一覧を読めませんでした",
+                IndexNotice.PERSONAL_FAILED to "個人用のアプリの一覧を読めませんでした。前の一覧で検索しています",
+                IndexNotice.WORK_FAILED to "仕事用のアプリの一覧を読めませんでした。前の一覧で検索しています",
             )
         for ((shown, text) in texts) {
             compose.runOnIdle { notice = shown }
@@ -90,11 +90,11 @@ class SyncNoticeScreenTest {
             .assert(
                 SemanticsMatcher("文と「詳細」を持つ") {
                     it.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { text -> text.text } ==
-                        listOf("仕事用のアプリの一覧を読めなかった。前の一覧で検索している", "詳細")
+                        listOf("仕事用のアプリの一覧を読めませんでした。前の一覧で検索しています", "詳細")
                 },
             )
         // 「詳細」だけでなく、文を押しても開く
-        compose.onNodeWithText("仕事用のアプリの一覧を読めなかった。前の一覧で検索している").performClick()
+        compose.onNodeWithText("仕事用のアプリの一覧を読めませんでした。前の一覧で検索しています").performClick()
         compose.onNodeWithText("詳細").performClick()
         compose.runOnIdle { assertEquals(2, opened) }
     }
