@@ -245,7 +245,7 @@ M5-03 から、`:release-test` の計器テスト（`ReleaseApkTest` の 3 件�
 
 ## 起動の速さ（M5-03）
 
-`:benchmark`（Macrobenchmark）で、app の `benchmarkRelease`（R8 を通した版）の起動を測る。冷えた状態（プロセスなし）と温まった状態（プロセスを残し、画面を作り直す）、コンパイルの状態（`None`: 先にコンパイルしない・`BaselineProfile`）の組ごとに 15 回。指標は最初の描画（`timeToInitialDisplayMs`）と、検索窓に焦点が来て打てるまで（`timeToFullDisplayMs`。アプリが `ReportDrawnWhen` で `reportFullyDrawn` を出す）。手順は CONTRIBUTING の「起動の速さと Baseline Profile」。
+`:benchmark`（Macrobenchmark）で、app の `benchmarkRelease`（R8 を通した版）の起動を測る。冷えた状態（プロセスなし）と温まった状態（プロセスを残し、画面を作り直す）、コンパイルの状態（`None`: 先にコンパイルしない・`BaselineProfile`）の組ごとに 15 回。指標は最初の描画（`timeToInitialDisplayMs`）と、検索窓に焦点が来て打てるまで（`timeToFullDisplayMs`。アプリが `ReportDrawnWhen` で `reportFullyDrawn` を出す）。手順は [developer-guide.md](../developer-guide.md#起動時間の計測と-baseline-profile)。
 
 2026-11-03 のエミュレータの値（中央値、ms。Baseline Profile にアプリの分を加えた後）:
 
