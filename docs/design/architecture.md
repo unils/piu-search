@@ -1,5 +1,7 @@
 # 全体の構成
 
+> v0.3 で、状態の持ち主・同期・保存の設計を置き換える予定（2026-11-18 に設計、未実装）。新しい設計は [v03.md](v03.md)。この文書は実装が終わるまで 0.2.0 のコードの説明として残す。
+
 2026-11-14、R1〜R5・T7 の実装に合わせて更新（同期の失敗の扱いとデータの保存は 2026-11-15 に 0.2.0 の設計へ書き換え）。要件は [requirements.md](../requirements.md)、照合は [matching.md](matching.md)、学習は [learning.md](learning.md)、画面は [ui.md](ui.md)、テストは [testing.md](testing.md)。根拠にした API の挙動は [android-platform.md](../research/android-platform.md)。
 
 ## 範囲
