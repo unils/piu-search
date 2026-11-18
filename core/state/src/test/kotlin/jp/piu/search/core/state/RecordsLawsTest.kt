@@ -16,7 +16,7 @@ import kotlin.random.Random
 /**
  * 法則 6（記録は、DB に書けたときだけ変わる）を、乱数の頼みと書き込みの失敗の列で確かめる。
  *
- * 純粋な層では DB の代わりに、書き込みの中身を当てる表（[FakeDb]）を置く。種ごとに [STEPS] 個の出来事
+ * 純粋な層では DB の代わりに、書き込みの中身を当てる表（[FakeDb]）を置き、成功した書き込みの後に表と写しが一致することを確かめる。種ごとに [STEPS] 個の出来事
  * （頼み・読み込みの成否・プロファイルの確認・整理）を作り、書き込みは [WRITE_FAILURE_RATE]% で失敗させる。
  */
 class RecordsLawsTest {
@@ -53,7 +53,24 @@ class RecordsLawsTest {
 
                     else -> {
                         val request = randomRequest(random, state)
-                        state = commit(random, db, state, RecordsRules.change(state, request), log, "step $step: $request")
+                        // 書き手の手順: 確認済みでない番号があれば、問い合わせ直してから計算する（問い合わせは 1/4 で失敗し、最後の確認を保つ）
+                        val asked = RecordsRules.unconfirmed(state, request)
+                        val absent =
+                            if (asked.isNotEmpty() && random.nextInt(4) > 0) {
+                                state = RecordsRules.profilesConfirmed(state, existing.toSet(), asked)
+                                log += "step $step: 問い合わせ直し $asked → $existing"
+                                asked - existing
+                            } else {
+                                emptySet()
+                            }
+                        val change = RecordsRules.change(state, request)
+                        val puts =
+                            change.write?.let { w ->
+                                w.learnedPut.map { it.app.profileSerial } +
+                                    w.launchPut.keys.map { it.profileSerial }
+                            }
+                        law(puts.orEmpty().none { it in absent }) { "問い合わせ直して不在と分かった番号に書く: $request" }
+                        state = commit(random, db, state, change, log, "step $step: $request")
                     }
                 }
                 state.records?.let { records ->
@@ -83,14 +100,13 @@ class RecordsLawsTest {
             law(puts.none { it in removed }) { "消えたプロファイルの行を書く: $label $write" }
         }
         val written = write == null || random.nextInt(100) >= WRITE_FAILURE_RATE
-        val dbBefore = db.records()
         if (write != null && written) db.apply(write)
         val next = RecordsRules.commit(state, change, written)
         log += "$label → 書き込み=${write != null} 成功=$written"
         if (!written) {
-            // 法則 6: 失敗した頼みは、写しも DB も変えない
+            // 法則 6: 失敗した頼みは写しを変えない。DB の側（トランザクションが途中で失敗したら何も残らないこと）は、
+            // この表では確かめられない（失敗した回は当てないだけなので）。Room の故障の試験で確かめる
             law(next == state) { "法則 6: 書けなかったのに状態が変わった: $label" }
-            law(db.records() == dbBefore) { "法則 6: 書けなかったのに DB が変わった: $label" }
             law(RecordsRules.resultOf(change, written) == RecordsResult.Failure(RecordsFailure.WRITE_FAILED)) { "失敗を返さない: $label" }
         }
         return next

@@ -161,6 +161,37 @@ class RecordsRulesTest {
     }
 
     @Test
+    fun `確認の後に消えた未知の番号への初回の記録は、問い合わせ直して不在なら拒む`() {
+        val work = AppId("jp.example.mail", "Inbox", WORK)
+        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val request = open(selection = pair("めーる", work), launched = work)
+        assertEquals(setOf(WORK), RecordsRules.unconfirmed(confirmed, request))
+        // 問い合わせ直しても {0}。頼みの番号を渡すので、行がなくても削除済みになる
+        val rechecked = RecordsRules.profilesConfirmed(confirmed, setOf(0), asked = RecordsRules.unconfirmed(confirmed, request))
+        assertEquals(setOf(WORK), rechecked.profiles.removed)
+        assertNull(RecordsRules.change(rechecked, request).write)
+        assertTrue(RecordsRules.unconfirmed(rechecked, request).isEmpty())
+        // 問い合わせ直して存在すれば受ける
+        val present = RecordsRules.profilesConfirmed(confirmed, setOf(0, WORK), asked = setOf(WORK))
+        assertTrue(RecordsRules.change(present, request).write != null)
+        assertTrue(RecordsRules.unconfirmed(present, request).isEmpty())
+    }
+
+    @Test
+    fun `写しに見えない行だけを持つ番号も、表の番号から整理の対象にする`() {
+        val hidden = LearnedRecord(NormalizedText("あ".repeat(80)), AppId("jp.example.mail", "Inbox", WORK), 1, NOW, rescued = false)
+        val records = UserRecords(LearnedMemory(listOf(hidden)), LaunchHistory.EMPTY)
+        assertTrue(records.serials.isEmpty())
+        val loaded = RecordsRules.loaded(RecordsRules.profilesConfirmed(RecordsState(), setOf(0)), records, storedSerials = setOf(WORK))
+        assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), RecordsRules.pruneChange(loaded)!!.write)
+        val pruned = RecordsRules.commit(loaded, RecordsRules.pruneChange(loaded)!!, written = true)
+        assertTrue(pruned.storedSerials.isEmpty())
+        // 読み込みの後の確認でも、表の番号で消えた番号を見つける
+        val later = RecordsRules.profilesConfirmed(RecordsRules.loaded(RecordsState(), records, storedSerials = setOf(0, WORK)), setOf(0))
+        assertEquals(setOf(WORK), later.profiles.pendingPrune)
+    }
+
+    @Test
     fun `確認の後に書いた新しい番号の行は、読み直しても消さない`() {
         val work = AppId("jp.example.mail", "Inbox", 12)
         val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))

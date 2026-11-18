@@ -87,6 +87,8 @@ public data class UndoMaterial(
  * @property notices まだ出し終えていない知らせ
  * @property undo 知らせの識別子 → まだ有効な取り消し材料
  * @property nextNoticeId 次の知らせの識別子
+ * @property storedSerials DB の表に行のあるプロファイルの番号（表から直に数えた値）。写しに見えない行（長すぎる語の学習など）の番号も含み、
+ *   整理の対象を決めるのに使う
  */
 public data class RecordsState(
     val load: RecordsLoad = RecordsLoad.Loading,
@@ -94,6 +96,7 @@ public data class RecordsState(
     val notices: List<RescueNotice> = emptyList(),
     val undo: Map<Long, UndoMaterial> = emptyMap(),
     val nextNoticeId: Long = 1,
+    val storedSerials: Set<Long> = emptySet(),
 ) {
     /** 読めていれば写し、そうでなければ null。 */
     public val records: UserRecords? get() = (load as? RecordsLoad.Ready)?.records
@@ -233,17 +236,22 @@ public data class RecordsChange(
  * 書けなければ状態を変えない。画面に出した記録が保存されていない状態を作らないため。
  */
 public object RecordsRules {
-    /** 読み込みが成功した。削除を確認済みの番号と、確認済みの集合にない番号の記録を、整理の対象にする。 */
+    /**
+     * 読み込みが成功した。確認済みの集合にない番号の記録を、整理の対象にする。
+     *
+     * @param storedSerials 表から直に数えた、行のある番号。写しに見えない行の番号も整理するため、写しの番号と別に渡す
+     */
     public fun loaded(
         state: RecordsState,
         records: UserRecords,
+        storedSerials: Set<Long> = records.serials,
     ): RecordsState {
         // 確認より後に書いた番号は集合に入っているので、集合にない番号の行は確認より前の行で、消えたプロファイルの行
         val missing =
             state.profiles.confirmed
-                ?.let { records.serials - it }
+                ?.let { records.serials + storedSerials - it }
                 .orEmpty()
-        return state.copy(load = RecordsLoad.Ready(records)).withRemoved(missing)
+        return state.copy(load = RecordsLoad.Ready(records), storedSerials = storedSerials).withRemoved(missing)
     }
 
     /** 読み込みが失敗した。前に読めた写しがあっても、ここでは失敗として持つ（保存先の内容と合っているか分からないため）。 */
@@ -254,16 +262,54 @@ public object RecordsRules {
 
     /**
      * 有効な一覧で、存在するプロファイルが [existing] だと確認した。
-     * 前に確認した集合と記録にあって [existing] にない番号を削除済みとし、取り消しの材料と知らせを無効にして、整理の対象にする。
-     * 問い合わせが失敗したときは呼ばない（最後に確認した状態を保つ）。
+     * 前に確認した集合・記録・表の行・[asked] にあって [existing] にない番号を、行がなくても削除済みとし、
+     * 取り消しの材料と知らせを無効にして、整理の対象にする。問い合わせが失敗したときは呼ばない（最後に確認した状態を保つ）。
+     *
+     * @param asked 頼みが対象にする番号のうち、確認済みの集合になかったもの（[unconfirmed]）。新しいプロファイルかもしれない番号を、
+     *   この確認で不在と分かれば拒めるようにする。渡さないと、最後の確認の後に消えた未知の番号への初回の記録が通る
+     * @param storedSerials 表から直に数えた、行のある番号。分かれば渡す
      */
     public fun profilesConfirmed(
         state: RecordsState,
         existing: Set<Long>,
+        asked: Set<Long> = emptySet(),
+        storedSerials: Set<Long> = state.storedSerials,
     ): RecordsState {
-        val known = state.profiles.confirmed.orEmpty() + state.records?.serials.orEmpty()
-        return state.copy(profiles = state.profiles.copy(confirmed = existing)).withRemoved(known - existing)
+        val known = state.profiles.confirmed.orEmpty() + state.records?.serials.orEmpty() + storedSerials + asked
+        return state
+            .copy(profiles = state.profiles.copy(confirmed = existing), storedSerials = storedSerials)
+            .withRemoved(known - existing)
     }
+
+    /**
+     * 頼み [request] が対象にする番号のうち、確認済みの集合にも削除済みにもないもの。空でなければ、書き手は頼みを計算する前に
+     * プロファイルを問い合わせ直し、有効な一覧が取れたら [profilesConfirmed] に `asked` として渡す（取れなければ最後の確認を保って進める）。
+     */
+    public fun unconfirmed(
+        state: RecordsState,
+        request: RecordsRequest,
+    ): Set<Long> = serialsOf(request) - state.profiles.confirmed.orEmpty() - state.profiles.removed
+
+    private fun serialsOf(request: RecordsRequest): Set<Long> =
+        when (request) {
+            is RecordsRequest.Open -> {
+                val decision = request.decision
+                (listOfNotNull(decision.selection, decision.used) + decision.rescues).mapTo(HashSet()) { it.app.profileSerial } +
+                    listOfNotNull(request.launched?.profileSerial)
+            }
+
+            is RecordsRequest.Suppress -> {
+                setOf(request.pair.app.profileSerial)
+            }
+
+            is RecordsRequest.Import -> {
+                request.records.mapTo(HashSet()) { it.app.profileSerial }
+            }
+
+            is RecordsRequest.Undo, is RecordsRequest.Remove, is RecordsRequest.Clear, is RecordsRequest.Forget -> {
+                emptySet()
+            }
+        }
 
     /**
      * 終わっていない整理の変更。読めていて、整理の対象があるときだけ返す。
@@ -273,7 +319,12 @@ public object RecordsRules {
         val records = state.records ?: return null
         val targets = state.profiles.pendingPrune
         if (targets.isEmpty()) return null
-        val next = state.copy(load = RecordsLoad.Ready(records.without(targets)), profiles = state.profiles.copy(pendingPrune = emptySet()))
+        val next =
+            state.copy(
+                load = RecordsLoad.Ready(records.without(targets)),
+                profiles = state.profiles.copy(pendingPrune = emptySet()),
+                storedSerials = state.storedSerials - targets,
+            )
         return RecordsChange(next, RecordsWrite(deleteSerials = targets), RecordsResult.Success())
     }
 
@@ -423,7 +474,9 @@ public object RecordsRules {
             )
         // 差分ではなく全行を消す。旧版などの写しに見えない行も残さないため
         val write = RecordsWrite(clearLearned = request.learned, clearLaunches = request.launches)
-        val ready = state.copy(load = RecordsLoad.Ready(next))
+        // 片方の表だけを消したときは、残る表の行の番号が分からないので、表の番号を保つ（整理で余分に消しても害はない）
+        val stored = if (request.learned && request.launches) emptySet() else state.storedSerials
+        val ready = state.copy(load = RecordsLoad.Ready(next), storedSerials = stored)
         return RecordsChange(if (request.learned) ready.invalidate { true } else ready, write, RecordsResult.Success())
     }
 
