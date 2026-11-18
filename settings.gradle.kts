@@ -42,6 +42,8 @@ include(
     ":core:text",
     ":core:reading",
     ":core:search",
+    // 索引と記録の写しと、同期・記録の規則（まだどこからも使わない）
+    ":core:state",
     ":data",
     ":app",
     // R8 を通した版（app の benchmarkRelease）を外から試す計器テスト（APK に入らない）
