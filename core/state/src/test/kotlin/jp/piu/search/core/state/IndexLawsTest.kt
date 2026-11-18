@@ -2,6 +2,7 @@
 
 package jp.piu.search.core.state
 
+import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.GenreId
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
@@ -10,7 +11,9 @@ import kotlin.random.Random
  * 同期の法則 1〜5 を、乱数で作った端末の変化と失敗の列で確かめる。
  *
  * 種ごとに、プロファイル 3 つ（個人用 0・仕事用 10・11）、組 6 つ・入口 3 つの範囲で端末を作り、[STEPS] 回、端末・環境・失敗・知らせを
- * 変えながら同期する。毎回の同期で法則 2〜5 を確かめ、最後に端末と失敗を固定して法則 1（収束）を確かめる。
+ * 変えながら同期する。端末の変化には、鍵の成分（APK・時刻（0 を含む）・入口・アーカイブ）を 1 つだけ変えるものを含める。
+ * 毎回の同期で法則 2〜5 を確かめ、ときどき失敗のない同期を挟んで回復を確かめ、最後に端末と失敗を固定して法則 1（収束）を確かめる。
+ * 期待する鍵と材料は、本体の関数を通さず、端末の偽物の値から直に作る。
  */
 class IndexLawsTest {
     @Test
@@ -29,6 +32,10 @@ class IndexLawsTest {
                 val round = sync(snapshot, device, env, faults, notices, userSerials = mapOf(10 to 10L))
                 checkRound(round, device, env, faults)
                 snapshot = round.next
+                if (random.nextInt(3) == 0) {
+                    log += "step $step: 失敗のない同期で回復を確かめる"
+                    snapshot = checkRecovery(snapshot, device, env)
+                }
             }
             checkConvergence(random, snapshot, device, env, log)
         }
@@ -64,52 +71,87 @@ class IndexLawsTest {
                     .associate { it.key.packageName to it.apps().mapTo(HashSet()) { app -> app.id.activityName } }
             law(listed == indexed) { "法則 2: プロファイル $serial の一覧 $listed と索引 $indexed が違う" }
         }
-        // 法則 3: 有効でない（消えてもいない）プロファイルの組は、前後で同じ
-        val untouched =
-            round.previous.packages.keys
-                .filter { it.profileSerial !in applied && it.profileSerial !in observation.removedProfiles }
-        for (key in untouched) {
-            law(round.previous.packages[key] == round.next.packages[key]) { "法則 3: 読めないプロファイルの組 $key が変わった" }
+        // 法則 3: 有効でない（消えてもいない）プロファイルの組は、前後で同じ。新しく入った組がないことも見るため、プロファイルごとの組の全体を比べる
+        val serials = (round.previous.packages.keys + round.next.packages.keys).mapTo(HashSet()) { it.profileSerial }
+        for (serial in serials.filter { it !in applied && it !in observation.removedProfiles }) {
+            law(
+                round.previous.packages.filterKeys { it.profileSerial == serial } ==
+                    round.next.packages.filterKeys { it.profileSerial == serial },
+            ) {
+                "法則 3: 読めないプロファイル $serial の組が変わった"
+            }
         }
-        for (key in round.previous.packages.keys
-            .filter { it.profileSerial in observation.removedProfiles }) {
-            law(key !in round.next.packages) { "消えたプロファイルの組 $key が残った" }
+        law(
+            round.next.packages.keys
+                .none { it.profileSerial in observation.removedProfiles },
+        ) { "消えたプロファイルの組が残った" }
+        // 法則 4: 当てたプロファイルのすべての組で、保存した鍵が入力から直に作った今の値と等しい（読み直しを省けば、ここで古い鍵が見つかる）
+        for ((key, state) in round.next.packages.filterKeys { it.profileSerial in applied }) {
+            val pkg = device.pkg(key)
+            val expected =
+                MaterialKey(pkg.apkKey, pkg.updatedAt, pkg.labels.keys, pkg.archived, env.locale, env.osBuild, env.readerVersion)
+            law(state.materials.key == expected) { "法則 4: $key の材料の鍵 ${state.materials.key} が今の値 $expected でない" }
+            val derived = DerivedKey(state.materials.generation, env.generatorVersion, env.brandTableHash)
+            law(state.derived.key == derived) { "法則 4: $key のキーの鍵が今の値でない" }
+            val before = round.previous.packages[key]
+            val generation = (before?.materials?.generation ?: 0) + if (key in round.plan.reads) 1 else 0
+            law(state.materials.generation == generation) { "$key の世代が、読んだ回だけ 1 進む、になっていない" }
+            if (before == null || before.materials.key != expected) law(key in round.plan.reads) { "法則 4: 鍵の違う $key を読まない" }
         }
-        // 法則 4: 読んだ組の鍵は、成否によらず今の値
-        for (key in round.plan.reads.keys
-            .filter { it.profileSerial in applied }) {
-            val state = round.next.packages.getValue(key)
-            val observed =
-                observation.profiles
-                    .getValue(key.profileSerial)
-                    .packages
-                    .getValue(key.packageName)
-            law(state.materials.key == MaterialKey.of(observed, env)) { "法則 4: $key の材料の鍵が今の値でない" }
-            law(state.derived.key == DerivedKey.of(state.materials.generation, env)) { "法則 4: $key のキーの鍵が今の値でない" }
-            val before =
-                round.previous.packages[key]
-                    ?.materials
-                    ?.generation ?: 0
-            law(state.materials.generation == before + 1) { "$key の世代が 1 進んでいない" }
-        }
-        for (key in round.plan.keys.keys
-            .filter { it.profileSerial in applied }) {
-            val state = round.next.packages.getValue(key)
-            law(state.derived.key == DerivedKey.of(state.materials.generation, env)) { "法則 4: $key のキーの鍵が今の値でない" }
-        }
-        // 法則 5: 読み直すきっかけがあり、その回にすべての段が成功した組は、全件を作り直した結果と一致する
-        val fresh by lazy { sync(IndexSnapshot.EMPTY, device, env).next }
+        // 法則 5: 読み直すきっかけがあり、その回にすべての段が成功した組は、端末の材料から作った結果と一致する
         for (key in round.plan.reads.keys
             .filter { it.profileSerial in applied && clean(it, faults) }) {
-            val state = round.next.packages.getValue(key)
-            val expected = fresh.packages.getValue(key)
-            law(state.derived.keysByEntry == expected.derived.keysByEntry) { "法則 5: $key のキーが作り直した結果と違う" }
-            law(state.materials.labels == expected.materials.labels && state.materials.localized == expected.materials.localized) {
-                "法則 5: $key の材料が作り直した結果と違う"
-            }
-            law(state.materials.signerDns == expected.materials.signerDns) { "法則 5: $key の署名が作り直した結果と違う" }
-            law(state.materials.issues.isEmpty() && state.derived.issue == null) { "法則 5: $key に欠けが残った" }
+            checkFromDevice(round.next.packages.getValue(key), device.pkg(key), "法則 5")
         }
+    }
+
+    // 端末の材料から直に作った値と比べる（本体の計算を通さない）
+    private fun checkFromDevice(
+        state: PackageState,
+        pkg: FakePackage,
+        name: String,
+    ) {
+        val key = state.key
+        val localized =
+            if (pkg.archived) {
+                emptyMap()
+            } else {
+                pkg.localized.filter { (entry, names) ->
+                    entry in pkg.labels && names.isNotEmpty()
+                }
+            }
+        val signers = if (pkg.archived) emptyList() else pkg.signers
+        law(state.materials.labels == pkg.labels) { "$name: $key の表示名が端末と違う" }
+        law(state.materials.localized == localized) { "$name: $key の別の言語の名前が端末と違う" }
+        law(state.materials.signerDns == signers) { "$name: $key の署名が端末と違う" }
+        val keys =
+            pkg.labels.mapValues { (entry, label) ->
+                fakeKeys(AppEntry(appId(key, entry), label, localized[entry].orEmpty(), signerNames = signers))
+            }
+        law(state.derived.keysByEntry == keys) { "$name: $key のキーが端末の材料から作ったものと違う" }
+        law(
+            state.materials.issues.isEmpty() && state.derived.issue == null && state.materials.substituted.isEmpty(),
+        ) { "$name: $key に欠けが残った" }
+    }
+
+    // 回復: 一時的な失敗で印の立った組は、同じ鍵のまま失敗がなくなった次の同期で読み直され、端末の材料と一致する
+    private fun checkRecovery(
+        snapshot: IndexSnapshot,
+        device: FakeDevice,
+        env: Environment,
+    ): IndexSnapshot {
+        val round = sync(snapshot, device, env)
+        val marked =
+            snapshot.packages.values
+                .filter { state ->
+                    state.materials.issues.values
+                        .any { it.retryOnce }
+                }.map { it.key }
+        for (key in marked.filter { it.profileSerial in round.outcome.appliedProfiles && it in round.next.packages }) {
+            law(key in round.plan.reads) { "回復: 印の立った $key を読まない" }
+            checkFromDevice(round.next.packages.getValue(key), device.pkg(key), "回復")
+        }
+        return round.next
     }
 
     // 法則 1: 端末・環境・失敗を固定すると、再試行の印を使い切った後は読まない。印も知らせもなければ、次の同期は読まない
@@ -184,7 +226,7 @@ class IndexLawsTest {
 
         fun replaced(change: (FakePackage) -> FakePackage) =
             pkg?.let { device.with(serial, profile.copy(packages = profile.packages + (name to change(it)))) } ?: device
-        return when (random.nextInt(10)) {
+        return when (random.nextInt(11)) {
             0 -> device.with(serial, profile.copy(packages = profile.packages + (name to randomPackage(random))))
             1 -> device.with(serial, profile.copy(packages = profile.packages - name))
             2 -> replaced { it.copy(apkKey = listOf(null, "k1", "k2", "k4").random(random)) }
@@ -192,6 +234,7 @@ class IndexLawsTest {
             4 -> device.with(serial, profile.copy(status = randomStatus(random)))
             5 -> device.with(serial, profile.copy(readsComplete = random.nextInt(4) > 0))
             6 -> if (serial != 0L && random.nextInt(3) == 0) FakeDevice(device.profiles - serial, device.removed + serial) else device
+            8 -> replaced { it.copy(updatedAt = listOf(null, 0L, 100L, 300L).random(random)) }
             7 -> replaced { it.copy(labels = it.labels + (ACTIVITIES.random(random) to LABELS.random(random))) }
             else -> device
         }

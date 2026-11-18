@@ -136,7 +136,7 @@ private fun read(
     plan.reads.entries.groupBy { it.key.profileSerial }.mapValues { (serial, jobs) ->
         val profile = device.profiles.getValue(serial)
         ProfileReads(
-            profile.readsComplete,
+            if (profile.readsComplete) ListingStatus.COMPLETE else ListingStatus.UNAVAILABLE,
             jobs.associate { (key, job) ->
                 val pkg = device.pkg(key)
                 val keys = KeyObservation(pkg.apkKey, pkg.updatedAt)

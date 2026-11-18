@@ -151,13 +151,19 @@ public data class MaterialRead(
 /**
  * プロファイル 1 つの材料の読み取りの結果。
  *
- * @property complete 読み終えた後もプロファイルを読めたか。読めなくなっていたら結果を使わない（一時停止を正常な空にしないため）
+ * @property status 読み終えた後に確かめたプロファイルの状態。[ListingStatus.COMPLETE] でなければ結果を使わない
+ *   （一時停止を正常な空にしないため）。一時停止などの読めない状態と、問い合わせの失敗を分ける
  * @property packages パッケージ名 → 結果
+ * @property failure [ListingStatus.FAILED] の理由
  */
 public data class ProfileReads(
-    val complete: Boolean,
+    val status: ListingStatus,
     val packages: Map<String, MaterialRead> = emptyMap(),
-)
+    val failure: String? = null,
+) {
+    /** 結果を使えるか。 */
+    val complete: Boolean get() = status == ListingStatus.COMPLETE
+}
 
 /** ジャンルの問い合わせの結果。「成功した空」と「失敗」を分ける。 */
 public sealed interface GenreResult {
@@ -217,7 +223,8 @@ public sealed interface KeyOutcome {
  * 同期 1 回の適用の結果（[IndexRules.apply] の出力）。
  *
  * @property snapshot 次の写し
- * @property appliedProfiles 一覧と材料の両方が有効で、結果を当てたプロファイル
+ * @property appliedProfiles 一覧と材料の両方が有効で、結果を当てたプロファイル。写しの [IndexSnapshot.listings] には、
+ *   一覧が読めても材料を読み終えた後に読めなくなったプロファイルを、その読み取りの状態で残す
  * @property consumableNotices この写しを保存できたら消してよい知らせの番号（当てた組の知らせと、不在を確定した組の知らせ）
  * @property changedPackages 材料を読み直したか消した組（アイコンを失効させる）
  */

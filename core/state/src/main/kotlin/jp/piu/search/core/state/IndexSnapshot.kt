@@ -181,14 +181,17 @@ public data class Failure(
  * 欠けの事実 1 つ（組と段 1 つ）。
  *
  * @property failure 最後の失敗
- * @property appVersion この行を最後に書いたか確かめたこのアプリの `versionCode`
+ * @property failedVersion [failure] が起きたときのこのアプリの `versionCode`。報告でフレームの出所（R8 の対応表）を示すのに使う
+ * @property checkedVersion この段を最後に確かめたこのアプリの `versionCode`。今の版と違えば読み直す。
+ *   確かめられなかった回に前の行を保つときは、こちらだけを進める（古い版がきっかけになり続けて収束しないため）
  * @property retryOnce 次の同期で 1 回だけ読み直すか
  * @property firstFailedOn 続けて欠けている間の初めの日（UTC の `YYYY-MM-DD`）
  * @property lastFailedOn 最後に欠けた日（同上）
  */
 public data class Issue(
     val failure: Failure,
-    val appVersion: Int,
+    val failedVersion: Int,
+    val checkedVersion: Int,
     val retryOnce: Boolean,
     val firstFailedOn: String,
     val lastFailedOn: String,
@@ -204,6 +207,8 @@ public data class Issue(
  * @property localized 入口ごとの別の言語の名前
  * @property signerDns 署名の DN
  * @property issues `ENTRY`・`LABEL`・`SIGNER` の欠け
+ * @property substituted `ENTRY` が欠けた回に入った新しい入口。表示名は一覧の値かパッケージ名で、ほかの材料は旧い APK のものかもしれないので、
+ *   キーだけを作り直すときも代わりのキーに留める。材料を読めた回に空になる
  */
 public data class Materials(
     val key: MaterialKey,
@@ -213,6 +218,7 @@ public data class Materials(
     val localized: Map<String, List<String>>,
     val signerDns: List<String>,
     val issues: Map<Stage, Issue>,
+    val substituted: Set<String> = emptySet(),
 )
 
 /**
