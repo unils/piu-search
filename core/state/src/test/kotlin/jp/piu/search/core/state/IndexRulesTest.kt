@@ -2,6 +2,8 @@
 
 package jp.piu.search.core.state
 
+import jp.piu.search.core.search.AppEntry
+import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.GenreId
 import jp.piu.search.core.search.SearchKeyKind
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -36,7 +38,7 @@ class IndexRulesTest {
                 .toSet(),
         )
         assertEquals(setOf(0L), round.outcome.appliedProfiles)
-        assertEquals(setOf(MAPS), round.outcome.changedPackages)
+        assertEquals(setOf(MAPS), round.outcome.staleIcons)
     }
 
     @Test
@@ -285,19 +287,73 @@ class IndexRulesTest {
     }
 
     @Test
+    fun `署名と KEYS が同じ回に欠けても、入力の違う前のキーを使わず、旧い提供元で当たらない`() {
+        val first = sync(IndexSnapshot.EMPTY, device(MAPS to maps().copy(signers = listOf("O=Old")))).next
+        val updated = device(MAPS to maps().copy(apkKey = "apk-2", signers = listOf("O=New")))
+        val keysFail = mapOf((MAPS to "Main") to BUG)
+        val signer = sync(first, updated, faults = Faults(signer = mapOf(MAPS to DETERMINISTIC), keys = keysFail)).next
+        assertEquals(
+            SubstituteKeys.of("マップ"),
+            signer.packages
+                .getValue(MAPS)
+                .derived.keysByEntry
+                .getValue("Main"),
+        )
+        assertTrue(
+            signer.packages
+                .getValue(MAPS)
+                .derived.sources
+                .isEmpty(),
+        )
+        // 別の言語の名前の失敗でも同じ（前のキーは「Maps」から作った読みを含む）
+        val label = sync(first, updated, faults = Faults(label = mapOf(MAPS to DETERMINISTIC), keys = keysFail)).next
+        assertTrue(
+            label.packages
+                .getValue(MAPS)
+                .derived.keysByEntry
+                .getValue("Main")
+                .none { it.text.value.startsWith("loc:") },
+        )
+        // 入力が同じなら、前のキーを使う
+        val same =
+            sync(
+                first,
+                device(MAPS to maps().copy(apkKey = "apk-2", signers = listOf("O=Old"))),
+                faults = Faults(keys = keysFail),
+            ).next
+        assertEquals(
+            first.packages
+                .getValue(MAPS)
+                .derived.keysByEntry,
+            same.packages
+                .getValue(MAPS)
+                .derived.keysByEntry,
+        )
+    }
+
+    @Test
+    fun `アーカイブの回に ENTRY が欠けても、補助の材料と欠けとそれから作ったキーを残さない`() {
+        val first = sync(IndexSnapshot.EMPTY, device(MAPS to maps()), faults = Faults(label = mapOf(MAPS to DETERMINISTIC))).next
+        val archived = device(MAPS to maps().copy(archived = true))
+        val round = sync(first, archived, faults = Faults(entry = mapOf(MAPS to DETERMINISTIC)))
+        val state = round.next.packages.getValue(MAPS)
+        assertTrue(state.materials.localized.isEmpty() && state.materials.signerDns.isEmpty())
+        assertEquals(setOf(Stage.ENTRY), state.materials.issues.keys)
+        // 旧い表示名は保ち、補助の材料なしでキーを作り直す
+        assertEquals("マップ", state.materials.labels.getValue("Main"))
+        assertEquals(fakeKeys(AppEntry(AppId(MAPS.packageName, "Main", 0), "マップ")), state.derived.keysByEntry.getValue("Main"))
+        assertTrue(sync(round.next, archived, faults = Faults(entry = mapOf(MAPS to DETERMINISTIC))).plan.isIdle)
+    }
+
+    @Test
     fun `ENTRY の失敗 - 旧い入口は旧い材料とキー、新しい入口は代わりのキー。補助の段の前の行は保ち、鍵の変化と重なった回なので印も残す`() {
         val first =
             sync(IndexSnapshot.EMPTY, device(MAPS to maps()), faults = Faults(label = mapOf(MAPS to TRANSIENT))).next
         val old = first.packages.getValue(MAPS)
         val changed = maps().copy(apkKey = "apk-2", labels = mapOf("Main" to "新マップ", "Go" to "マップ Go"))
         val round = sync(first, device(MAPS to changed), faults = Faults(entry = mapOf(MAPS to TRANSIENT)))
-        assertEquals(listOf("Go"), round.jobs.getValue(MAPS).map { it.entry.id.activityName })
-        assertTrue(
-            round.jobs
-                .getValue(MAPS)
-                .single()
-                .substitute,
-        )
+        // 旧い入口は旧いキー、新しい入口は代わりのキーなので、生成器には頼まない
+        assertTrue(MAPS !in round.jobs)
         val state = round.next.packages.getValue(MAPS)
         assertEquals(old.derived.keysByEntry.getValue("Main"), state.derived.keysByEntry.getValue("Main"))
         assertEquals(SubstituteKeys.of(MAPS.packageName), state.derived.keysByEntry.getValue("Go"))
@@ -326,12 +382,7 @@ class IndexRulesTest {
         val failed = sync(first, changed, faults = stuck).next
         val rebuilt = sync(failed, changed, env = ENV.copy(generatorVersion = 8), faults = stuck)
         assertEquals(setOf(KeyReason.KEY_CHANGED), rebuilt.plan.keys.getValue(MAPS))
-        assertTrue(
-            rebuilt.jobs
-                .getValue(MAPS)
-                .single()
-                .substitute,
-        )
+        assertTrue(MAPS !in rebuilt.jobs)
         val state = rebuilt.next.packages.getValue(MAPS)
         assertTrue(
             state.derived.keysByEntry
@@ -398,23 +449,12 @@ class IndexRulesTest {
     fun `材料を頼んだプロファイルの結果がなければ止め、読み終えた後の状態を一覧の状態に残す`() {
         val observation = device(MAPS to maps()).observe()
         val plan = IndexRules.plan(IndexSnapshot.EMPTY, observation, ENV)
-        assertThrows<IllegalArgumentException> { IndexRules.keyJobs(IndexSnapshot.EMPTY, observation, plan, emptyMap(), ENV) }
-        assertThrows<IllegalArgumentException> {
-            IndexRules.apply(IndexSnapshot.EMPTY, observation, plan, emptyMap(), GenreResult.Found(emptyMap()), emptyMap(), ENV, TODAY)
-        }
+        assertThrows<IllegalArgumentException> { IndexRules.prepare(IndexSnapshot.EMPTY, observation, plan, emptyMap(), ENV, TODAY) }
         for (status in listOf(ListingStatus.UNAVAILABLE, ListingStatus.FAILED)) {
             val reads = mapOf(0L to ProfileReads(status, failure = "x".takeIf { status == ListingStatus.FAILED }))
-            val outcome =
-                IndexRules.apply(
-                    IndexSnapshot.EMPTY,
-                    observation,
-                    plan,
-                    reads,
-                    GenreResult.Found(emptyMap()),
-                    emptyMap(),
-                    ENV,
-                    TODAY,
-                )
+            val prepared = IndexRules.prepare(IndexSnapshot.EMPTY, observation, plan, reads, ENV, TODAY)
+            assertTrue(prepared.jobs.isEmpty())
+            val outcome = IndexRules.apply(prepared, GenreResult.Found(emptyMap()), emptyMap())
             assertEquals(status, outcome.snapshot.listings[0])
             assertTrue(outcome.snapshot.packages.isEmpty())
         }
@@ -432,18 +472,13 @@ class IndexRulesTest {
         val plan = IndexRules.plan(IndexSnapshot.EMPTY, observation, ENV)
         val seen = KeyObservation("k", 1)
         val reads = mapOf(0L to ProfileReads(ListingStatus.COMPLETE, mapOf(MAPS.packageName to MaterialRead(labels, null, seen, seen))))
-        val built = mapOf(MAPS to mapOf("Main" to KeyOutcome.Built(keys)))
+        val prepared = IndexRules.prepare(IndexSnapshot.EMPTY, observation, plan, reads, ENV, TODAY)
         val snapshot =
             IndexRules
                 .apply(
-                    IndexSnapshot.EMPTY,
-                    observation,
-                    plan,
-                    reads,
+                    prepared,
                     GenreResult.Found(emptyMap()),
-                    built,
-                    ENV,
-                    TODAY,
+                    mapOf(prepared.jobs.single() to KeyOutcome.Built(keys)),
                 ).snapshot
         val published = snapshot.packages.getValue(MAPS)
         entries += "Go"
@@ -559,7 +594,7 @@ class IndexRulesTest {
         val first = sync(IndexSnapshot.EMPTY, device(MAPS to maps(), CAMERA to maps(), WORK_MAIL to mail())).next
         val round = sync(first, device(MAPS to maps()).copy(removed = setOf(WORK)))
         assertEquals(setOf(MAPS), round.next.packages.keys)
-        assertEquals(setOf(CAMERA, WORK_MAIL), round.outcome.changedPackages)
+        assertEquals(setOf(CAMERA, WORK_MAIL), round.outcome.staleIcons)
         assertTrue(WORK !in round.next.listings)
     }
 
@@ -689,8 +724,18 @@ class IndexRulesTest {
         val observation = device.observe()
         val plan = IndexRules.plan(IndexSnapshot.EMPTY, observation, ENV)
         val reads = mapOf(0L to ProfileReads(ListingStatus.COMPLETE, mapOf(MAPS.packageName to readOf(maps()))))
+        val prepared = IndexRules.prepare(IndexSnapshot.EMPTY, observation, plan, reads, ENV, TODAY)
+        assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, GenreResult.Found(emptyMap()), emptyMap()) }
+        // 別の回（入力の違う頼み）の結果を渡しても止まる
+        val other =
+            KeyJob(
+                prepared.jobs
+                    .single()
+                    .entry
+                    .copy(signerNames = listOf("O=Other")),
+            )
         assertThrows<IllegalArgumentException> {
-            IndexRules.apply(IndexSnapshot.EMPTY, observation, plan, reads, GenreResult.Found(emptyMap()), emptyMap(), ENV, TODAY)
+            IndexRules.apply(prepared, GenreResult.Found(emptyMap()), mapOf(other to KeyOutcome.Built(emptyList())))
         }
     }
 

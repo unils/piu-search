@@ -110,8 +110,11 @@ public data class SyncPlan(
     val genreTargets: List<AppId>,
     val noticeTargets: Map<Long, PackageKey?>,
 ) {
-    /** 材料もキーも作らない計画か。 */
-    public val isIdle: Boolean get() = reads.isEmpty() && keys.isEmpty()
+    /**
+     * 材料を読むかキーを作る組があるか。偽でも、組の削除・ジャンル・知らせの消費があるので [IndexRules.apply] は要る。
+     * 写しを保存するかは、最後に保存できた写しと次の写しを比べて決める（この値では決めない）。
+     */
+    public val hasBuildWork: Boolean get() = reads.isNotEmpty() || keys.isNotEmpty()
 }
 
 /**
@@ -187,15 +190,12 @@ public sealed interface GenreResult {
 }
 
 /**
- * キーを作る入口 1 つの頼み。
+ * 生成器に頼む入口 1 つ。入力ごと等しさを比べるので、生成の結果の鍵にする。
  *
  * @property entry 生成器の入力（ジャンルは入れない。ジャンルのキーは写しが別に足す）
- * @property substitute 生成器を通さず、表示名を正規化しただけのキー（[SubstituteKeys]）にするか。
- *   `ENTRY` が欠けた組の新しい入口で、どの版の APK の材料か分からないため
  */
 public data class KeyJob(
     val entry: AppEntry,
-    val substitute: Boolean,
 )
 
 /** 入口 1 つのキーの生成の結果。 */
@@ -226,11 +226,12 @@ public sealed interface KeyOutcome {
  * @property appliedProfiles 一覧と材料の両方が有効で、結果を当てたプロファイル。写しの [IndexSnapshot.listings] には、
  *   一覧が読めても材料を読み終えた後に読めなくなったプロファイルを、その読み取りの状態で残す
  * @property consumableNotices この写しを保存できたら消してよい知らせの番号（当てた組の知らせと、不在を確定した組の知らせ）
- * @property changedPackages 材料を読み直したか消した組（アイコンを失効させる）
+ * @property staleIcons アイコンを失効させる組（材料を読み直したか消した組）。キーやジャンルだけが変わった組は入らないので、
+ *   保存の判断には使わない（最後に保存できた写しと [snapshot] を比べる）
  */
 public data class SyncOutcome(
     val snapshot: IndexSnapshot,
     val appliedProfiles: Set<Long>,
     val consumableNotices: Set<Long>,
-    val changedPackages: Set<PackageKey>,
+    val staleIcons: Set<PackageKey>,
 )

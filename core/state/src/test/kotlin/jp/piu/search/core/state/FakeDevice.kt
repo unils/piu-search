@@ -60,6 +60,8 @@ internal data class Faults(
     val label: Map<PackageKey, Failure> = emptyMap(),
     val signer: Map<PackageKey, Failure> = emptyMap(),
     val moved: Set<PackageKey> = emptySet(),
+    val movedBefore: Set<PackageKey> = emptySet(),
+    val movedTime: Set<PackageKey> = emptySet(),
     val keys: Map<Pair<PackageKey, String>, Failure> = emptyMap(),
     val genre: Failure? = null,
 ) {
@@ -78,6 +80,9 @@ internal fun fakeKeys(entry: AppEntry): List<SearchKey> =
         entry.localizedLabels.map { SearchKey(NormalizedText("loc:$it"), SearchKeyKind.LOCALIZED_NAME) } +
         entry.signerNames.map { SearchKey(NormalizedText("pub:$it"), SearchKeyKind.PUBLISHER) }
 
+/** 材料もキーも作らない計画か（試験の読みやすさのため）。 */
+internal val SyncPlan.isIdle: Boolean get() = !hasBuildWork
+
 /** 同期 1 回の入力と出力。 */
 internal data class Round(
     val previous: IndexSnapshot,
@@ -85,7 +90,7 @@ internal data class Round(
     val plan: SyncPlan,
     val reads: Map<Long, ProfileReads>,
     val jobs: Map<PackageKey, List<KeyJob>>,
-    val built: Map<PackageKey, Map<String, KeyOutcome>>,
+    val built: Map<KeyJob, KeyOutcome>,
     val genres: GenreResult,
     val outcome: SyncOutcome,
 ) {
@@ -104,18 +109,12 @@ internal fun sync(
     val observation = device.observe()
     val plan = IndexRules.plan(previous, observation, env, notices, userSerials)
     val reads = read(device, plan, faults)
-    val jobs = IndexRules.keyJobs(previous, observation, plan, reads, env)
+    val prepared = IndexRules.prepare(previous, observation, plan, reads, env, TODAY)
     val built =
-        jobs.mapValues { (key, list) ->
-            list.associate { job ->
-                val failure = faults.keys[key to job.entry.id.activityName]
-                job.entry.id.activityName to
-                    when {
-                        failure != null -> KeyOutcome.Failed(failure)
-                        job.substitute -> KeyOutcome.Built(SubstituteKeys.of(job.entry.label))
-                        else -> KeyOutcome.Built(fakeKeys(job.entry))
-                    }
-            }
+        prepared.jobs.associateWith { job ->
+            val id = job.entry.id
+            faults.keys[PackageKey(id.profileSerial, id.packageName) to id.activityName]?.let { KeyOutcome.Failed(it) }
+                ?: KeyOutcome.Built(fakeKeys(job.entry))
         }
     val genres =
         faults.genre?.let { GenreResult.Failed(it.cause) } ?: GenreResult.Found(
@@ -124,7 +123,8 @@ internal fun sync(
                     device.pkg(PackageKey(id.profileSerial, id.packageName)).genres[id.activityName].orEmpty()
                 }.filterValues { it.isNotEmpty() },
         )
-    val outcome = IndexRules.apply(previous, observation, plan, reads, genres, built, env, TODAY)
+    val outcome = IndexRules.apply(prepared, genres, built)
+    val jobs = prepared.jobs.groupBy { PackageKey(it.entry.id.profileSerial, it.entry.id.packageName) }
     return Round(previous, observation, plan, reads, jobs, built, genres, outcome)
 }
 
@@ -140,7 +140,14 @@ private fun read(
             jobs.associate { (key, job) ->
                 val pkg = device.pkg(key)
                 val keys = KeyObservation(pkg.apkKey, pkg.updatedAt)
-                val moved = if (key in faults.moved) KeyObservation("moved", (pkg.updatedAt ?: 0) + 1) else keys
+                // moved は読んだ後の APK と時刻、movedBefore は読む前の APK だけ、movedTime は読んだ後の時刻だけを変える
+                val moved =
+                    when {
+                        key in faults.moved -> KeyObservation("moved", (pkg.updatedAt ?: 0) + 1)
+                        key in faults.movedTime -> KeyObservation(pkg.apkKey, (pkg.updatedAt ?: 0) + 1)
+                        else -> keys
+                    }
+                val before = if (key in faults.movedBefore) KeyObservation("moved-before", pkg.updatedAt) else keys
                 val entryFailure = faults.entry[key]
                 val aux = job.auxiliary && entryFailure == null
                 val labelFailure = faults.label[key]?.takeIf { aux }
@@ -148,7 +155,7 @@ private fun read(
                     MaterialRead(
                         labels = pkg.labels.mapValues { (_, label) -> label.takeIf { entryFailure == null } },
                         entryFailure = entryFailure,
-                        before = keys,
+                        before = before,
                         after = moved,
                         // 別の言語の名前は、失敗したら先頭の入口の分だけが読めなかったことにする
                         localized =

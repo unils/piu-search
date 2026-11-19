@@ -98,6 +98,27 @@ class IndexLawsTest {
             law(state.materials.generation == generation) { "$key の世代が、読んだ回だけ 1 進む、になっていない" }
             if (before == null || before.materials.key != expected) law(key in round.plan.reads) { "法則 4: 鍵の違う $key を読まない" }
         }
+        // 読んでいる間に鍵が動いた組（一覧の時点の値がある成分だけが判定に効く）は、欠けの理由が CHANGED_DURING_READ になり、
+        // その回の補助の材料を採らない（前の材料のまま。アーカイブ済みは空）
+        for (key in round.plan.reads.keys
+            .filter { it.profileSerial in applied && it !in faults.entry }) {
+            val pkg = device.pkg(key)
+            val moved =
+                (key in faults.moved && (pkg.apkKey != null || pkg.updatedAt != null)) ||
+                    (key in faults.movedBefore && pkg.apkKey != null) ||
+                    (key in faults.movedTime && pkg.updatedAt != null)
+            val state = round.next.packages.getValue(key)
+            val cause =
+                state.materials.issues[Stage.ENTRY]
+                    ?.failure
+                    ?.cause
+            law(moved == (cause == Failure.CHANGED_DURING_READ)) { "$key の鍵の動き $moved と欠けの理由 $cause が合わない" }
+            if (moved) {
+                val before = round.previous.packages[key]?.materials
+                val signers = if (pkg.archived) emptyList() else before?.signerDns.orEmpty()
+                law(state.materials.signerDns == signers) { "$key の動いた回の署名 ${state.materials.signerDns} が前の材料 $signers でない" }
+            }
+        }
         // 法則 5: 読み直すきっかけがあり、その回にすべての段が成功した組は、端末の材料から作った結果と一致する
         for (key in round.plan.reads.keys
             .filter { it.profileSerial in applied && clean(it, faults) }) {
@@ -183,6 +204,7 @@ class IndexLawsTest {
         faults: Faults,
     ): Boolean =
         key !in faults.entry && key !in faults.label && key !in faults.signer && key !in faults.moved &&
+            key !in faults.movedBefore && key !in faults.movedTime &&
             faults.keys.keys.none { it.first == key }
 
     private fun randomDevice(random: Random): FakeDevice =
@@ -271,6 +293,8 @@ class IndexLawsTest {
             label = pick(FAULT_RATE),
             signer = pick(FAULT_RATE),
             moved = keys.filterTo(HashSet()) { random.nextInt(100) < MOVED_RATE },
+            movedBefore = keys.filterTo(HashSet()) { random.nextInt(100) < MOVED_RATE },
+            movedTime = keys.filterTo(HashSet()) { random.nextInt(100) < MOVED_RATE },
             keys =
                 keys
                     .flatMap { key ->

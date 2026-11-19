@@ -2,6 +2,7 @@
 
 package jp.piu.search.core.state
 
+import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.GenreId
 import jp.piu.search.core.search.IndexedApp
@@ -227,11 +228,14 @@ public data class Materials(
  * @property key 作ったときの鍵。成否によらず今の値
  * @property keysByEntry 入口ごとのキー（ジャンルのキーは含まない）
  * @property issue `KEYS` の欠け
+ * @property sources 入口ごとの、キーを作った生成器の入力。代わりのキーの入口は入らない。
+ *   生成に失敗した回に前のキーを使ってよいのは、今回の入力がこれと同じときだけ（読めなかった段の古い材料で当たり続けないため）
  */
 public data class Derived(
     val key: DerivedKey,
     val keysByEntry: Map<String, List<SearchKey>>,
     val issue: Issue?,
+    val sources: Map<String, AppEntry> = emptyMap(),
 )
 
 /**
