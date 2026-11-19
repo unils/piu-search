@@ -50,6 +50,8 @@ public object IndexRules {
                 notice.seq to (notice.profileSerial ?: userSerials[notice.userHandle])?.let { PackageKey(it, notice.packageName) }
             }
         val noticed = noticeTargets.values.filterNotNullTo(HashSet())
+        // 頼みをこの計画に結び付ける印。別の計画の読み取りの結果を受けないため
+        val round = Any()
         val reads = LinkedHashMap<PackageKey, MaterialJob>()
         val keys = LinkedHashSet<PackageKey>()
         val genreTargets = ArrayList<AppId>()
@@ -62,14 +64,14 @@ public object IndexRules {
                 val attempt = previous.packages[key]?.attempt
                 val reasons = readReasons(attempt, observed, env, key in noticed)
                 if (reasons.isNotEmpty()) {
-                    reads[key] = MaterialJob(reasons, auxiliary = !observed.archived)
+                    reads[key] = MaterialJob(key, reasons, auxiliary = !observed.archived, round)
                 } else if (checkNotNull(attempt).derivedKey != DerivedKey.of(env)) {
                     keys += key
                 }
             }
             previous.packages.keys.filterTo(removals) { it.profileSerial == serial && it.packageName !in listing.packages }
         }
-        return SyncPlan(reads, keys, removals, genreTargets, noticeTargets, previous, frozen, env)
+        return SyncPlan(reads, keys, removals, GenreRequest(genreTargets), noticeTargets, previous, frozen, env)
     }
 
     /**
@@ -77,10 +79,13 @@ public object IndexRules {
      *
      * 作り直す組は、読み取りが成功したならすべての入口を生成器に頼み、本当の失敗なら何も頼まない（前の状態を保つため）。
      * 読む前後で鍵が動いた組は `ENTRY` の [Failure.CHANGED_DURING_READ] とする。キーだけを作る組は、検索に使う値の材料から作る。
-     * 有効でないプロファイルの組は扱わない（結果を当てないため）。
+     * 当てられないプロファイルの組は扱わない。
+     *
+     * 結果は計画の頼みとちょうど合うものだけを受ける。材料を頼まなかったプロファイルの結果・別の計画の頼みの結果・頼みの欠け・
+     * 補助の材料を頼まなかった組の補助の材料・一覧の入口の分そろわない表示名は、呼ぶ側の誤りとして [IllegalArgumentException] で止める。
      *
      * @param plan [plan] の結果
-     * @param reads プロファイルごとの材料の読み取りの結果。材料を頼んだプロファイルの分がいる
+     * @param reads プロファイルごとの材料の読み取りの結果。材料を頼んだプロファイルの分だけがちょうどいる
      * @param today 欠けの日（UTC の `YYYY-MM-DD`）
      */
     public fun prepare(
@@ -89,28 +94,37 @@ public object IndexRules {
         today: String,
     ): PreparedSync {
         val frozenReads = reads.frozen()
-        val valid = validProfiles(plan, frozenReads)
-        // 頼みをこの呼び出しに結び付ける印。別の回の頼みの結果を受けないため
+        val jobsBySerial = plan.reads.values.groupBy { it.key.profileSerial }
+        require(frozenReads.keys == jobsBySerial.keys) { "材料の読み取りのプロファイルが頼みと合わない: ${frozenReads.keys} ${jobsBySerial.keys}" }
+        for ((serial, profile) in frozenReads) {
+            if (profile.complete) {
+                require(profile.packages.keys == jobsBySerial.getValue(serial).toSet()) { "材料の読み取りが頼みと合わない: プロファイル $serial" }
+            }
+        }
+        val statuses = statuses(plan, frozenReads)
+        val applicable = { key: PackageKey -> statuses[key.profileSerial] == ListingStatus.COMPLETE }
+        // 頼みをこの呼び出しに結び付ける印。別の回の生成の結果を受けないため
         val round = Any()
         val packages = LinkedHashMap<PackageKey, PreparedPackage>()
         for ((key, job) in plan.reads) {
-            if (key.profileSerial !in valid) continue
-            packages[key] = rebuild(key, observed(plan, key), job, readOf(frozenReads, key), plan.env, round)
+            if (!applicable(key)) continue
+            val read = frozenReads.getValue(key.profileSerial).packages.getValue(job)
+            packages[key] = rebuild(key, observed(plan, key), job, read, plan.env, round)
         }
         for (key in plan.keys) {
-            if (key.profileSerial !in valid) continue
+            if (!applicable(key)) continue
             val current = checkNotNull(plan.previous.packages[key]?.current) { "検索に使う値のない組のキーだけを作る: $key" }
             val materials = Materials(current.materialKey, current.labels, current.localized, current.signerDns)
             packages[key] = PreparedPackage(key, observed(plan, key), read = false, retryOnly = false, materials, null, emptyMap(), round)
         }
-        return PreparedSync(plan, frozenReads, today, valid, packages)
+        return PreparedSync(plan, statuses, today, packages)
     }
 
     /**
      * 次の写しを作る。
      *
      * @param prepared [prepare] の結果
-     * @param genres ジャンルの問い合わせの結果
+     * @param genres ジャンルの問い合わせの結果。同じ計画の頼み（[SyncPlan.genres]）に答えたものだけを受ける
      * @param built 生成器の結果。[PreparedSync.jobs] のすべての頼みの分がちょうどいる。別の回の頼みの結果を渡すと止まる
      */
     public fun apply(
@@ -122,10 +136,15 @@ public object IndexRules {
             built.keys == prepared.jobs.toSet(),
         ) { "生成の結果が頼みと合わない: ${built.keys - prepared.jobs.toSet()} ${prepared.jobs - built.keys}" }
         val plan = prepared.plan
+        require(genres.request === plan.genres) { "ジャンルの結果が別の計画の頼みに答えている" }
+        val genreResult = genres.frozen()
+        if (genreResult is GenreResult.Found) {
+            require(plan.genres.targets.containsAll(genreResult.byEntry.keys)) { "頼んでいない入口のジャンル" }
+        }
         val previous = plan.previous
         val observation = plan.observation
-        val valid = prepared.valid
-        val genreResult = genres.frozen()
+        val statuses = prepared.statuses
+        val valid = prepared.appliedProfiles
         val outcomes = built.frozen()
         val removed = observation.removedProfiles
         val next = LinkedHashMap(previous.packages)
@@ -147,10 +166,7 @@ public object IndexRules {
                 next[key] = state.copy(genres = genresOf(key, observed, prev?.genres.orEmpty(), genreResult))
             }
         }
-        // 一覧が読めても材料を読み終えた後に読めなくなったプロファイルは、その読み取りの状態を残す（表示と次の判断に使う）
-        val listings =
-            (previous.listings + observation.profiles.mapValues { (serial, listing) -> prepared.reads[serial]?.status ?: listing.status })
-                .filterKeys { it !in removed }
+        val listings = (previous.listings + statuses).filterKeys { it !in removed }
         val consumable =
             plan.noticeTargets
                 .filterValues { it != null && (it.profileSerial in valid || it.profileSerial in removed) }
@@ -158,22 +174,17 @@ public object IndexRules {
         return SyncOutcome(IndexSnapshot(next, listings), valid, consumable, staleIcons)
     }
 
-    // 一覧が最後まで読めて、消えておらず、材料を読んだならその読み取りも最後まで読めたプロファイル。
-    // 材料を頼んだプロファイルの結果がなければ呼ぶ側の誤りとして止める。黙って外すと、正常な部分の同期と見分けられない
-    private fun validProfiles(
+    // プロファイルごとの判定（消えたプロファイルは除く）。一覧の状態・更新・削除・知らせの消費は、すべてこれだけから決める。
+    // 一覧が最後まで読めて、材料を読んだなら読み終えた後も読めたプロファイルだけが COMPLETE
+    private fun statuses(
         plan: SyncPlan,
         reads: Map<Long, ProfileReads>,
-    ): Set<Long> {
-        val readSerials = plan.reads.keys.mapTo(HashSet()) { it.profileSerial }
-        for (serial in readSerials) require(serial in reads) { "材料を頼んだプロファイルの結果がない: $serial" }
-        val observation = plan.observation
-        return observation.profiles
-            .filter { (serial, listing) ->
-                listing.status == ListingStatus.COMPLETE &&
-                    serial !in observation.removedProfiles &&
-                    (serial !in readSerials || reads[serial]?.complete == true)
-            }.keys
-    }
+    ): Map<Long, ListingStatus> =
+        plan.observation.profiles
+            .filterKeys { it !in plan.observation.removedProfiles }
+            .mapValues { (serial, listing) ->
+                if (listing.status == ListingStatus.COMPLETE) reads[serial]?.status ?: ListingStatus.COMPLETE else listing.status
+            }
 
     // 比べるのは最後に試した鍵（検索に使う値の鍵ではない）。失敗しても試した鍵は今の値になるので、同じ鍵では読み直さない
     private fun readReasons(
@@ -204,11 +215,6 @@ public object IndexRules {
                 ?.packages
                 ?.get(key.packageName),
         ) { "一覧にない組: $key" }
-
-    private fun readOf(
-        reads: Map<Long, ProfileReads>,
-        key: PackageKey,
-    ): MaterialRead = requireNotNull(reads[key.profileSerial]?.packages?.get(key.packageName)) { "読み取りの結果がない組: $key" }
 
     // 一覧の時点で鍵がなければ前後を比べない（片方がない比較では替わったかを決められない）
     private fun changedDuringRead(
@@ -242,6 +248,8 @@ public object IndexRules {
             }
 
             is MaterialRead.Read -> {
+                // アーカイブ済みに補助の材料が来たら、別の頼みの結果か読み手の誤り。採ると APK のない組に古い提供元が付く
+                require(job.auxiliary || (read.localized.isEmpty() && read.signerDns.isEmpty())) { "補助の材料を頼んでいない組の補助の材料: $key" }
                 // 表示名の欠けた成功を受けると、パッケージ名のキーを今の鍵で確定し、次の同期で読み直さない
                 require(read.labels.keys == observed.entries) { "表示名が一覧の入口と合わない: $key ${read.labels.keys} ${observed.entries}" }
                 if (changedDuringRead(observed, read)) {
@@ -255,8 +263,10 @@ public object IndexRules {
         }
     }
 
-    // 全部が成功した組だけ検索に使う値を置き換える。失敗した組は前の値を丸ごと保ち（なければ null で、入口は代わりのキー）、
-    // 最後の試みに今の鍵と欠けを書く。再試行の枠は、一時的な失敗で、再試行だけがきっかけの回でなければ立てる
+    // 全部が成功した組だけ検索に使う値を置き換える。失敗した組は前の値を保ち、一覧から消えた入口だけを落とす（消えた入口が後で戻ったとき、
+    // 前の APK の提供元などのキーを戻さないため）。値のない入口は代わりの表示名で出す: この回に取れた表示名、なければ一覧に残り続けた入口の
+    // 前の代わりの表示名、それもなければパッケージ名。最後の試みには今の鍵と欠けを書く。再試行の枠は、一時的な失敗で、
+    // 再試行だけがきっかけの回でなければ立てる
     private fun settle(
         pkg: PreparedPackage,
         prev: PackageState?,
@@ -268,6 +278,7 @@ public object IndexRules {
         val keyFailure = built.values.firstNotNullOfOrNull { (it as? KeyOutcome.Failed)?.failure }
         val failed = pkg.failed ?: keyFailure?.let { Stage.KEYS to it }
         val materials = pkg.materials
+        val entries = pkg.observed.entries
         val current =
             if (failed == null && materials != null) {
                 Current(
@@ -279,7 +290,13 @@ public object IndexRules {
                     built.mapValues { (it.value as KeyOutcome.Built).keys },
                 )
             } else {
-                prev?.current
+                prev?.current?.let { c ->
+                    c.copy(labels = c.labels.filterKeys { it in entries }, keysByEntry = c.keysByEntry.filterKeys { it in entries })
+                }
+            }
+        val substitutes =
+            (entries - current?.labels?.keys.orEmpty()).associateWith {
+                pkg.fallbackLabels[it] ?: prev?.substitutes?.get(it) ?: pkg.key.packageName
             }
         val attempt =
             Attempt(
@@ -291,9 +308,8 @@ public object IndexRules {
                         Issue(stage, failure, env.appVersion, prev?.attempt?.issue?.firstFailedOn ?: today, today)
                     },
                 retry = failed?.second?.category == IssueCategory.TRANSIENT && !pkg.retryOnly,
-                labels = if (failed == null) emptyMap() else pkg.fallbackLabels,
             )
-        return PackageState(pkg.key, pkg.observed, current, attempt, prev?.genres.orEmpty())
+        return PackageState(pkg.key, pkg.observed, current, substitutes, attempt, prev?.genres.orEmpty())
     }
 
     // ジャンルは「成功した空」と「失敗」を分ける。失敗した回は既存のジャンルを保つ（新しい入口はジャンルなし）
@@ -353,7 +369,7 @@ public object IndexRules {
 
     private fun GenreResult.frozen(): GenreResult =
         when (this) {
-            is GenreResult.Found -> GenreResult.Found(byEntry.mapValues { it.value.toList() })
+            is GenreResult.Found -> GenreResult.Found(request, byEntry.mapValues { it.value.toList() })
             is GenreResult.Failed -> this
         }
 }
@@ -403,16 +419,15 @@ internal class PreparedPackage(
  */
 public class PreparedSync internal constructor(
     internal val plan: SyncPlan,
-    internal val reads: Map<Long, ProfileReads>,
+    internal val statuses: Map<Long, ListingStatus>,
     internal val today: String,
-    internal val valid: Set<Long>,
     internal val packages: Map<PackageKey, PreparedPackage>,
 ) {
     /** 生成器に頼む入口。 */
     public val jobs: List<KeyJob> = packages.values.flatMap { it.jobs.values }
 
-    /** 一覧と材料の両方が有効なプロファイル。 */
-    public val appliedProfiles: Set<Long> get() = valid
+    /** 一覧と材料の両方が有効で、結果を当てるプロファイル。 */
+    public val appliedProfiles: Set<Long> = statuses.filterValues { it == ListingStatus.COMPLETE }.keys
 }
 
 /** 生成器を通さない代わりのキー。読みを作らず、表示名の厳密形と緩い形だけにする。 */

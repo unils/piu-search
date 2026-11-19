@@ -330,7 +330,7 @@ class IndexRulesTest {
             val reads = mapOf(0L to ProfileReads(status, failure = "x".takeIf { status == ListingStatus.FAILED }))
             val prepared = IndexRules.prepare(plan, reads, TODAY)
             assertTrue(prepared.jobs.isEmpty())
-            val outcome = IndexRules.apply(prepared, GenreResult.Found(emptyMap()), emptyMap())
+            val outcome = IndexRules.apply(prepared, noGenres(plan), emptyMap())
             assertEquals(status, outcome.snapshot.listings[0])
             assertTrue(outcome.snapshot.packages.isEmpty())
         }
@@ -342,8 +342,8 @@ class IndexRulesTest {
         val plan = IndexRules.plan(IndexSnapshot.EMPTY, device(MAPS to more).observe(), ENV)
         val seen = KeyObservation(more.apkKey, more.updatedAt)
         val partial = MaterialRead.Read(mapOf("Main" to "マップ"), seen, seen)
-        assertThrows<IllegalArgumentException> { IndexRules.prepare(plan, readsOf(partial), TODAY) }
-        assertThrows<IllegalArgumentException> { IndexRules.prepare(plan, readsOf(MaterialRead.Failed(Stage.KEYS, BUG)), TODAY) }
+        assertThrows<IllegalArgumentException> { IndexRules.prepare(plan, readsOf(plan, partial), TODAY) }
+        assertThrows<IllegalArgumentException> { IndexRules.prepare(plan, readsOf(plan, MaterialRead.Failed(Stage.KEYS, BUG)), TODAY) }
     }
 
     @Test
@@ -351,13 +351,14 @@ class IndexRulesTest {
         val device = device(MAPS to maps())
         val first = sync(IndexSnapshot.EMPTY, device).next
         val v8 = ENV.copy(generatorVersion = 8)
-        val prepared = IndexRules.prepare(IndexRules.plan(first, device.observe(), v8), emptyMap(), TODAY)
-        assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, GenreResult.Found(emptyMap()), emptyMap()) }
+        val plan = IndexRules.plan(first, device.observe(), v8)
+        val prepared = IndexRules.prepare(plan, emptyMap(), TODAY)
+        assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, noGenres(plan), emptyMap()) }
         // 同じ入力を、前の版の生成器で作った別の回の頼み
         val stale = IndexRules.prepare(IndexRules.plan(first, device.observe(), ENV.copy(generatorVersion = 9)), emptyMap(), TODAY)
         assertEquals(prepared.jobs.single().entry, stale.jobs.single().entry)
         assertThrows<IllegalArgumentException> {
-            IndexRules.apply(prepared, GenreResult.Found(emptyMap()), mapOf(stale.jobs.single() to KeyOutcome.Built(emptyList())))
+            IndexRules.apply(prepared, noGenres(plan), mapOf(stale.jobs.single() to KeyOutcome.Built(emptyList())))
         }
     }
 
@@ -373,12 +374,12 @@ class IndexRulesTest {
             )
         val plan = IndexRules.plan(IndexSnapshot.EMPTY, observation, ENV)
         val seen = KeyObservation("k", 1)
-        val prepared = IndexRules.prepare(plan, readsOf(MaterialRead.Read(labels, seen, seen)), TODAY)
+        val prepared = IndexRules.prepare(plan, readsOf(plan, MaterialRead.Read(labels, seen, seen)), TODAY)
         val snapshot =
             IndexRules
                 .apply(
                     prepared,
-                    GenreResult.Found(emptyMap()),
+                    noGenres(plan),
                     mapOf(prepared.jobs.single() to KeyOutcome.Built(keys)),
                 ).snapshot
         val published = snapshot.packages.getValue(MAPS)
@@ -567,14 +568,161 @@ class IndexRulesTest {
     }
 
     @Test
+    fun `失敗が続いても、一覧に残る入口は前の代わりの表示名を保つ`() {
+        val first = sync(IndexSnapshot.EMPTY, device(MAPS to maps()), faults = Faults(signer = mapOf(MAPS to TRANSIENT))).next
+        assertEquals(mapOf("Main" to "マップ"), first.packages.getValue(MAPS).substitutes)
+        // 再試行で表示名を読む前に失敗しても、パッケージ名に落ちない
+        val second = sync(first, device(MAPS to maps()), faults = Faults(entry = mapOf(MAPS to TRANSIENT))).next.packages.getValue(MAPS)
+        assertEquals("マップ", second.apps().single().label)
+        assertEquals(SubstituteKeys.of("マップ"), second.apps().single().keys)
+    }
+
+    @Test
+    fun `失敗の間に一覧から消えて戻った入口は、その回の表示名の代わりのキーにし、前の提供元のキーを戻さない`() {
+        val two = maps().copy(labels = mapOf("Main" to "マップ", "Alt" to "別"))
+        val first = sync(IndexSnapshot.EMPTY, device(MAPS to two)).next
+        val stuck = Faults(signer = mapOf(MAPS to DETERMINISTIC))
+        val gone = sync(first, device(MAPS to maps().copy(apkKey = "apk-2")), faults = stuck).next
+        assertEquals(
+            setOf("Main"),
+            gone.packages
+                .getValue(MAPS)
+                .current!!
+                .labels.keys,
+        )
+        val back =
+            sync(
+                gone,
+                device(MAPS to two.copy(apkKey = "apk-3", labels = mapOf("Main" to "マップ", "Alt" to "新"))),
+                faults = stuck,
+            ).next
+        val alt =
+            back.packages
+                .getValue(MAPS)
+                .apps()
+                .single { it.id.activityName == "Alt" }
+        assertEquals("新", alt.label)
+        assertEquals(SubstituteKeys.of("新"), alt.keys)
+        // 残り続けた入口は前の値のまま
+        assertEquals(
+            first.packages
+                .getValue(MAPS)
+                .current!!
+                .keysByEntry
+                .getValue("Main"),
+            back.packages
+                .getValue(MAPS)
+                .apps()
+                .single {
+                    it.id.activityName ==
+                        "Main"
+                }.keys,
+        )
+    }
+
+    @Test
+    fun `材料とジャンルの結果は、頼んだ計画の頼みに答えたものだけを受ける`() {
+        val device = device(MAPS to maps())
+        val first = sync(IndexSnapshot.EMPTY, device).next
+        val ja = IndexRules.plan(first, device.observe(), ENV.copy(locale = "ja-JP-x"))
+        val en = IndexRules.plan(first, device.observe(), ENV.copy(locale = "en-US"))
+        val seen = KeyObservation(maps().apkKey, maps().updatedAt)
+        val jaReads = readsOf(ja, MaterialRead.Read(maps().labels, seen, seen, maps().localized, maps().signers))
+        val prepared = IndexRules.prepare(ja, jaReads, TODAY)
+        assertThrows<IllegalArgumentException> { IndexRules.prepare(en, jaReads, TODAY) }
+        val built = prepared.jobs.associateWith { KeyOutcome.Built(fakeKeys(it.entry, ENV)) }
+        assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, noGenres(en), built) }
+        assertThrows<IllegalArgumentException> {
+            IndexRules.apply(
+                prepared,
+                GenreResult.Found(ja.genres, mapOf(appId(PackageKey(0, "other"), "Main") to listOf(GenreId("maps")))),
+                built,
+            )
+        }
+        IndexRules.apply(prepared, noGenres(ja), built)
+    }
+
+    @Test
+    fun `アーカイブ済みの組の頼みに補助の材料の入った結果が来たら止める`() {
+        val archived = maps().copy(archived = true)
+        val plan = IndexRules.plan(IndexSnapshot.EMPTY, device(MAPS to archived).observe(), ENV)
+        assertFalse(plan.reads.getValue(MAPS).auxiliary)
+        val seen = KeyObservation(archived.apkKey, archived.updatedAt)
+        assertThrows<IllegalArgumentException> {
+            IndexRules.prepare(plan, readsOf(plan, MaterialRead.Read(archived.labels, seen, seen, signerDns = listOf("O=X"))), TODAY)
+        }
+        assertThrows<IllegalArgumentException> {
+            IndexRules.prepare(
+                plan,
+                readsOf(plan, MaterialRead.Read(archived.labels, seen, seen, localized = mapOf("Main" to listOf("Maps")))),
+                TODAY,
+            )
+        }
+    }
+
+    @Test
+    fun `材料を頼まなかったプロファイルの読み取りの結果は止める（一覧の状態と削除を別々の判定で決めない）`() {
+        val first = sync(IndexSnapshot.EMPTY, device(WORK_MAIL to mail(), PackageKey(WORK, "gone") to mail())).next
+        val plan = IndexRules.plan(first, device(WORK_MAIL to mail()).observe(), ENV)
+        assertTrue(plan.reads.isEmpty())
+        assertEquals(setOf(PackageKey(WORK, "gone")), plan.removals)
+        assertThrows<IllegalArgumentException> { IndexRules.prepare(plan, mapOf(WORK to ProfileReads(ListingStatus.UNAVAILABLE)), TODAY) }
+    }
+
+    @Test
+    fun `保存した写しの読み戻しは入れ子まで写し取り、検索に使う値と最後の試みが合わない組を止める`() {
+        val built = sync(IndexSnapshot.EMPTY, device(MAPS to maps(), WORK_MAIL to mail())).next
+        val state = built.packages.getValue(MAPS)
+        val wordStarts = mutableListOf(1)
+        val keys = mutableListOf(SubstituteKeys.of("マップ").first().copy(wordStarts = wordStarts))
+        val labels = mutableMapOf("Main" to "マップ")
+        val source = mutableListOf(state.copy(current = state.current!!.copy(labels = labels, keysByEntry = mapOf("Main" to keys))))
+        val restored = IndexSnapshot.restore(source, built.listings)
+        source.clear()
+        labels["Main"] = "別名"
+        wordStarts += 2
+        keys.clear()
+        val kept = restored.packages.getValue(MAPS)
+        assertEquals("マップ", kept.current!!.labels.getValue("Main"))
+        assertEquals(
+            listOf(1),
+            kept.current.keysByEntry
+                .getValue("Main")
+                .single()
+                .wordStarts,
+        )
+        assertEquals(built, IndexSnapshot.restore(built.packages.values, built.listings))
+
+        val broken =
+            listOf(
+                // 成功した試みに検索に使う値がない
+                state.copy(current = null, substitutes = mapOf("Main" to "マップ")),
+                // 成功した試みと検索に使う値の鍵が違う
+                state.copy(current = state.current.copy(materialKey = state.current.materialKey.copy(apkKey = "old"))),
+                // 表示名とキーの入口が違う
+                state.copy(current = state.current.copy(keysByEntry = emptyMap())),
+                // 一覧の入口が検索に使う値にも代わりの表示名にもない
+                state.copy(current = state.current.copy(labels = emptyMap(), keysByEntry = emptyMap())),
+                // 入口が両方にある
+                state.copy(substitutes = mapOf("Main" to "マップ")),
+            )
+        for (bad in broken) assertThrows<IllegalArgumentException> { IndexSnapshot.restore(listOf(bad), emptyMap()) }
+        assertThrows<IllegalArgumentException> { IndexSnapshot.restore(listOf(state, state), emptyMap()) }
+    }
+
+    @Test
     fun `代わりのキーは表示名に NFKC と正規化だけをかけ、空の表示名ならキー 0 個`() {
         assertEquals(listOf("abc"), SubstituteKeys.of("ＡＢＣ").map { it.text.value })
         assertTrue(SubstituteKeys.of("").isEmpty())
         assertTrue(IndexSnapshot.EMPTY.toSearchIndex().size == 0)
     }
 
-    private fun readsOf(read: MaterialRead): Map<Long, ProfileReads> =
-        mapOf(0L to ProfileReads(ListingStatus.COMPLETE, mapOf(MAPS.packageName to read)))
+    private fun readsOf(
+        plan: SyncPlan,
+        read: MaterialRead,
+    ): Map<Long, ProfileReads> = mapOf(0L to ProfileReads(ListingStatus.COMPLETE, mapOf(plan.reads.values.single() to read)))
+
+    private fun noGenres(plan: SyncPlan): GenreResult = GenreResult.Found(plan.genres, emptyMap())
 
     private companion object {
         const val WORK = 10L

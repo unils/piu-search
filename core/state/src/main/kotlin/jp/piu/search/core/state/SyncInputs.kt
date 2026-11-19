@@ -72,37 +72,58 @@ public enum class ReadReason {
 }
 
 /**
- * 組を作り直す組 1 つの頼み。
+ * 組を作り直す組 1 つの頼み（材料の読み取り）。頼んだ計画 1 つに結び付き、別の計画の頼みとは等しくならない。
+ * 言語や環境の違う別の回の読み取りを、今の回の鍵で確定しないため。
  *
+ * @property key 組
  * @property reasons きっかけ
- * @property auxiliary 補助の材料（別の言語の名前・署名）を読むか。アーカイブ済みの組は APK がないので読まない（空で成功とする）
+ * @property auxiliary 補助の材料（別の言語の名前・署名）を読むか。アーカイブ済みの組は APK がないので読まず、空で成功とする
  */
-public data class MaterialJob(
-    val reasons: Set<ReadReason>,
-    val auxiliary: Boolean,
+public class MaterialJob internal constructor(
+    public val key: PackageKey,
+    public val reasons: Set<ReadReason>,
+    public val auxiliary: Boolean,
+    private val round: Any,
 ) {
     /**
      * きっかけが再試行だけか。このときだけ再試行の枠を消費する（また一時的に失敗しても枠を立て直さない）。
      * 鍵の変化や知らせと重なった回は、その変化に対する 1 回目の試みなので、失敗すれば枠を立て直す。
      */
-    val retryOnly: Boolean get() = reasons == setOf(ReadReason.RETRY)
+    public val retryOnly: Boolean get() = reasons == setOf(ReadReason.RETRY)
+
+    override fun equals(other: Any?): Boolean = other is MaterialJob && other.round === round && other.key == key
+
+    override fun hashCode(): Int = 31 * System.identityHashCode(round) + key.hashCode()
+
+    override fun toString(): String = "MaterialJob($key, $reasons, auxiliary=$auxiliary)"
+}
+
+/**
+ * ジャンルの問い合わせの頼み。頼んだ計画 1 つに結び付く（等しさは同じものかどうか）。
+ *
+ * @property targets 問い合わせる入口（一覧を読めたプロファイルのすべての入口）
+ */
+public class GenreRequest internal constructor(
+    public val targets: List<AppId>,
+) {
+    override fun toString(): String = "GenreRequest($targets)"
 }
 
 /**
  * 同期 1 回の計画（[IndexRules.plan] の出力）。前の写し・観測・環境を中に束ね、[IndexRules.prepare] に渡し直す引数をなくす
  * （別の回のものを組み合わせても気づけないため）。
  *
- * @property reads 作り直す組（材料を読み、キーを作る）
+ * @property reads 作り直す組 → 材料の読み取りの頼み。読んだ結果は頼みごとに返す（[ProfileReads.packages]）
  * @property keys 材料は読まずにキーだけを作り直す組（欠けのない組で、キーの鍵だけが違う）
- * @property removals 消す候補の組。一覧と材料の両方が有効なプロファイルの分だけを [IndexRules.apply] が消す
- * @property genreTargets ジャンルを問い合わせる入口（一覧を読めたプロファイルのすべての入口）
+ * @property removals 消す候補の組。当てられるプロファイルの分だけを [IndexRules.apply] が消す
+ * @property genres ジャンルの問い合わせの頼み
  * @property noticeTargets 知らせの番号 → 解決した組。解決できなければ null で、知らせは残る
  */
 public class SyncPlan internal constructor(
     public val reads: Map<PackageKey, MaterialJob>,
     public val keys: Set<PackageKey>,
     public val removals: Set<PackageKey>,
-    public val genreTargets: List<AppId>,
+    public val genres: GenreRequest,
     public val noticeTargets: Map<Long, PackageKey?>,
     internal val previous: IndexSnapshot,
     internal val observation: DeviceObservation,
@@ -114,7 +135,7 @@ public class SyncPlan internal constructor(
      */
     public val hasBuildWork: Boolean get() = reads.isNotEmpty() || keys.isNotEmpty()
 
-    override fun toString(): String = "SyncPlan(reads=$reads, keys=$keys, removals=$removals, noticeTargets=$noticeTargets)"
+    override fun toString(): String = "SyncPlan(reads=${reads.values}, keys=$keys, removals=$removals, noticeTargets=$noticeTargets)"
 }
 
 /**
@@ -139,8 +160,8 @@ public sealed interface MaterialRead {
      * @property labels 入口ごとの表示名。一覧のすべての入口の分がいる（取れなかったなら [Failed] にする）
      * @property before 読む前の鍵
      * @property after 読んだ後の鍵
-     * @property localized 入口ごとの別の言語の名前
-     * @property signerDns 署名の DN
+     * @property localized 入口ごとの別の言語の名前。補助の材料を頼まれなかった（アーカイブ済み）なら空
+     * @property signerDns 署名の DN。補助の材料を頼まれなかったなら空
      */
     public data class Read(
         val labels: Map<String, String>,
@@ -155,7 +176,7 @@ public sealed interface MaterialRead {
      *
      * @property stage 失敗した段（[Stage.KEYS] 以外）
      * @property failure 失敗
-     * @property labels 失敗の前に取れた表示名。前の値のない入口の代わりのキーにだけ使う
+     * @property labels 失敗の前に取れた表示名。検索に使う値のない入口の代わりの表示名にだけ使う
      */
     public data class Failed(
         val stage: Stage,
@@ -165,39 +186,46 @@ public sealed interface MaterialRead {
 }
 
 /**
- * プロファイル 1 つの材料の読み取りの結果。
+ * プロファイル 1 つの材料の読み取りの結果。計画が材料を頼んだプロファイルの分だけを返す（ほかのプロファイルの結果は受けない）。
  *
  * @property status 読み終えた後に確かめたプロファイルの状態。[ListingStatus.COMPLETE] でなければ結果を使わない
  *   （一時停止を正常な空にしないため）。一時停止などの読めない状態と、問い合わせの失敗を分ける
- * @property packages パッケージ名 → 結果
+ * @property packages 頼み → 結果。[ListingStatus.COMPLETE] なら、このプロファイルの頼みの分がちょうどいる
  * @property failure [ListingStatus.FAILED] の理由
  */
 public data class ProfileReads(
     val status: ListingStatus,
-    val packages: Map<String, MaterialRead> = emptyMap(),
+    val packages: Map<MaterialJob, MaterialRead> = emptyMap(),
     val failure: String? = null,
 ) {
     /** 結果を使えるか。 */
     val complete: Boolean get() = status == ListingStatus.COMPLETE
 }
 
-/** ジャンルの問い合わせの結果。「成功した空」と「失敗」を分ける。 */
+/** ジャンルの問い合わせの結果。「成功した空」と「失敗」を分け、どちらも計画の頼み（[SyncPlan.genres]）に結び付ける。 */
 public sealed interface GenreResult {
+    /** 答えた頼み。 */
+    public val request: GenreRequest
+
     /**
      * 問い合わせが成功した。
      *
-     * @property byEntry 入口 → ジャンル。ない入口はジャンルなし
+     * @property request 答えた頼み
+     * @property byEntry 入口 → ジャンル。ない入口はジャンルなし。頼みの入口のほかは入れない
      */
     public data class Found(
+        override val request: GenreRequest,
         val byEntry: Map<AppId, List<GenreId>>,
     ) : GenreResult
 
     /**
      * 問い合わせが失敗した。既存のジャンルを保つ。
      *
+     * @property request 答えた頼み
      * @property cause 理由
      */
     public data class Failed(
+        override val request: GenreRequest,
         val cause: String,
     ) : GenreResult
 }

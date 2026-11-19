@@ -125,13 +125,16 @@ internal fun sync(
                 ?: KeyOutcome.Built(fakeKeys(job.entry, env))
         }
     val genres =
-        faults.genre?.let { GenreResult.Failed(it.cause) } ?: GenreResult.Found(
-            plan.genreTargets
+        faults.genre?.let { GenreResult.Failed(plan.genres, it.cause) } ?: GenreResult.Found(
+            plan.genres,
+            plan.genres.targets
                 .associateWith { id ->
                     device.pkg(PackageKey(id.profileSerial, id.packageName)).genres[id.activityName].orEmpty()
                 }.filterValues { it.isNotEmpty() },
         )
     val outcome = IndexRules.apply(prepared, genres, built)
+    // 規則が作った写しは、保存して読み戻しても同じで、検索に使う値と最後の試みの整合を満たす
+    check(IndexSnapshot.restore(outcome.snapshot.packages.values, outcome.snapshot.listings) == outcome.snapshot)
     val jobs = prepared.jobs.groupBy { PackageKey(it.entry.id.profileSerial, it.entry.id.packageName) }
     return Round(previous, observation, plan, reads, jobs, built, genres, outcome)
 }
@@ -147,7 +150,7 @@ private fun read(
         val profile = device.profiles.getValue(serial)
         ProfileReads(
             if (profile.readsComplete) ListingStatus.COMPLETE else ListingStatus.UNAVAILABLE,
-            jobs.associate { (key, job) -> key.packageName to readPackage(device.pkg(key), key, job.auxiliary, faults) },
+            jobs.associate { (key, job) -> job to readPackage(device.pkg(key), key, job.auxiliary, faults) },
         )
     }
 

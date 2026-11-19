@@ -4,6 +4,7 @@ package jp.piu.search.core.state
 
 import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.GenreId
+import jp.piu.search.core.search.SearchKeyKind
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 
@@ -79,6 +80,22 @@ class IndexLawsTest {
                     .filter { it.key.profileSerial == serial }
                     .associate { it.key.packageName to it.apps().mapTo(HashSet()) { app -> app.id.activityName } }
             law(listed == shown) { "法則 2: プロファイル $serial の一覧 $listed と索引 $shown が違う" }
+        }
+        // 法則 2 の続き: 入口ごとの表示名とキーが、模型の検索に使う値（なければ代わりの表示名）から作ったものと等しい。
+        // 代わりの表示名の入口は表示名のキーだけで、提供元などのキーを持たない
+        for ((key, state) in expected.packages) {
+            for (app in indexed.getValue(key).apps()) {
+                val entry = app.id.activityName
+                val label = state.current?.labels?.get(entry) ?: state.substitutes.getValue(entry)
+                val keys = state.current?.keysByEntry?.get(entry) ?: SubstituteKeys.of(label)
+                law(app.label == label) { "法則 2: $key/$entry の表示名 ${app.label} が $label でない" }
+                law(app.keys.filter { it.kind != SearchKeyKind.GENRE } == keys) { "法則 2: $key/$entry のキーが違う" }
+                if (state.current?.keysByEntry?.containsKey(entry) != true) {
+                    law(
+                        app.keys.all { it.kind == SearchKeyKind.NAME || it.kind == SearchKeyKind.GENRE },
+                    ) { "法則 2: 代わりの入口 $key/$entry に名前のほかのキー" }
+                }
+            }
         }
         // 法則 3: 有効でない（消えてもいない）プロファイルの組は、前後で同じ。新しく入った組がないことも見るため、プロファイルごとの組の全体を比べる
         val removed = round.observation.removedProfiles
@@ -292,17 +309,40 @@ class IndexLawsTest {
                     env.bootCount,
                     issue(failure, prev, env, today),
                     retry = failure?.second?.category == IssueCategory.TRANSIENT && !retryOnly,
-                    labels =
-                        if (failure == null ||
-                            (failure.first == Stage.ENTRY && failure.second.cause != Failure.CHANGED_DURING_READ)
-                        ) {
-                            emptyMap()
-                        } else {
-                            pkg.labels
-                        },
                 )
-            val current = if (failure == null) currentFromDevice(key, pkg, env) else prev?.current
-            return PackageState(key, pkg.observation, current, attempt, emptyMap())
+            if (failure ==
+                null
+            ) {
+                return PackageState(key, pkg.observation, currentFromDevice(key, pkg, env), emptyMap(), attempt, emptyMap())
+            }
+            // 失敗: 前の値から一覧にない入口を落とし、残りの入口は代わりの表示名（この回の表示名 → 前の代わりの表示名 → パッケージ名）
+            val entries = pkg.labels.keys
+            val current =
+                prev?.current?.let { c ->
+                    c.copy(
+                        labels = c.labels.filterKeys { it in entries },
+                        keysByEntry =
+                            c.keysByEntry.filterKeys {
+                                it in
+                                    entries
+                            },
+                    )
+                }
+            val readLabels =
+                if (failure.first == Stage.ENTRY &&
+                    failure.second.cause != Failure.CHANGED_DURING_READ
+                ) {
+                    emptyMap()
+                } else {
+                    pkg.labels
+                }
+            val substitutes =
+                (entries - current?.labels?.keys.orEmpty()).associateWith {
+                    readLabels[it] ?: prev?.substitutes?.get(
+                        it,
+                    ) ?: key.packageName
+                }
+            return PackageState(key, pkg.observation, current, substitutes, attempt, emptyMap())
         }
 
         @Suppress("LongParameterList")
@@ -335,9 +375,8 @@ class IndexLawsTest {
                     derivedKey = derivedKey(env),
                     issue = issue(failure, prev, env, today),
                     retry = failure?.second?.category == IssueCategory.TRANSIENT,
-                    labels = emptyMap(),
                 )
-            return PackageState(key, pkg.observation, current, attempt, emptyMap())
+            return PackageState(key, pkg.observation, current, prev.substitutes, attempt, emptyMap())
         }
 
         private fun issue(
@@ -404,7 +443,7 @@ class IndexLawsTest {
 
         fun replaced(change: (FakePackage) -> FakePackage) =
             pkg?.let { device.with(serial, profile.copy(packages = profile.packages + (name to change(it)))) } ?: device
-        return when (random.nextInt(12)) {
+        return when (random.nextInt(13)) {
             0 -> device.with(serial, profile.copy(packages = profile.packages + (name to randomPackage(random))))
 
             1 -> device.with(serial, profile.copy(packages = profile.packages - name))
@@ -425,6 +464,9 @@ class IndexLawsTest {
 
             // 鍵の成分は変えずに材料だけを変える（鍵で拾えない変化。知らせか再試行でしか読み直さない）
             9 -> replaced { it.copy(signers = listOf("O=S${random.nextInt(3)}")) }
+
+            // 入口を 1 つ減らす（失敗の間に消えて戻る入口を作る）
+            10 -> replaced { p -> if (p.labels.size > 1) p.copy(labels = p.labels - p.labels.keys.random(random)) else p }
 
             else -> device
         }

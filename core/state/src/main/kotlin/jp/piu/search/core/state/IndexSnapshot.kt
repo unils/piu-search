@@ -220,7 +220,6 @@ public data class Current(
  * @property bootCount 最後に材料を試したときの再起動の回数
  * @property issue 最後の試みの欠け。成功なら null
  * @property retry 次の同期で、組を 1 回だけ作り直すか（一時的な失敗で立つ再試行の枠）
- * @property labels 失敗した試みで取れた表示名。[Current] にない入口の代わりのキーと表示に使う
  */
 public data class Attempt(
     val materialKey: MaterialKey,
@@ -228,15 +227,19 @@ public data class Attempt(
     val bootCount: Int?,
     val issue: Issue?,
     val retry: Boolean,
-    val labels: Map<String, String> = emptyMap(),
 )
 
 /**
- * 組 1 つの状態。
+ * 組 1 つの状態。検索に使うのは [current] と [substitutes] で、[attempt] は次に読み直すかの判断と報告にだけ使う。
+ *
+ * 一覧の入口は、[current] が持つ入口か [substitutes] の入口のどちらか一方に必ず入る（[IndexSnapshot.restore] が確かめる）。
  *
  * @property key 組
  * @property observed 最後に当てた観測。入口の集合は、成否によらず今の一覧に合わせる
- * @property current 検索に使う値。まだ一度も成功していなければ null で、入口は代わりのキーで出す
+ * @property current 最後に全部が成功した回の値。失敗した回は前の値を保ち、一覧から消えた入口だけを落とす
+ *   （消えた入口が後で戻ったとき、前の APK の提供元などのキーを戻さないため）。一度も成功していなければ null
+ * @property substitutes [current] にない入口 → 代わりの表示名。失敗した回の試みで取れた表示名、なければ一覧に残り続けた入口の前の値、
+ *   それもなければパッケージ名。キーは表示名から作る（[SubstituteKeys]）
  * @property attempt 最後の試み
  * @property genres 入口ごとのジャンル。同期のたびに問い合わせる（APK によらず変わるため）
  */
@@ -244,23 +247,57 @@ public data class PackageState(
     val key: PackageKey,
     val observed: PackageObservation,
     val current: Current?,
+    val substitutes: Map<String, String>,
     val attempt: Attempt,
     val genres: Map<String, List<GenreId>>,
 ) {
-    /**
-     * 入口ごとの照合の材料。[current] にない入口（失敗した回に増えた入口・一度も成功していない組）は、
-     * 試みで取れた表示名（なければパッケージ名）の代わりのキーで出す。代わりのキーは保存せず、ここで作る。
-     */
+    /** 入口ごとの照合の材料。代わりの表示名の入口は、表示名の代わりのキーで出す（保存せず、ここで作る）。 */
     public fun apps(): List<IndexedApp> =
         observed.entries.sorted().map { entry ->
-            val label = current?.labels?.get(entry) ?: attempt.labels[entry] ?: key.packageName
+            val built = current?.keysByEntry?.get(entry)
+            val label = current?.labels?.get(entry) ?: substitutes.getValue(entry)
             IndexedApp(
                 AppId(key.packageName, entry, key.profileSerial),
                 label,
-                (current?.keysByEntry?.get(entry) ?: SubstituteKeys.orEmpty(label)) +
+                (built ?: SubstituteKeys.orEmpty(label)) +
                     genres[entry].orEmpty().map { SearchKey(NormalizedText(it.value), SearchKeyKind.GENRE) },
             )
         }
+
+    // 入れ子まで写し取る（呼ぶ側の可変の集まりを公開した写しに持ち込まない）
+    internal fun frozen(): PackageState =
+        PackageState(
+            key,
+            observed.copy(entries = observed.entries.toSet()),
+            current?.let { c ->
+                Current(
+                    c.materialKey.copy(entries = c.materialKey.entries.toSet()),
+                    c.derivedKey,
+                    c.labels.toMap(),
+                    c.localized.mapValues { it.value.toList() },
+                    c.signerDns.toList(),
+                    c.keysByEntry.mapValues { (_, keys) -> keys.map { it.copy(wordStarts = it.wordStarts.toList()) } },
+                )
+            },
+            substitutes.toMap(),
+            attempt.copy(materialKey = attempt.materialKey.copy(entries = attempt.materialKey.entries.toSet())),
+            genres.mapValues { it.value.toList() },
+        )
+
+    // 検索に使う値と最後の試みの整合。保存した写しの読み戻しで、壊れた組み合わせを検索に出さないため
+    internal fun requireConsistent() {
+        val c = current
+        val served = c?.labels?.keys.orEmpty()
+        require(c == null || c.labels.keys == c.keysByEntry.keys) { "表示名とキーの入口が違う: $key" }
+        require(served.none { it in substitutes }) { "入口が検索に使う値と代わりの表示名の両方にある: $key" }
+        require(served + substitutes.keys == observed.entries) { "一覧の入口が検索に使う値と代わりの表示名に合わない: $key" }
+        require(attempt.materialKey.entries == observed.entries) { "最後の試みの鍵の入口が一覧と違う: $key" }
+        if (attempt.issue == null) {
+            require(c != null && c.materialKey == attempt.materialKey && c.derivedKey == attempt.derivedKey) {
+                "成功した試みに対応する検索に使う値がない: $key"
+            }
+        }
+    }
 }
 
 /** 一覧の読み取りの状態。空の一覧と、読めなかった一覧を取り違えないため。 */
@@ -276,14 +313,14 @@ public enum class ListingStatus {
 }
 
 /**
- * 索引の写し（作った後は変えない）。
+ * 索引の写し（作った後は変えない）。作るのは同期の規則（[IndexRules.apply]）か、保存した写しの読み戻し（[restore]）だけ。
  *
  * @property packages 組ごとの状態
  * @property listings プロファイルごとの、最後の一覧の状態
  */
-public data class IndexSnapshot(
-    val packages: Map<PackageKey, PackageState>,
-    val listings: Map<Long, ListingStatus> = emptyMap(),
+public class IndexSnapshot internal constructor(
+    public val packages: Map<PackageKey, PackageState>,
+    public val listings: Map<Long, ListingStatus> = emptyMap(),
 ) {
     /** 照合の材料。組と入口の名前の順。 */
     public fun apps(): List<IndexedApp> =
@@ -294,9 +331,32 @@ public data class IndexSnapshot(
     /** 照合に使う索引。 */
     public fun toSearchIndex(): SearchIndex = apps().let { if (it.isEmpty()) SearchIndex.EMPTY else SearchIndex(it) }
 
-    /** 定数。 */
+    override fun equals(other: Any?): Boolean = other is IndexSnapshot && packages == other.packages && listings == other.listings
+
+    override fun hashCode(): Int = 31 * packages.hashCode() + listings.hashCode()
+
+    override fun toString(): String = "IndexSnapshot(packages=$packages, listings=$listings)"
+
+    /** 作り方と定数。 */
     public companion object {
         /** 何もない写し。保存した索引が読めないときもここから作り直す。 */
         public val EMPTY: IndexSnapshot = IndexSnapshot(emptyMap())
+
+        /**
+         * 保存した写しの読み戻し。組を入れ子まで写し取り（呼ぶ側が組み立てに使った集まりを後で変えても、公開した写しが変わらないため）、
+         * 組ごとに検索に使う値と最後の試みの整合を確かめる。合わなければ [IllegalArgumentException] で止め、呼ぶ側は空から作り直す。
+         *
+         * @param packages 組の状態
+         * @param listings プロファイルごとの最後の一覧の状態
+         */
+        public fun restore(
+            packages: Collection<PackageState>,
+            listings: Map<Long, ListingStatus>,
+        ): IndexSnapshot {
+            val frozen = packages.map { it.frozen() }
+            frozen.forEach { it.requireConsistent() }
+            require(frozen.map { it.key }.toSet().size == frozen.size) { "同じ組が 2 つある" }
+            return IndexSnapshot(frozen.associateBy { it.key }, listings.toMap())
+        }
     }
 }
