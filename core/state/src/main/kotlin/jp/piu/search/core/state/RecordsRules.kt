@@ -35,14 +35,17 @@ public sealed interface RecordsLoad {
 /**
  * 記録の側が知っているプロファイル。
  *
- * @property confirmed 最後に確認した、存在するプロファイルの集合（その後に書いた番号を含む）。まだ確認できていなければ null（空の集合とは区別する）
+ * @property confirmed 最後に OS に確認した、存在するプロファイルの集合。まだ確認できていなければ null（空の集合とは区別する）
  * @property removed 存在しないと確認した番号。問い合わせが失敗しても忘れない
  * @property pendingPrune 記録から消すべきで、まだ消せていない番号（終わっていない整理）
+ * @property writtenSinceCheck 最後の確認の後に書いた、[confirmed] にない番号。読み直したときに「確認より前の行」とみなして消さないためだけに使い、
+ *   存在の確認にはしない（問い合わせが失敗した間に書いた番号も、次の頼みで問い合わせ直すため）。次の確認で空にする
  */
 public data class ProfileKnowledge(
     val confirmed: Set<Long>? = null,
     val removed: Set<Long> = emptySet(),
     val pendingPrune: Set<Long> = emptySet(),
+    val writtenSinceCheck: Set<Long> = emptySet(),
 ) {
     /**
      * [serial] への書き込みを受けるか。拒むのは削除を確認した番号だけ。
@@ -239,17 +242,18 @@ public object RecordsRules {
     /**
      * 読み込みが成功した。確認済みの集合にない番号の記録を、整理の対象にする。
      *
-     * @param storedSerials 表から直に数えた、行のある番号。写しに見えない行の番号も整理するため、写しの番号と別に渡す
+     * @param storedSerials 同じ読み込みのトランザクションで、両方の表から直に数えた行のある番号。写しに見えない行の番号も整理するため、
+     *   写しの番号と別に必ず渡す（写しの番号で代えると、長すぎる語の学習の行だけを持つ番号を見落とす）
      */
     public fun loaded(
         state: RecordsState,
         records: UserRecords,
-        storedSerials: Set<Long> = records.serials,
+        storedSerials: Set<Long>,
     ): RecordsState {
-        // 確認より後に書いた番号は集合に入っているので、集合にない番号の行は確認より前の行で、消えたプロファイルの行
+        // 確認より後に書いた番号を除けば、集合にない番号の行は確認より前の行で、消えたプロファイルの行
         val missing =
             state.profiles.confirmed
-                ?.let { records.serials + storedSerials - it }
+                ?.let { records.serials + storedSerials - it - state.profiles.writtenSinceCheck }
                 .orEmpty()
         return state.copy(load = RecordsLoad.Ready(records), storedSerials = storedSerials).withRemoved(missing)
     }
@@ -275,9 +279,10 @@ public object RecordsRules {
         asked: Set<Long> = emptySet(),
         storedSerials: Set<Long> = state.storedSerials,
     ): RecordsState {
-        val known = state.profiles.confirmed.orEmpty() + state.records?.serials.orEmpty() + storedSerials + asked
+        val profiles = state.profiles
+        val known = profiles.confirmed.orEmpty() + profiles.writtenSinceCheck + state.records?.serials.orEmpty() + storedSerials + asked
         return state
-            .copy(profiles = state.profiles.copy(confirmed = existing), storedSerials = storedSerials)
+            .copy(profiles = profiles.copy(confirmed = existing, writtenSinceCheck = emptySet()), storedSerials = storedSerials)
             .withRemoved(known - existing)
     }
 
@@ -489,12 +494,13 @@ public object RecordsRules {
     ): RecordsChange {
         val write = RecordsWrite.diff(old, next)
         if (write.isEmpty) return RecordsChange(state, null, RecordsResult.Success(skipped = skipped))
-        // 確認した集合にない新しい番号に書いたら、その番号を存在するものとして覚える。後で読み直したときに、
-        // その行を「確認より前の行」とみなして消さないため
-        val confirmed = state.profiles.confirmed?.let { it + next.serials }
+        // 確認した集合にない新しい番号に書いたら覚える。後で読み直したときに、その行を「確認より前の行」とみなして消さないため。
+        // 確認済みの集合には入れない（存在を OS に確かめたわけではないので、次の頼みでも問い合わせ直す）
+        val profiles = state.profiles
+        val written = profiles.confirmed?.let { profiles.writtenSinceCheck + (next.serials - it) }.orEmpty()
         val changed =
             state
-                .copy(load = RecordsLoad.Ready(next), profiles = state.profiles.copy(confirmed = confirmed))
+                .copy(load = RecordsLoad.Ready(next), profiles = profiles.copy(writtenSinceCheck = written))
                 .invalidate { old.learned.records[it.pair] != next.learned.records[it.pair] }
         return RecordsChange(changed, write, RecordsResult.Success(skipped = skipped))
     }

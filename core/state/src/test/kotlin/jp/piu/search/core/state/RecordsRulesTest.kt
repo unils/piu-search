@@ -30,7 +30,7 @@ class RecordsRulesTest {
             assertEquals(RecordsResult.Failure(RecordsFailure.NOT_LOADED), change.result)
         }
         // 次の頼みで読み直せば受ける
-        val ready = RecordsRules.loaded(failed, UserRecords.EMPTY)
+        val ready = RecordsRules.loaded(failed, UserRecords.EMPTY, emptySet())
         assertTrue(RecordsRules.change(ready, RecordsRequest.Suppress(pair("てんき", WEATHER), NOW)).write != null)
     }
 
@@ -178,6 +178,35 @@ class RecordsRulesTest {
     }
 
     @Test
+    fun `問い合わせに失敗した間に書いた番号も、次の頼みで問い合わせ直し、不在なら拒む`() {
+        val work = AppId("jp.example.mail", "Inbox", WORK)
+        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val first = open(launched = work)
+        assertEquals(setOf(WORK), RecordsRules.unconfirmed(confirmed, first))
+        // 問い合わせが失敗したので確認を変えずに書く（分からない間は拒まない）
+        val written = apply(confirmed, first)
+        assertEquals(setOf(0L), written.profiles.confirmed)
+        val second = open(launched = work, at = NOW + 1)
+        assertEquals(setOf(WORK), RecordsRules.unconfirmed(written, second))
+        val rechecked = RecordsRules.profilesConfirmed(written, setOf(0), asked = RecordsRules.unconfirmed(written, second))
+        assertNull(RecordsRules.change(rechecked, second).write)
+        assertEquals(setOf(WORK), rechecked.profiles.pendingPrune)
+    }
+
+    @Test
+    fun `読み込んだ起動の記録の Map を後で変えても、写しも次の書き込みも変わらない`() {
+        val source = mutableMapOf(WEATHER to LaunchRecord(1, NOW))
+        val state = RecordsRules.loaded(RecordsState(), UserRecords(LearnedMemory.EMPTY, LaunchHistory(source)), setOf(0))
+        source[WEATHER] = LaunchRecord(9, NOW)
+        source[PAY] = LaunchRecord(1, NOW)
+        assertEquals(mapOf(WEATHER to LaunchRecord(1, NOW)), state.records!!.launches.records)
+        assertEquals(
+            mapOf(WEATHER to LaunchRecord(2, NOW + 1)),
+            RecordsRules.change(state, open(launched = WEATHER, at = NOW + 1)).write!!.launchPut,
+        )
+    }
+
+    @Test
     fun `写しに見えない行だけを持つ番号も、表の番号から整理の対象にする`() {
         val hidden = LearnedRecord(NormalizedText("あ".repeat(80)), AppId("jp.example.mail", "Inbox", WORK), 1, NOW, rescued = false)
         val records = UserRecords(LearnedMemory(listOf(hidden)), LaunchHistory.EMPTY)
@@ -196,7 +225,7 @@ class RecordsRulesTest {
         val work = AppId("jp.example.mail", "Inbox", 12)
         val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
         val written = apply(confirmed, open(launched = work))
-        val reloaded = RecordsRules.loaded(RecordsRules.loadFailed(written, "io"), written.records!!)
+        val reloaded = RecordsRules.loaded(RecordsRules.loadFailed(written, "io"), written.records!!, written.records!!.serials)
         assertTrue(reloaded.profiles.removed.isEmpty())
         assertEquals(setOf(WORK + 2), reloaded.records!!.serials)
     }
@@ -224,7 +253,7 @@ class RecordsRulesTest {
         val records = UserRecords(LearnedMemory.EMPTY, LaunchHistory(mapOf(work to LaunchRecord(1, NOW))))
         val confirmed = RecordsRules.profilesConfirmed(RecordsState(), setOf(0))
         assertNull(RecordsRules.pruneChange(confirmed))
-        val loaded = RecordsRules.loaded(confirmed, records)
+        val loaded = RecordsRules.loaded(confirmed, records, records.serials)
         assertEquals(setOf(WORK), loaded.profiles.pendingPrune)
         assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), RecordsRules.pruneChange(loaded)!!.write)
     }
@@ -267,7 +296,8 @@ class RecordsRulesTest {
         request: RecordsRequest,
     ): RecordsState = RecordsRules.commit(state, RecordsRules.change(state, request), written = true)
 
-    private fun ready(records: UserRecords = UserRecords.EMPTY): RecordsState = RecordsRules.loaded(RecordsState(), records)
+    private fun ready(records: UserRecords = UserRecords.EMPTY): RecordsState =
+        RecordsRules.loaded(RecordsState(), records, records.serials)
 
     private fun open(
         selection: LearnedPair? = null,

@@ -14,13 +14,19 @@ import jp.piu.search.core.search.LearnedRecord
  *
  * 等しさは中身（学習の組ごとの記録と起動の記録）で比べる。[LearnedMemory] と [LaunchHistory] は中身で比べないため。
  *
- * @property learned 学習
- * @property launches 起動の記録
+ * 作るときに起動の記録の Map を写し取る。読み込みの変換が作った可変の Map を後で変えても、写しが変わらないようにするため
+ * （学習は [LearnedMemory] が記録から自分の Map を作るので、そのままでよい）。
  */
 public class UserRecords(
-    public val learned: LearnedMemory,
-    public val launches: LaunchHistory,
+    learned: LearnedMemory,
+    launches: LaunchHistory,
 ) {
+    /** 学習。 */
+    public val learned: LearnedMemory = learned
+
+    /** 起動の記録。 */
+    public val launches: LaunchHistory = LaunchHistory(launches.records.toMap())
+
     /** 記録に出てくるプロファイルのシリアル番号。 */
     public val serials: Set<Long>
         get() = learned.records.keys.mapTo(HashSet()) { it.app.profileSerial } + launches.records.keys.map { it.profileSerial }

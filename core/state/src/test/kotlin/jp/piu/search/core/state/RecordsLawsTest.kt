@@ -24,6 +24,15 @@ class RecordsLawsTest {
     fun `法則 6 - 書き込みに失敗した頼みは、写しも DB も変えない`() {
         forAllSeeds("記録の法則", SEEDS) { random, log ->
             val db = FakeDb()
+            // 回数が上限の救済の行。同じ時刻の後の選択でも行の値が変わらないので、取り消しの無効化を値の差だけに頼ると見落とす
+            db.apply(
+                RecordsWrite(
+                    learnedPut =
+                        listOf(
+                            LearnedRecord(NormalizedText("てんき"), AppId(PACKAGES[0], "Main", 0), Int.MAX_VALUE, NOW, rescued = true),
+                        ),
+                ),
+            )
             var state = RecordsState()
             val existing = SERIALS.toMutableSet()
             repeat(STEPS) { step ->
@@ -33,7 +42,7 @@ class RecordsLawsTest {
                             if (random.nextInt(4) == 0) {
                                 RecordsRules.loadFailed(state, "io")
                             } else {
-                                RecordsRules.loaded(state, db.records())
+                                RecordsRules.loaded(state, db.records(), db.serials())
                             }
                         log += "step $step: 読み込み → ${state.load::class.simpleName}"
                     }
@@ -70,7 +79,9 @@ class RecordsLawsTest {
                                     w.launchPut.keys.map { it.profileSerial }
                             }
                         law(puts.orEmpty().none { it in absent }) { "問い合わせ直して不在と分かった番号に書く: $request" }
+                        val before = state
                         state = commit(random, db, state, change, log, "step $step: $request")
+                        if (request is RecordsRequest.Open && state !== before) checkOpen(before, state, request)
                     }
                 }
                 state.records?.let { records ->
@@ -80,6 +91,33 @@ class RecordsLawsTest {
                 law(state.undo.values.none { it.notice.pair.app.profileSerial in removed }) { "消えたプロファイルの取り消しが残った" }
             }
         }
+    }
+
+    // 開いた頼みを当てた後: 同じ組を後で保存した取り消しは、行の値が変わらなくても無効になる。
+    // 使った学習のキー（救済になったことがあり、印のない組）は、最後に使った時刻が進む
+    private fun checkOpen(
+        before: RecordsState,
+        after: RecordsState,
+        request: RecordsRequest.Open,
+    ) {
+        val accepts = before.profiles::accepts
+        val decision = request.decision
+        val saved = (listOfNotNull(decision.selection, decision.used) + decision.rescues).filter { accepts(it.app.profileSerial) }.toSet()
+        for ((id, material) in before.undo) {
+            if (material.notice.pair in saved) law(!after.canUndo(id)) { "後で同じ組を保存したのに、取り消し $id が有効なまま: $request" }
+        }
+        val used = decision.used?.takeIf { accepts(it.app.profileSerial) } ?: return
+        val old =
+            before.records
+                ?.learned
+                ?.records
+                ?.get(used) ?: return
+        if (!old.rescued || old.suppressed) return
+        val now =
+            after.records!!
+                .learned.records
+                .getValue(used)
+        law(now.lastUsedAt >= request.at) { "使った学習のキー $used の時刻が進まない: $request" }
     }
 
     private fun commit(
@@ -116,12 +154,14 @@ class RecordsLawsTest {
         random: Random,
         state: RecordsState,
     ): RecordsRequest {
-        val at = NOW + random.nextLong(0, 400) * DAY_HOURS
+        // 同じ時刻が続く場面を作るため、半分は NOW にする
+        val at = if (random.nextBoolean()) NOW else NOW + random.nextLong(0, 400) * DAY_HOURS
         return when (random.nextInt(8)) {
             0, 1 -> {
                 val rescues = List(random.nextInt(3)) { randomPair(random) }
                 val selection = if (random.nextBoolean()) randomPair(random) else null
-                RecordsRequest.Open(LearningDecision(selection, rescues), randomApp(random).takeIf { random.nextBoolean() }, at)
+                val used = if (random.nextBoolean()) randomPair(random) else null
+                RecordsRequest.Open(LearningDecision(selection, rescues, used), randomApp(random).takeIf { random.nextBoolean() }, at)
             }
 
             2 -> {
@@ -174,6 +214,8 @@ class RecordsLawsTest {
             write.learnedPut.forEach { learned[it.pair] = it }
             launches.putAll(write.launchPut)
         }
+
+        fun serials(): Set<Long> = learned.keys.mapTo(HashSet()) { it.app.profileSerial } + launches.keys.map { it.profileSerial }
 
         fun records(): UserRecords = UserRecords(LearnedMemory(learned.values.toList()), LaunchHistory(launches.toMap()))
     }
