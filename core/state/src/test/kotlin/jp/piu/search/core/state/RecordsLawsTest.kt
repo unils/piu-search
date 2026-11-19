@@ -17,7 +17,11 @@ import kotlin.random.Random
  * 法則 6（記録は、DB に書けたときだけ変わる）を、乱数の頼みと書き込みの失敗の列で確かめる。
  *
  * 純粋な層では DB の代わりに、書き込みの中身を当てる表（[FakeDb]）を置き、成功した書き込みの後に表と写しが一致することを確かめる。種ごとに [STEPS] 個の出来事
- * （頼み・読み込みの成否・プロファイルの確認・整理）を作り、書き込みは [WRITE_FAILURE_RATE]% で失敗させる。
+ * （頼み・読み込みの成否・プロファイルの増減・確認の配達・整理）を作り、書き込みは [WRITE_FAILURE_RATE]% で失敗させる。
+ *
+ * プロファイルの確認は、問い合わせのたびに番号を増やして列に積み、順不同で配る（書き手の列に届く順は問い合わせた順と限らない）。
+ * どの順で届いても、存在するプロファイルを削除済みにしないことを確かめる。期待値は、規則の出力ではなく頼みの中身から直に決める
+ * （抑制した行の印・整理した番号の行の不在・古い取り消しで表が変わらないこと）。
  */
 class RecordsLawsTest {
     @Test
@@ -34,9 +38,12 @@ class RecordsLawsTest {
                 ),
             )
             var state = RecordsState()
-            val existing = SERIALS.toMutableSet()
+            val existing = INITIAL.toMutableSet()
+            val created = INITIAL.toMutableSet()
+            var seq = 0L
+            val queued = ArrayList<Pair<Long, Set<Long>>>()
             repeat(STEPS) { step ->
-                when (random.nextInt(10)) {
+                when (random.nextInt(12)) {
                     0 -> {
                         state =
                             if (random.nextInt(4) == 0) {
@@ -48,28 +55,57 @@ class RecordsLawsTest {
                     }
 
                     1 -> {
-                        // 消えたプロファイルは戻らない（シリアル番号は使い回されない）
-                        if (random.nextInt(3) == 0) existing -= SERIALS.filter { it != 0L }.random(random)
-                        state = RecordsRules.profilesConfirmed(state, existing.toSet())
-                        log += "step $step: 確認 $existing"
+                        // プロファイルの増減。消えたプロファイルは戻らず、番号は使い回されない
+                        if (random.nextBoolean()) {
+                            existing.filter { it != 0L }.randomOrNull(random)?.let { existing -= it }
+                        } else {
+                            (SERIALS - created).firstOrNull()?.let {
+                                existing += it
+                                created += it
+                            }
+                        }
+                        log += "step $step: 増減 → $existing"
                     }
 
                     2 -> {
+                        // 集合の通知: 今の集合を問い合わせて列に積む（配るのは後）
+                        queued += ++seq to existing.toSet()
+                        log += "step $step: 問い合わせ $seq → $existing"
+                    }
+
+                    3 -> {
+                        if (queued.isNotEmpty()) {
+                            val (n, seen) = queued.removeAt(random.nextInt(queued.size))
+                            state = RecordsRules.profilesConfirmed(state, seen, n)
+                            log += "step $step: 確認の配達 $n $seen"
+                        }
+                    }
+
+                    4 -> {
                         RecordsRules.pruneChange(state)?.let { change ->
-                            state = commit(random, db, state, change, log, "step $step: 整理")
+                            // 期待する番号は書き込みからでなく、整理の前の状態から取る
+                            val targets = state.profiles.pendingPrune
+                            state =
+                                commit(random, db, state, change, log, "step $step: 整理") { written ->
+                                    if (written) law(db.serials().none { it in targets }) { "整理した番号 $targets の行が表に残った" }
+                                }
                         }
                     }
 
                     else -> {
-                        val request = randomRequest(random, state)
+                        val request = randomRequest(random, state, created)
                         // 書き手の手順: 確認済みでない番号があれば、問い合わせ直してから計算する（問い合わせは 1/4 で失敗し、最後の確認を保つ）
                         val asked = RecordsRules.unconfirmed(state, request)
                         val absent =
-                            if (asked.isNotEmpty() && random.nextInt(4) > 0) {
-                                state = RecordsRules.profilesConfirmed(state, existing.toSet(), asked)
-                                log += "step $step: 問い合わせ直し $asked → $existing"
+                            if (asked.isEmpty()) {
+                                emptySet()
+                            } else if (random.nextInt(4) > 0) {
+                                state = RecordsRules.profilesConfirmed(state, existing.toSet(), ++seq, asked)
+                                log += "step $step: 問い合わせ直し $seq $asked → $existing"
                                 asked - existing
                             } else {
+                                state = RecordsRules.profileQueryFailed(state, ++seq)
+                                log += "step $step: 問い合わせ直し $seq の失敗"
                                 emptySet()
                             }
                         val change = RecordsRules.change(state, request)
@@ -80,7 +116,11 @@ class RecordsLawsTest {
                             }
                         law(puts.orEmpty().none { it in absent }) { "問い合わせ直して不在と分かった番号に書く: $request" }
                         val before = state
-                        state = commit(random, db, state, change, log, "step $step: $request")
+                        val dbBefore = db.records()
+                        state =
+                            commit(random, db, state, change, log, "step $step: $request") { written ->
+                                if (written) checkRequest(before, request, change, dbBefore, db)
+                            }
                         if (request is RecordsRequest.Open && state !== before) checkOpen(before, state, request)
                     }
                 }
@@ -88,8 +128,37 @@ class RecordsLawsTest {
                     law(db.records() == records) { "DB と写しが違う: db=${db.records()} 写し=$records" }
                 }
                 val removed = state.profiles.removed
+                law(removed.none { it in existing }) { "存在するプロファイル ${removed.intersect(existing)} を削除済みにした" }
+                law(state.profiles.pendingPrune.all { it in removed }) { "削除済みでない番号を整理する: ${state.profiles.pendingPrune}" }
                 law(state.undo.values.none { it.notice.pair.app.profileSerial in removed }) { "消えたプロファイルの取り消しが残った" }
             }
+        }
+    }
+
+    // 書けた頼みの、頼みの中身から直に決まる結果
+    private fun checkRequest(
+        before: RecordsState,
+        request: RecordsRequest,
+        change: RecordsChange,
+        dbBefore: UserRecords,
+        db: FakeDb,
+    ) {
+        if (change.result !is RecordsResult.Success) return
+        when (request) {
+            is RecordsRequest.Suppress -> {
+                if (before.profiles.accepts(request.pair.app.profileSerial)) {
+                    val row = db.records().learned.records[request.pair]
+                    law(row?.suppressed == true) { "抑制した ${request.pair} の行に印がない: $row" }
+                }
+            }
+
+            is RecordsRequest.Undo -> {
+                if (!before.canUndo(request.noticeId)) {
+                    law(change.write == null && db.records() == dbBefore) { "古い取り消し ${request.noticeId} で表が変わった" }
+                }
+            }
+
+            else -> {}
         }
     }
 
@@ -120,6 +189,7 @@ class RecordsLawsTest {
         law(now.lastUsedAt >= request.at) { "使った学習のキー $used の時刻が進まない: $request" }
     }
 
+    @Suppress("LongParameterList")
     private fun commit(
         random: Random,
         db: FakeDb,
@@ -127,6 +197,7 @@ class RecordsLawsTest {
         change: RecordsChange,
         log: MutableList<String>,
         label: String,
+        after: (Boolean) -> Unit = {},
     ): RecordsState {
         val write = change.write
         if (change.result is RecordsResult.Failure) {
@@ -141,6 +212,7 @@ class RecordsLawsTest {
         if (write != null && written) db.apply(write)
         val next = RecordsRules.commit(state, change, written)
         log += "$label → 書き込み=${write != null} 成功=$written"
+        after(written)
         if (!written) {
             // 法則 6: 失敗した頼みは写しを変えない。DB の側（トランザクションが途中で失敗したら何も残らないこと）は、
             // この表では確かめられない（失敗した回は当てないだけなので）。Room の故障の試験で確かめる
@@ -150,22 +222,27 @@ class RecordsLawsTest {
         return next
     }
 
+    // 頼みが対象にするのは、できたことのあるプロファイルだけ（まだないプロファイルのアプリは選べない）
     private fun randomRequest(
         random: Random,
         state: RecordsState,
+        created: Set<Long>,
     ): RecordsRequest {
+        fun randomApp(): AppId = AppId(PACKAGES.random(random), "Main", created.random(random))
+
+        fun randomPair(): LearnedPair = LearnedPair(NormalizedText(QUERIES.random(random)), randomApp())
         // 同じ時刻が続く場面を作るため、半分は NOW にする
         val at = if (random.nextBoolean()) NOW else NOW + random.nextLong(0, 400) * DAY_HOURS
         return when (random.nextInt(8)) {
             0, 1 -> {
-                val rescues = List(random.nextInt(3)) { randomPair(random) }
-                val selection = if (random.nextBoolean()) randomPair(random) else null
-                val used = if (random.nextBoolean()) randomPair(random) else null
-                RecordsRequest.Open(LearningDecision(selection, rescues, used), randomApp(random).takeIf { random.nextBoolean() }, at)
+                val rescues = List(random.nextInt(3)) { randomPair() }
+                val selection = if (random.nextBoolean()) randomPair() else null
+                val used = if (random.nextBoolean()) randomPair() else null
+                RecordsRequest.Open(LearningDecision(selection, rescues, used), randomApp().takeIf { random.nextBoolean() }, at)
             }
 
             2 -> {
-                RecordsRequest.Suppress(randomPair(random), at)
+                RecordsRequest.Suppress(randomPair(), at)
             }
 
             3 -> {
@@ -173,7 +250,7 @@ class RecordsLawsTest {
             }
 
             4 -> {
-                RecordsRequest.Remove(randomPair(random))
+                RecordsRequest.Remove(randomPair())
             }
 
             5 -> {
@@ -183,7 +260,7 @@ class RecordsLawsTest {
             6 -> {
                 RecordsRequest.Import(
                     List(random.nextInt(3)) {
-                        val pair = randomPair(random)
+                        val pair = randomPair()
                         LearnedRecord(pair.query, pair.app, random.nextInt(1, 5), at, random.nextBoolean(), random.nextInt(5) == 0)
                     },
                     at,
@@ -195,10 +272,6 @@ class RecordsLawsTest {
             }
         }
     }
-
-    private fun randomPair(random: Random): LearnedPair = LearnedPair(NormalizedText(QUERIES.random(random)), randomApp(random))
-
-    private fun randomApp(random: Random): AppId = AppId(PACKAGES.random(random), "Main", SERIALS.random(random))
 
     /** 書き込みの中身を当てる表。DB の代わり。 */
     private class FakeDb {
@@ -226,7 +299,8 @@ class RecordsLawsTest {
         const val WRITE_FAILURE_RATE = 20
         const val NOW = 1_800_000_000_000L
         const val DAY_HOURS = 60L * 60 * 1000 * 12
-        val SERIALS = listOf(0L, 10L, 11L)
+        val INITIAL = setOf(0L, 10L, 11L)
+        val SERIALS = listOf(0L, 10L, 11L, 12L, 13L)
         val QUERIES = listOf("てんき", "おかね", "ちず", "めーる", "て")
         val PACKAGES = listOf("jp.example.weather", "jp.example.pay", "jp.example.mail")
     }

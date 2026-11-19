@@ -74,9 +74,15 @@ internal val TRANSIENT = Failure("java.io.IOException", IssueCategory.TRANSIENT)
 internal val DETERMINISTIC = Failure("java.security.cert.CertificateException", IssueCategory.DETERMINISTIC)
 internal val BUG = Failure("java.lang.IllegalStateException", IssueCategory.SUSPECTED_BUG)
 
-/** 偽の生成器。入力から決まるキーを返す。 */
-internal fun fakeKeys(entry: AppEntry): List<SearchKey> =
-    listOf(SearchKey(NormalizedText("name:${entry.label}"), SearchKeyKind.NAME)) +
+/** 偽の生成器。入力と生成器の版・ブランド表から決まるキーを返す（版の違う回の結果を取り違えれば、キーの違いで見える）。 */
+internal fun fakeKeys(
+    entry: AppEntry,
+    env: Environment,
+): List<SearchKey> =
+    listOf(
+        SearchKey(NormalizedText("name:${entry.label}"), SearchKeyKind.NAME),
+        SearchKey(NormalizedText("gen:${env.generatorVersion}:${env.brandTableHash}"), SearchKeyKind.READING),
+    ) +
         entry.localizedLabels.map { SearchKey(NormalizedText("loc:$it"), SearchKeyKind.LOCALIZED_NAME) } +
         entry.signerNames.map { SearchKey(NormalizedText("pub:$it"), SearchKeyKind.PUBLISHER) }
 
@@ -98,6 +104,7 @@ internal data class Round(
 }
 
 /** [device] を相手に同期を 1 回行う。端末の読み取りとキーの生成は計画のとおりにだけ行う。 */
+@Suppress("LongParameterList")
 internal fun sync(
     previous: IndexSnapshot,
     device: FakeDevice,
@@ -105,16 +112,17 @@ internal fun sync(
     faults: Faults = Faults.NONE,
     notices: List<Notice> = emptyList(),
     userSerials: Map<Int, Long> = emptyMap(),
+    today: String = TODAY,
 ): Round {
     val observation = device.observe()
     val plan = IndexRules.plan(previous, observation, env, notices, userSerials)
     val reads = read(device, plan, faults)
-    val prepared = IndexRules.prepare(previous, observation, plan, reads, env, TODAY)
+    val prepared = IndexRules.prepare(plan, reads, today)
     val built =
         prepared.jobs.associateWith { job ->
             val id = job.entry.id
             faults.keys[PackageKey(id.profileSerial, id.packageName) to id.activityName]?.let { KeyOutcome.Failed(it) }
-                ?: KeyOutcome.Built(fakeKeys(job.entry))
+                ?: KeyOutcome.Built(fakeKeys(job.entry, env))
         }
     val genres =
         faults.genre?.let { GenreResult.Failed(it.cause) } ?: GenreResult.Found(
@@ -128,6 +136,8 @@ internal fun sync(
     return Round(previous, observation, plan, reads, jobs, built, genres, outcome)
 }
 
+// 偽の読み手。段の順（ENTRY・LABEL・SIGNER）に、注入した失敗の最初のものを本当の失敗として返す。
+// アーカイブ済み（補助の材料を頼まれない）は補助の段を読まないので、その段の失敗も起きず、空で成功する
 private fun read(
     device: FakeDevice,
     plan: SyncPlan,
@@ -137,40 +147,38 @@ private fun read(
         val profile = device.profiles.getValue(serial)
         ProfileReads(
             if (profile.readsComplete) ListingStatus.COMPLETE else ListingStatus.UNAVAILABLE,
-            jobs.associate { (key, job) ->
-                val pkg = device.pkg(key)
-                val keys = KeyObservation(pkg.apkKey, pkg.updatedAt)
-                // moved は読んだ後の APK と時刻、movedBefore は読む前の APK だけ、movedTime は読んだ後の時刻だけを変える
-                val moved =
-                    when {
-                        key in faults.moved -> KeyObservation("moved", (pkg.updatedAt ?: 0) + 1)
-                        key in faults.movedTime -> KeyObservation(pkg.apkKey, (pkg.updatedAt ?: 0) + 1)
-                        else -> keys
-                    }
-                val before = if (key in faults.movedBefore) KeyObservation("moved-before", pkg.updatedAt) else keys
-                val entryFailure = faults.entry[key]
-                val aux = job.auxiliary && entryFailure == null
-                val labelFailure = faults.label[key]?.takeIf { aux }
-                key.packageName to
-                    MaterialRead(
-                        labels = pkg.labels.mapValues { (_, label) -> label.takeIf { entryFailure == null } },
-                        entryFailure = entryFailure,
-                        before = before,
-                        after = moved,
-                        // 別の言語の名前は、失敗したら先頭の入口の分だけが読めなかったことにする
-                        localized =
-                            if (aux) {
-                                pkg.localized.filterKeys { labelFailure == null || it != pkg.labels.keys.minOrNull() }
-                            } else {
-                                emptyMap()
-                            },
-                        labelFailure = labelFailure,
-                        signerDns = if (aux && faults.signer[key] == null) pkg.signers else emptyList(),
-                        signerFailure = faults.signer[key]?.takeIf { aux },
-                    )
-            },
+            jobs.associate { (key, job) -> key.packageName to readPackage(device.pkg(key), key, job.auxiliary, faults) },
         )
     }
+
+private fun readPackage(
+    pkg: FakePackage,
+    key: PackageKey,
+    aux: Boolean,
+    faults: Faults,
+): MaterialRead {
+    faults.entry[key]?.let { return MaterialRead.Failed(Stage.ENTRY, it) }
+    if (aux) {
+        faults.label[key]?.let { return MaterialRead.Failed(Stage.LABEL, it, pkg.labels) }
+        faults.signer[key]?.let { return MaterialRead.Failed(Stage.SIGNER, it, pkg.labels) }
+    }
+    val keys = KeyObservation(pkg.apkKey, pkg.updatedAt)
+    // moved は読んだ後の APK と時刻、movedBefore は読む前の APK だけ、movedTime は読んだ後の時刻だけを変える
+    val after =
+        when (key) {
+            in faults.moved -> KeyObservation("moved", (pkg.updatedAt ?: 0) + 1)
+            in faults.movedTime -> KeyObservation(pkg.apkKey, (pkg.updatedAt ?: 0) + 1)
+            else -> keys
+        }
+    val before = if (key in faults.movedBefore) KeyObservation("moved-before", pkg.updatedAt) else keys
+    return MaterialRead.Read(
+        labels = pkg.labels,
+        before = before,
+        after = after,
+        localized = if (aux) pkg.localized else emptyMap(),
+        signerDns = if (aux) pkg.signers else emptyList(),
+    )
+}
 
 internal fun appId(
     key: PackageKey,

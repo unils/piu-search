@@ -2,7 +2,6 @@
 
 package jp.piu.search.core.state
 
-import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.GenreId
 import jp.piu.search.core.search.IndexedApp
@@ -106,31 +105,25 @@ public data class MaterialKey(
 }
 
 /**
- * キーを何から作ったかの鍵。材料の鍵ではなく世代を持つ。
+ * キーを何から作ったかの鍵（材料の鍵のほかの分）。今の値と違えばキーを作り直す。
  *
- * 材料の鍵だけでは、署名の読み取りが失敗した後に同じ APK のまま読めるようになったとき、鍵が変わらず提供元のキーが古いまま残る。
- * 世代なら、材料を読み直した回は必ずキーも作り直す。
+ * 材料の世代は持たない。材料を読み直して成功した回は、同じ回にキーも作り直すため。
  *
- * @property materialsGeneration キーを作った材料の世代
  * @property generatorVersion [Environment.generatorVersion]
  * @property brandTableHash [Environment.brandTableHash]
  */
 public data class DerivedKey(
-    val materialsGeneration: Long,
     val generatorVersion: Int,
     val brandTableHash: String,
 ) {
     /** 鍵の作り方。 */
     public companion object {
-        /** 世代 [generation] の材料と環境 [env] から作る今の鍵。 */
-        public fun of(
-            generation: Long,
-            env: Environment,
-        ): DerivedKey = DerivedKey(generation, env.generatorVersion, env.brandTableHash)
+        /** 環境 [env] から作る今の鍵。 */
+        public fun of(env: Environment): DerivedKey = DerivedKey(env.generatorVersion, env.brandTableHash)
     }
 }
 
-/** 組の読み取りと生成の段。 */
+/** 組の読み取りと生成の段。欠けの報告に使う。 */
 public enum class Stage {
     /** 組全体の詳細（表示名・入口の変換・一覧との突き合わせ・読み取りの前後の鍵の比較）。 */
     ENTRY,
@@ -145,7 +138,10 @@ public enum class Stage {
     KEYS,
 }
 
-/** 欠けの理由の区分。区分は読み手が理由から決めて渡す（例外の型の分類は Android の型を知る側にある）。 */
+/**
+ * 本当の失敗の区分。区分は読み手が理由から決めて渡す（例外の型の分類は Android の型を知る側にある）。
+ * ないことが決まっているもの（その言語の名前の資源がない・署名がない・アーカイブ済みなど）は失敗にせず、成功した空として渡す。
+ */
 public enum class IssueCategory {
     /** 読み直せば直る見込みがある。通常のきっかけに加えて 1 回だけ読み直す。 */
     TRANSIENT,
@@ -158,7 +154,7 @@ public enum class IssueCategory {
 }
 
 /**
- * 段 1 つの失敗。例外は持たず、保存する事実だけを持つ。
+ * 段 1 つの本当の失敗。例外は持たず、保存する事実だけを持つ。
  *
  * @property cause 理由（R8 で変わらないクラス名か固定の符号）
  * @property category 区分
@@ -179,95 +175,92 @@ public data class Failure(
 }
 
 /**
- * 欠けの事実 1 つ（組と段 1 つ）。
+ * 組の最後の試みの欠け（組ごとに 1 つ）。「索引の状態」にはこれを出す。
  *
- * @property failure 最後の失敗
- * @property failedVersion [failure] が起きたときのこのアプリの `versionCode`。報告でフレームの出所（R8 の対応表）を示すのに使う
- * @property checkedVersion この段を最後に確かめたこのアプリの `versionCode`。今の版と違えば読み直す。
- *   確かめられなかった回に前の行を保つときは、こちらだけを進める（古い版がきっかけになり続けて収束しないため）
- * @property retryOnce 次の同期で 1 回だけ読み直すか
+ * @property stage 失敗した段
+ * @property failure 失敗
+ * @property version 失敗した試みのこのアプリの `versionCode`。報告でフレームの出所（R8 の対応表）を示し、今の版と違えば組を作り直す。
+ *   試みのたびに書き直すので、例外が起きた版と確かめた版は同じ値になる
  * @property firstFailedOn 続けて欠けている間の初めの日（UTC の `YYYY-MM-DD`）
  * @property lastFailedOn 最後に欠けた日（同上）
  */
 public data class Issue(
+    val stage: Stage,
     val failure: Failure,
-    val failedVersion: Int,
-    val checkedVersion: Int,
-    val retryOnce: Boolean,
+    val version: Int,
     val firstFailedOn: String,
     val lastFailedOn: String,
 )
 
 /**
- * 組の材料。鍵が違うときだけ読む（資源と APK を開くので高い）。
+ * 検索に使う値。組の材料とキーがすべて成功した回の結果だけが入り、失敗した回は前の値を丸ごと保つ。
+ * 由来の鍵（[materialKey]・[derivedKey]）は、この値を作ったときの鍵で、最後に試した鍵（[Attempt]）とは別に持つ。
  *
- * @property key 読んだときの鍵。成否によらず今の値
- * @property generation 世代。読むたびに成否によらず 1 進む
- * @property bootCount 読んだときの再起動の回数
+ * @property materialKey 材料を読んだときの鍵
+ * @property derivedKey キーを作ったときの鍵
  * @property labels 入口ごとの表示名
  * @property localized 入口ごとの別の言語の名前
  * @property signerDns 署名の DN
- * @property issues `ENTRY`・`LABEL`・`SIGNER` の欠け
- * @property substituted `ENTRY` が欠けた回に入った新しい入口。表示名は一覧の値かパッケージ名で、ほかの材料は旧い APK のものかもしれないので、
- *   キーだけを作り直すときも代わりのキーに留める。材料を読めた回に空になる
+ * @property keysByEntry 入口ごとのキー（ジャンルのキーは含まない）
  */
-public data class Materials(
-    val key: MaterialKey,
-    val generation: Long,
-    val bootCount: Int?,
+public data class Current(
+    val materialKey: MaterialKey,
+    val derivedKey: DerivedKey,
     val labels: Map<String, String>,
     val localized: Map<String, List<String>>,
     val signerDns: List<String>,
-    val issues: Map<Stage, Issue>,
-    val substituted: Set<String> = emptySet(),
+    val keysByEntry: Map<String, List<SearchKey>>,
 )
 
 /**
- * 材料から作ったキー。鍵が違うときだけ作る（形態素解析をするので高い）。
+ * 組の最後の試み。同じ鍵で読み直さないかを、[Current] の鍵ではなくこちらの鍵で決める（失敗し続ける組を毎回読み直さないため）。
  *
- * @property key 作ったときの鍵。成否によらず今の値
- * @property keysByEntry 入口ごとのキー（ジャンルのキーは含まない）
- * @property issue `KEYS` の欠け
- * @property sources 入口ごとの、キーを作った生成器の入力。代わりのキーの入口は入らない。
- *   生成に失敗した回に前のキーを使ってよいのは、今回の入力がこれと同じときだけ（読めなかった段の古い材料で当たり続けないため）
+ * @property materialKey 最後に材料を試した鍵（一覧の時点の観測と環境）
+ * @property derivedKey 最後にキーを試した鍵
+ * @property bootCount 最後に材料を試したときの再起動の回数
+ * @property issue 最後の試みの欠け。成功なら null
+ * @property retry 次の同期で、組を 1 回だけ作り直すか（一時的な失敗で立つ再試行の枠）
+ * @property labels 失敗した試みで取れた表示名。[Current] にない入口の代わりのキーと表示に使う
  */
-public data class Derived(
-    val key: DerivedKey,
-    val keysByEntry: Map<String, List<SearchKey>>,
+public data class Attempt(
+    val materialKey: MaterialKey,
+    val derivedKey: DerivedKey,
+    val bootCount: Int?,
     val issue: Issue?,
-    val sources: Map<String, AppEntry> = emptyMap(),
+    val retry: Boolean,
+    val labels: Map<String, String> = emptyMap(),
 )
 
 /**
  * 組 1 つの状態。
  *
  * @property key 組
- * @property observed 最後に当てた観測
- * @property materials 材料
- * @property derived キー
+ * @property observed 最後に当てた観測。入口の集合は、成否によらず今の一覧に合わせる
+ * @property current 検索に使う値。まだ一度も成功していなければ null で、入口は代わりのキーで出す
+ * @property attempt 最後の試み
  * @property genres 入口ごとのジャンル。同期のたびに問い合わせる（APK によらず変わるため）
  */
 public data class PackageState(
     val key: PackageKey,
     val observed: PackageObservation,
-    val materials: Materials,
-    val derived: Derived,
+    val current: Current?,
+    val attempt: Attempt,
     val genres: Map<String, List<GenreId>>,
 ) {
-    /** 入口ごとの照合の材料。表示名のない入口はパッケージ名で出す。 */
+    /**
+     * 入口ごとの照合の材料。[current] にない入口（失敗した回に増えた入口・一度も成功していない組）は、
+     * 試みで取れた表示名（なければパッケージ名）の代わりのキーで出す。代わりのキーは保存せず、ここで作る。
+     */
     public fun apps(): List<IndexedApp> =
         observed.entries.sorted().map { entry ->
+            val label = current?.labels?.get(entry) ?: attempt.labels[entry] ?: key.packageName
             IndexedApp(
                 AppId(key.packageName, entry, key.profileSerial),
-                materials.labels[entry] ?: key.packageName,
-                derived.keysByEntry[entry].orEmpty() +
+                label,
+                (current?.keysByEntry?.get(entry) ?: SubstituteKeys.orEmpty(label)) +
                     genres[entry].orEmpty().map { SearchKey(NormalizedText(it.value), SearchKeyKind.GENRE) },
             )
         }
-
-    /** 未消費の再試行の印（材料か `KEYS`）があるか。 */
-    public val retryPending: Boolean
-        get() = materials.issues.values.any { it.retryOnce } || derived.issue?.retryOnce == true
 }
 
 /** 一覧の読み取りの状態。空の一覧と、読めなかった一覧を取り違えないため。 */

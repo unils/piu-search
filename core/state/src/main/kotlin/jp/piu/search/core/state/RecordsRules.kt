@@ -38,14 +38,19 @@ public sealed interface RecordsLoad {
  * @property confirmed 最後に OS に確認した、存在するプロファイルの集合。まだ確認できていなければ null（空の集合とは区別する）
  * @property removed 存在しないと確認した番号。問い合わせが失敗しても忘れない
  * @property pendingPrune 記録から消すべきで、まだ消せていない番号（終わっていない整理）
- * @property writtenSinceCheck 最後の確認の後に書いた、[confirmed] にない番号。読み直したときに「確認より前の行」とみなして消さないためだけに使い、
- *   存在の確認にはしない（問い合わせが失敗した間に書いた番号も、次の頼みで問い合わせ直すため）。次の確認で空にする
+ * @property writtenSinceCheck 確認した集合にない番号に書いた記録 → 書いたときに知っていた最後の問い合わせの番号（成否によらない）。
+ *   その番号より後に問い合わせた確認だけが、この番号を不在と決められる。前に問い合わせた確認は、番号のプロファイルができる前の観測かもしれないため。
+ *   読み直したときに「確認より前の行」とみなして消さないためにも使い、存在の確認にはしない（問い合わせが失敗した間に書いた番号も、次の頼みで問い合わせ直すため）
+ * @property confirmedSeq [confirmed] を問い合わせた番号（観測の順）。まだ確認できていなければ null
+ * @property seenSeq 知っている最後の問い合わせの番号（失敗した問い合わせを含む）。まだなければ null
  */
 public data class ProfileKnowledge(
     val confirmed: Set<Long>? = null,
     val removed: Set<Long> = emptySet(),
     val pendingPrune: Set<Long> = emptySet(),
-    val writtenSinceCheck: Set<Long> = emptySet(),
+    val writtenSinceCheck: Map<Long, Long> = emptyMap(),
+    val confirmedSeq: Long? = null,
+    val seenSeq: Long? = null,
 ) {
     /**
      * [serial] への書き込みを受けるか。拒むのは削除を確認した番号だけ。
@@ -253,9 +258,9 @@ public object RecordsRules {
         // 確認より後に書いた番号を除けば、集合にない番号の行は確認より前の行で、消えたプロファイルの行
         val missing =
             state.profiles.confirmed
-                ?.let { records.serials + storedSerials - it - state.profiles.writtenSinceCheck }
+                ?.let { records.serials + storedSerials - it - state.profiles.writtenSinceCheck.keys }
                 .orEmpty()
-        return state.copy(load = RecordsLoad.Ready(records), storedSerials = storedSerials).withRemoved(missing)
+        return state.copy(load = RecordsLoad.Ready(records), storedSerials = storedSerials.toSet()).withRemoved(missing)
     }
 
     /** 読み込みが失敗した。前に読めた写しがあっても、ここでは失敗として持つ（保存先の内容と合っているか分からないため）。 */
@@ -269,6 +274,11 @@ public object RecordsRules {
      * 前に確認した集合・記録・表の行・[asked] にあって [existing] にない番号を、行がなくても削除済みとし、
      * 取り消しの材料と知らせを無効にして、整理の対象にする。問い合わせが失敗したときは呼ばない（最後に確認した状態を保つ）。
      *
+     * 当てた確認より前に問い合わせた確認（[seq] が小さいか等しい）は捨てる。書き手の列に届く順は、OS に問い合わせた順と限らない。
+     * 古い確認を当てると、その後の確認で存在が分かり記録も書いた番号を、削除済みにして記録ごと消してしまう。
+     *
+     * @param existing 存在するプロファイルの番号
+     * @param seq 問い合わせの番号。同じ観測元が問い合わせのたびに増やす（集合の通知と、頼みの前の問い合わせ直しで共有する）
      * @param asked 頼みが対象にする番号のうち、確認済みの集合になかったもの（[unconfirmed]）。新しいプロファイルかもしれない番号を、
      *   この確認で不在と分かれば拒めるようにする。渡さないと、最後の確認の後に消えた未知の番号への初回の記録が通る
      * @param storedSerials 表から直に数えた、行のある番号。分かれば渡す
@@ -276,19 +286,43 @@ public object RecordsRules {
     public fun profilesConfirmed(
         state: RecordsState,
         existing: Set<Long>,
+        seq: Long,
         asked: Set<Long> = emptySet(),
         storedSerials: Set<Long> = state.storedSerials,
     ): RecordsState {
         val profiles = state.profiles
-        val known = profiles.confirmed.orEmpty() + profiles.writtenSinceCheck + state.records?.serials.orEmpty() + storedSerials + asked
+        if (profiles.confirmedSeq?.let { seq <= it } == true) return state
+        // 呼ぶ側の集合を写し取る。後で呼ぶ側が中身を変えても、確認した事実（行のない番号が存在したこと）を失わないため
+        val confirmed = existing.toSet()
+        val stored = storedSerials.toSet()
+        // この確認より後に問い合わせてから書いた番号は、この確認では決めない（確認の後にできたプロファイルかもしれない）
+        val (undecided, decided) = profiles.writtenSinceCheck.entries.partition { it.value >= seq }
+        val known = profiles.confirmed.orEmpty() + decided.map { it.key } + state.records?.serials.orEmpty() + stored + asked
         return state
-            .copy(profiles = profiles.copy(confirmed = existing, writtenSinceCheck = emptySet()), storedSerials = storedSerials)
-            .withRemoved(known - existing)
+            .copy(
+                profiles =
+                    profiles.copy(
+                        confirmed = confirmed,
+                        writtenSinceCheck = undecided.associate { it.key to it.value },
+                        confirmedSeq = seq,
+                        seenSeq = maxOf(seq, profiles.seenSeq ?: seq),
+                    ),
+                storedSerials = stored,
+            ).withRemoved(known - confirmed - undecided.map { it.key }.toSet())
     }
 
     /**
+     * 問い合わせ [seq] が失敗した。確認は変えず（最後に確認した状態を保つ）、問い合わせの番号だけを覚える。
+     * この後に書いた番号を、この問い合わせより前に問い合わせた確認で消さないため。
+     */
+    public fun profileQueryFailed(
+        state: RecordsState,
+        seq: Long,
+    ): RecordsState = state.copy(profiles = state.profiles.copy(seenSeq = maxOf(seq, state.profiles.seenSeq ?: seq)))
+
+    /**
      * 頼み [request] が対象にする番号のうち、確認済みの集合にも削除済みにもないもの。空でなければ、書き手は頼みを計算する前に
-     * プロファイルを問い合わせ直し、有効な一覧が取れたら [profilesConfirmed] に `asked` として渡す（取れなければ最後の確認を保って進める）。
+     * プロファイルを問い合わせ直し、有効な一覧が取れたら [profilesConfirmed] に `asked` として渡す（取れなければ [profileQueryFailed] に番号を渡し、最後の確認を保って進める）。
      */
     public fun unconfirmed(
         state: RecordsState,
@@ -497,7 +531,13 @@ public object RecordsRules {
         // 確認した集合にない新しい番号に書いたら覚える。後で読み直したときに、その行を「確認より前の行」とみなして消さないため。
         // 確認済みの集合には入れない（存在を OS に確かめたわけではないので、次の頼みでも問い合わせ直す）
         val profiles = state.profiles
-        val written = profiles.confirmed?.let { profiles.writtenSinceCheck + (next.serials - it) }.orEmpty()
+        val seen = profiles.seenSeq
+        val written =
+            if (seen == null) {
+                profiles.writtenSinceCheck
+            } else {
+                profiles.writtenSinceCheck + (next.serials - profiles.confirmed.orEmpty()).associateWith { seen }
+            }
         val changed =
             state
                 .copy(load = RecordsLoad.Ready(next), profiles = profiles.copy(writtenSinceCheck = written))

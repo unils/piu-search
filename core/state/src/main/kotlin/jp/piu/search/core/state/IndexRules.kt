@@ -15,9 +15,13 @@ import java.text.Normalizer
  * 索引の同期の規則（鍵つきのメモ化）。端末に触れず、渡された観測と結果だけで決める純粋な関数。
  *
  * 同期 1 回は次の順に進む。端末の読み取りとキーの生成は呼ぶ側が段の間で行う。
- * 1. [plan]: 前の写し・観測・環境・まだ当てていない知らせから、材料を読む組・キーを作る組・消す組を決める。→ 材料とジャンルを読む
- * 2. [prepare]: 読んだ結果を材料に当て、生成器に頼む入口（[PreparedSync.jobs]）を決める。→ キーを作る
+ * 1. [plan]: 前の写し・観測・環境・まだ当てていない知らせから、作り直す組・キーだけを作る組・消す組を決める。→ 材料とジャンルを読む
+ * 2. [prepare]: 読んだ結果を受け、生成器に頼む入口（[PreparedSync.jobs]）を決める。→ キーを作る
  * 3. [apply]: [prepare] の結果と生成の結果から次の写しを作る
+ *
+ * 組ごとに全部か無かで当てる。材料の読み取りとキーの生成がすべて成功した組だけ、検索に使う値（[Current]）を置き換える。
+ * 本当の失敗が 1 つでもあれば、検索に使う値は前のまま丸ごと保ち、最後の試み（[Attempt]）にだけ今の鍵と欠けを書く。
+ * 段ごとに読めた分だけを採ると、欠けた段の古い材料と新しい材料が混ざる組み合わせが増え、穴が続いたため。
  *
  * 更新と不在による削除は、一覧と材料の両方が有効なプロファイルにだけ当てる。ほかのプロファイルの組は前の写しのまま保ち、
  * 鍵が古いまま残るので、読めるようになった同期で [plan] が拾う。
@@ -39,82 +43,67 @@ public object IndexRules {
         notices: Collection<Notice> = emptyList(),
         userSerials: Map<Int, Long> = emptyMap(),
     ): SyncPlan {
+        // 写しは作った後に変えないので、呼ぶ側の集まりを入れ子まで写し取る。呼ぶ側が後で中身を変えても、公開した写しと次の計画は変わらない
+        val frozen = observation.frozen()
         val noticeTargets =
             notices.associate { notice ->
                 notice.seq to (notice.profileSerial ?: userSerials[notice.userHandle])?.let { PackageKey(it, notice.packageName) }
             }
         val noticed = noticeTargets.values.filterNotNullTo(HashSet())
         val reads = LinkedHashMap<PackageKey, MaterialJob>()
-        val keys = LinkedHashMap<PackageKey, Set<KeyReason>>()
+        val keys = LinkedHashSet<PackageKey>()
         val genreTargets = ArrayList<AppId>()
-        val removals = previous.packages.keys.filterTo(HashSet()) { it.profileSerial in observation.removedProfiles }
-        for ((serial, listing) in observation.profiles.toSortedMap()) {
-            if (serial in observation.removedProfiles || listing.status != ListingStatus.COMPLETE) continue
+        val removals = previous.packages.keys.filterTo(HashSet()) { it.profileSerial in frozen.removedProfiles }
+        for ((serial, listing) in frozen.profiles.toSortedMap()) {
+            if (serial in frozen.removedProfiles || listing.status != ListingStatus.COMPLETE) continue
             for ((name, observed) in listing.packages.toSortedMap()) {
                 val key = PackageKey(serial, name)
                 observed.entries.sorted().mapTo(genreTargets) { AppId(name, it, serial) }
-                val prev = previous.packages[key]
-                val readReasons = readReasons(prev, observed, env, key in noticed)
-                if (readReasons.isNotEmpty()) {
-                    reads[key] = MaterialJob(readReasons, auxiliary = !observed.archived)
-                } else {
-                    keyReasons(checkNotNull(prev), env).takeIf { it.isNotEmpty() }?.let { keys[key] = it }
+                val attempt = previous.packages[key]?.attempt
+                val reasons = readReasons(attempt, observed, env, key in noticed)
+                if (reasons.isNotEmpty()) {
+                    reads[key] = MaterialJob(reasons, auxiliary = !observed.archived)
+                } else if (checkNotNull(attempt).derivedKey != DerivedKey.of(env)) {
+                    keys += key
                 }
             }
             previous.packages.keys.filterTo(removals) { it.profileSerial == serial && it.packageName !in listing.packages }
         }
-        return SyncPlan(reads, keys, removals, genreTargets, noticeTargets)
+        return SyncPlan(reads, keys, removals, genreTargets, noticeTargets, previous, frozen, env)
     }
 
     /**
-     * 材料の読み取りの結果を当て、キーの生成を待つ形にする。生成器に頼む入口は [PreparedSync.jobs]。
+     * 材料の読み取りの結果を受け、キーの生成を待つ形にする。生成器に頼む入口は [PreparedSync.jobs]。
      *
-     * 材料を読んだ組は、`ENTRY` が読めたならすべての入口を生成器に頼む。欠けたなら、旧い入口は旧いキーを保ち、
-     * 新しい入口は表示名の代わりのキーにする（どの版の APK の材料か分からないため）。代わりのキーはここで作り、生成器には頼まない。
-     * キーだけを作り直す組は、保存した材料から作る。有効でないプロファイルの組は扱わない（結果を当てないため）。
+     * 作り直す組は、読み取りが成功したならすべての入口を生成器に頼み、本当の失敗なら何も頼まない（前の状態を保つため）。
+     * 読む前後で鍵が動いた組は `ENTRY` の [Failure.CHANGED_DURING_READ] とする。キーだけを作る組は、検索に使う値の材料から作る。
+     * 有効でないプロファイルの組は扱わない（結果を当てないため）。
      *
-     * @param previous [plan] に渡した前の写し
-     * @param observation [plan] に渡した観測
      * @param plan [plan] の結果
      * @param reads プロファイルごとの材料の読み取りの結果。材料を頼んだプロファイルの分がいる
-     * @param env [plan] に渡した環境
-     * @param today 欠けの行の日（UTC の `YYYY-MM-DD`）
+     * @param today 欠けの日（UTC の `YYYY-MM-DD`）
      */
     public fun prepare(
-        previous: IndexSnapshot,
-        observation: DeviceObservation,
         plan: SyncPlan,
         reads: Map<Long, ProfileReads>,
-        env: Environment,
         today: String,
     ): PreparedSync {
-        // 写しは作った後に変えないので、呼ぶ側の集まりを入れ子まで写し取る。呼ぶ側が後で中身を変えても、公開した写しと次の計画は変わらない
-        val frozenObservation = observation.frozen()
         val frozenReads = reads.frozen()
-        val valid = validProfiles(frozenObservation, plan, frozenReads)
+        val valid = validProfiles(plan, frozenReads)
+        // 頼みをこの呼び出しに結び付ける印。別の回の頼みの結果を受けないため
+        val round = Any()
         val packages = LinkedHashMap<PackageKey, PreparedPackage>()
         for ((key, job) in plan.reads) {
             if (key.profileSerial !in valid) continue
-            packages[key] =
-                readPackage(key, previous.packages[key], observed(frozenObservation, key), job, readOf(frozenReads, key), env, today)
+            packages[key] = rebuild(key, observed(plan, key), job, readOf(frozenReads, key), plan.env, round)
         }
-        for ((key, reasons) in plan.keys) {
+        for (key in plan.keys) {
             if (key.profileSerial !in valid) continue
-            val prev = checkNotNull(previous.packages[key])
-            val observed = observed(frozenObservation, key)
-            val materials = prev.materials
-            val entries =
-                observed.entries.sorted().associateWith { entry ->
-                    if (entry in materials.substituted) {
-                        EntryPlan.Substitute(materials.labels[entry] ?: key.packageName)
-                    } else {
-                        EntryPlan.Generate(KeyJob(appEntry(key, entry, materials.labels, materials.localized, materials.signerDns)))
-                    }
-                }
-            packages[key] =
-                PreparedPackage(key, prev, observed, materials, entries, retryOnly = reasons == setOf(KeyReason.RETRY), read = false)
+            val current = checkNotNull(plan.previous.packages[key]?.current) { "検索に使う値のない組のキーだけを作る: $key" }
+            val materials = Materials(current.materialKey, current.labels, current.localized, current.signerDns)
+            packages[key] = PreparedPackage(key, observed(plan, key), read = false, retryOnly = false, materials, null, emptyMap(), round)
         }
-        return PreparedSync(previous, frozenObservation, plan, frozenReads, env, today, valid, packages)
+        return PreparedSync(plan, frozenReads, today, valid, packages)
     }
 
     /**
@@ -122,8 +111,7 @@ public object IndexRules {
      *
      * @param prepared [prepare] の結果
      * @param genres ジャンルの問い合わせの結果
-     * @param built 生成器の結果。[PreparedSync.jobs] のすべての頼みの分がちょうどいる。
-     *   頼みは入力（表示名・別の言語の名前・署名）ごと鍵にするので、別の回の結果を取り違えて渡すと止まる
+     * @param built 生成器の結果。[PreparedSync.jobs] のすべての頼みの分がちょうどいる。別の回の頼みの結果を渡すと止まる
      */
     public fun apply(
         prepared: PreparedSync,
@@ -133,16 +121,12 @@ public object IndexRules {
         require(
             built.keys == prepared.jobs.toSet(),
         ) { "生成の結果が頼みと合わない: ${built.keys - prepared.jobs.toSet()} ${prepared.jobs - built.keys}" }
-        val previous = prepared.previous
-        val observation = prepared.observation
         val plan = prepared.plan
-        val env = prepared.env
+        val previous = plan.previous
+        val observation = plan.observation
         val valid = prepared.valid
         val genreResult = genres.frozen()
-        val outcomes =
-            built.mapValues { (_, outcome) ->
-                if (outcome is KeyOutcome.Built) KeyOutcome.Built(outcome.keys.toList()) else outcome
-            }
+        val outcomes = built.frozen()
         val removed = observation.removedProfiles
         val next = LinkedHashMap(previous.packages)
         val staleIcons = HashSet<PackageKey>()
@@ -157,13 +141,9 @@ public object IndexRules {
                 val key = PackageKey(serial, name)
                 val prev = previous.packages[key]
                 val pkg = prepared.packages[key]
+                if (pkg?.read == true) staleIcons += key
                 val state =
-                    if (pkg != null) {
-                        if (pkg.read) staleIcons += key
-                        PackageState(key, observed, pkg.materials, derive(pkg, outcomes, env, prepared.today), prev?.genres.orEmpty())
-                    } else {
-                        checkNotNull(prev) { "計画にない新しい組: $key" }.copy(observed = observed)
-                    }
+                    pkg?.let { settle(it, prev, outcomes, plan.env, prepared.today) } ?: checkNotNull(prev).copy(observed = observed)
                 next[key] = state.copy(genres = genresOf(key, observed, prev?.genres.orEmpty(), genreResult))
             }
         }
@@ -181,12 +161,12 @@ public object IndexRules {
     // 一覧が最後まで読めて、消えておらず、材料を読んだならその読み取りも最後まで読めたプロファイル。
     // 材料を頼んだプロファイルの結果がなければ呼ぶ側の誤りとして止める。黙って外すと、正常な部分の同期と見分けられない
     private fun validProfiles(
-        observation: DeviceObservation,
         plan: SyncPlan,
         reads: Map<Long, ProfileReads>,
     ): Set<Long> {
         val readSerials = plan.reads.keys.mapTo(HashSet()) { it.profileSerial }
         for (serial in readSerials) require(serial in reads) { "材料を頼んだプロファイルの結果がない: $serial" }
+        val observation = plan.observation
         return observation.profiles
             .filter { (serial, listing) ->
                 listing.status == ListingStatus.COMPLETE &&
@@ -195,40 +175,35 @@ public object IndexRules {
             }.keys
     }
 
+    // 比べるのは最後に試した鍵（検索に使う値の鍵ではない）。失敗しても試した鍵は今の値になるので、同じ鍵では読み直さない
     private fun readReasons(
-        prev: PackageState?,
+        attempt: Attempt?,
         observed: PackageObservation,
         env: Environment,
         noticed: Boolean,
     ): Set<ReadReason> {
-        if (prev == null) return setOf(ReadReason.MISSING)
+        if (attempt == null) return setOf(ReadReason.MISSING)
         val reasons = HashSet<ReadReason>()
-        val materials = prev.materials
-        if (materials.key != MaterialKey.of(observed, env)) reasons += ReadReason.KEY_CHANGED
+        val issue = attempt.issue
+        if (attempt.materialKey != MaterialKey.of(observed, env)) reasons += ReadReason.KEY_CHANGED
         if (noticed) reasons += ReadReason.NOTICE
-        if (materials.issues.values.any { it.retryOnce }) reasons += ReadReason.RETRY
-        if (materials.issues.values.any { it.checkedVersion != env.appVersion }) reasons += ReadReason.VERSION
+        if (attempt.retry) reasons += ReadReason.RETRY
+        if (issue != null && issue.version != env.appVersion) reasons += ReadReason.VERSION
+        if (issue != null && attempt.derivedKey != DerivedKey.of(env)) reasons += ReadReason.DERIVED_CHANGED
         // 回数が取れない端末では読み直さない。プロセスがない間の更新の取りこぼしは知らせに頼る
-        if (observed.keyless && env.bootCount != null && materials.bootCount != env.bootCount) reasons += ReadReason.BOOT
-        return reasons
-    }
-
-    private fun keyReasons(
-        prev: PackageState,
-        env: Environment,
-    ): Set<KeyReason> {
-        val reasons = HashSet<KeyReason>()
-        if (prev.derived.key != DerivedKey.of(prev.materials.generation, env)) reasons += KeyReason.KEY_CHANGED
-        val issue = prev.derived.issue
-        if (issue?.retryOnce == true) reasons += KeyReason.RETRY
-        if (issue != null && issue.checkedVersion != env.appVersion) reasons += KeyReason.VERSION
+        if (observed.keyless && env.bootCount != null && attempt.bootCount != env.bootCount) reasons += ReadReason.BOOT
         return reasons
     }
 
     private fun observed(
-        observation: DeviceObservation,
+        plan: SyncPlan,
         key: PackageKey,
-    ): PackageObservation = checkNotNull(observation.profiles[key.profileSerial]?.packages?.get(key.packageName)) { "一覧にない組: $key" }
+    ): PackageObservation =
+        checkNotNull(
+            plan.observation.profiles[key.profileSerial]
+                ?.packages
+                ?.get(key.packageName),
+        ) { "一覧にない組: $key" }
 
     private fun readOf(
         reads: Map<Long, ProfileReads>,
@@ -238,190 +213,87 @@ public object IndexRules {
     // 一覧の時点で鍵がなければ前後を比べない（片方がない比較では替わったかを決められない）
     private fun changedDuringRead(
         observed: PackageObservation,
-        read: MaterialRead,
-    ): Failure? {
+        read: MaterialRead.Read,
+    ): Boolean {
         val apkMoved = observed.apkKey != null && (read.before.apkKey != observed.apkKey || read.after.apkKey != observed.apkKey)
         val timeMoved =
             observed.updatedAt != null && (read.before.updatedAt != observed.updatedAt || read.after.updatedAt != observed.updatedAt)
-        return if (apkMoved || timeMoved) Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT) else null
+        return apkMoved || timeMoved
     }
 
-    // 材料を読んだ組の、次の材料と入口ごとのキーの作り方。
-    // 欠けたときに残す材料: ENTRY の失敗は旧い入口に旧い値、新しい入口に一覧の表示名（なければパッケージ名）。
-    // LABEL・SIGNER の失敗は読めた分だけにし、古い提供元を新しい鍵で引き継がない。
-    // アーカイブ済みは補助の材料を空にし、補助の段の行も消す。ENTRY の失敗と重なっても、アーカイブの規則を先にする
-    // （APK がないので補助の材料は正常な不在。旧い補助の材料と、それから作ったキーを残さない）
     @Suppress("LongParameterList")
-    private fun readPackage(
+    private fun rebuild(
         key: PackageKey,
-        prev: PackageState?,
         observed: PackageObservation,
         job: MaterialJob,
         read: MaterialRead,
         env: Environment,
-        today: String,
+        round: Any,
     ): PreparedPackage {
-        val entries = observed.entries
-        val archived = observed.archived
-        val entryFailure = read.entryFailure ?: changedDuringRead(observed, read)
-        val old = prev?.materials
-        val before = old?.issues.orEmpty()
-        val issues = LinkedHashMap<Stage, Issue>()
-
-        fun put(
+        fun failed(
             stage: Stage,
-            failure: Failure?,
-        ) {
-            if (failure != null) issues[stage] = issueOf(failure, before[stage], job.retryOnly, env, today)
-        }
-        val plans = LinkedHashMap<String, EntryPlan>()
-        val materials: Materials
-        if (entryFailure != null) {
-            // 旧い入口: 一覧にも前の写しにもある入口
-            val kept = entries.filterTo(HashSet()) { prev?.derived?.keysByEntry?.containsKey(it) == true }
-            val labels =
-                entries.associateWith {
-                    if (it in
-                        kept
-                    ) {
-                        old?.labels?.get(it) ?: key.packageName
-                    } else {
-                        read.labels[it] ?: key.packageName
-                    }
+            failure: Failure,
+            labels: Map<String, String>,
+        ) = PreparedPackage(key, observed, read = true, job.retryOnly, null, stage to failure, labels, round)
+        return when (read) {
+            is MaterialRead.Failed -> {
+                require(read.stage != Stage.KEYS) { "読み取りの失敗に KEYS の段: $key" }
+                failed(read.stage, read.failure, read.labels)
+            }
+
+            is MaterialRead.Read -> {
+                // 表示名の欠けた成功を受けると、パッケージ名のキーを今の鍵で確定し、次の同期で読み直さない
+                require(read.labels.keys == observed.entries) { "表示名が一覧の入口と合わない: $key ${read.labels.keys} ${observed.entries}" }
+                if (changedDuringRead(observed, read)) {
+                    failed(Stage.ENTRY, Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT), read.labels)
+                } else {
+                    val localized = read.localized.filter { (entry, names) -> entry in observed.entries && names.isNotEmpty() }
+                    val materials = Materials(MaterialKey.of(observed, env), read.labels, localized, read.signerDns)
+                    PreparedPackage(key, observed, read = true, job.retryOnly, materials, null, read.labels, round)
                 }
-            val substituted = entries.filterTo(HashSet()) { it !in kept || it in old?.substituted.orEmpty() }
-            put(Stage.ENTRY, entryFailure)
-            if (!archived) {
-                // どの版の APK の材料か分からないので、その回の補助の材料の結果は使わず、前の行を保つ
-                before[Stage.LABEL]?.let { issues[Stage.LABEL] = kept(it, job.retryOnly, env) }
-                before[Stage.SIGNER]?.let { issues[Stage.SIGNER] = kept(it, job.retryOnly, env) }
-            }
-            val localized = if (archived) emptyMap() else old?.localized.orEmpty().filterKeys { it in kept }
-            val signerDns = if (archived) emptyList() else old?.signerDns.orEmpty()
-            materials = materialsOf(observed, env, old, labels, localized, signerDns, issues, substituted)
-            for (entry in entries.sorted()) {
-                plans[entry] =
-                    when {
-                        entry in substituted -> EntryPlan.Substitute(labels.getValue(entry))
-
-                        // 旧いキーは補助の材料を含みうるので、旧い表示名だけから作り直す
-                        archived -> EntryPlan.Generate(KeyJob(appEntry(key, entry, labels, emptyMap(), emptyList())))
-
-                        else -> EntryPlan.Keep
-                    }
-            }
-        } else {
-            val labels = entries.associateWith { read.labels[it] ?: key.packageName }
-            val localized =
-                if (archived) emptyMap() else entries.associateWith { read.localized[it].orEmpty() }.filterValues { it.isNotEmpty() }
-            val signerDns = if (archived || read.signerFailure != null) emptyList() else read.signerDns
-            // アーカイブ済みは補助の材料がないのが正常な不在なので、行を書かない（前の行も消える）
-            if (!archived) {
-                put(Stage.LABEL, read.labelFailure)
-                put(Stage.SIGNER, read.signerFailure)
-            }
-            materials = materialsOf(observed, env, old, labels, localized, signerDns, issues, emptySet())
-            for (entry in entries.sorted()) {
-                plans[entry] = EntryPlan.Generate(KeyJob(appEntry(key, entry, labels, localized, signerDns)))
             }
         }
-        return PreparedPackage(key, prev, observed, materials, plans, job.retryOnly, read = true)
     }
 
-    @Suppress("LongParameterList")
-    private fun materialsOf(
-        observed: PackageObservation,
-        env: Environment,
-        old: Materials?,
-        labels: Map<String, String>,
-        localized: Map<String, List<String>>,
-        signerDns: List<String>,
-        issues: Map<Stage, Issue>,
-        substituted: Set<String>,
-    ): Materials =
-        Materials(
-            key = MaterialKey.of(observed, env),
-            generation = (old?.generation ?: 0) + 1,
-            bootCount = env.bootCount,
-            labels = labels,
-            localized = localized,
-            signerDns = signerDns,
-            issues = issues,
-            substituted = substituted,
-        )
-
-    private fun appEntry(
-        key: PackageKey,
-        entry: String,
-        labels: Map<String, String>,
-        localized: Map<String, List<String>>,
-        signerDns: List<String>,
-    ): AppEntry =
-        AppEntry(
-            AppId(key.packageName, entry, key.profileSerial),
-            labels[entry] ?: key.packageName,
-            localizedLabels = localized[entry].orEmpty(),
-            signerNames = signerDns,
-        )
-
-    // 一覧の入口は必ず残す。作れなかった入口は、前のキーが今回と同じ入力から作ったものならそれを、そうでなければ表示名の代わりのキーにする。
-    // 入力の違う前のキーを使うと、読めなかった段の古い材料（旧い提供元など）で当たり続けるため。それも無理ならキー 0 個
-    private fun derive(
+    // 全部が成功した組だけ検索に使う値を置き換える。失敗した組は前の値を丸ごと保ち（なければ null で、入口は代わりのキー）、
+    // 最後の試みに今の鍵と欠けを書く。再試行の枠は、一時的な失敗で、再試行だけがきっかけの回でなければ立てる
+    private fun settle(
         pkg: PreparedPackage,
+        prev: PackageState?,
         outcomes: Map<KeyJob, KeyOutcome>,
         env: Environment,
         today: String,
-    ): Derived {
-        val prev = pkg.prev?.derived
-        val prevKeys = prev?.keysByEntry.orEmpty()
-        val prevSources = prev?.sources.orEmpty()
-        var failure: Failure? = null
-        val keysByEntry = LinkedHashMap<String, List<SearchKey>>()
-        val sources = LinkedHashMap<String, AppEntry>()
-        for ((entry, plan) in pkg.entries) {
-            when (plan) {
-                EntryPlan.Keep -> {
-                    keysByEntry[entry] = prevKeys.getValue(entry)
-                    prevSources[entry]?.let { sources[entry] = it }
-                }
-
-                is EntryPlan.Substitute -> {
-                    keysByEntry[entry] =
-                        try {
-                            SubstituteKeys.of(plan.label)
-                        } catch (e: RuntimeException) {
-                            failure = failure ?: Failure(e.javaClass.name, IssueCategory.SUSPECTED_BUG)
-                            emptyList()
-                        }
-                }
-
-                is EntryPlan.Generate -> {
-                    val input = plan.job.entry
-                    when (val outcome = outcomes.getValue(plan.job)) {
-                        is KeyOutcome.Built -> {
-                            keysByEntry[entry] = outcome.keys
-                            sources[entry] = input
-                        }
-
-                        is KeyOutcome.Failed -> {
-                            failure = failure ?: outcome.failure
-                            if (prevSources[entry] == input && entry in prevKeys) {
-                                keysByEntry[entry] = prevKeys.getValue(entry)
-                                sources[entry] = input
-                            } else {
-                                keysByEntry[entry] = SubstituteKeys.orEmpty(input.label)
-                            }
-                        }
-                    }
-                }
+    ): PackageState {
+        val built = pkg.jobs.mapValues { outcomes.getValue(it.value) }
+        val keyFailure = built.values.firstNotNullOfOrNull { (it as? KeyOutcome.Failed)?.failure }
+        val failed = pkg.failed ?: keyFailure?.let { Stage.KEYS to it }
+        val materials = pkg.materials
+        val current =
+            if (failed == null && materials != null) {
+                Current(
+                    materials.key,
+                    DerivedKey.of(env),
+                    materials.labels,
+                    materials.localized,
+                    materials.signerDns,
+                    built.mapValues { (it.value as KeyOutcome.Built).keys },
+                )
+            } else {
+                prev?.current
             }
-        }
-        val generated = pkg.entries.values.any { it is EntryPlan.Generate }
-        val issue =
-            failure?.let { issueOf(it, prev?.issue, pkg.retryOnly, env, today) }
-                // 生成器を通さなかった回は、前の行を保つ
-                ?: prev?.issue?.takeIf { !generated }?.let { kept(it, pkg.retryOnly, env) }
-        return Derived(DerivedKey.of(pkg.materials.generation, env), keysByEntry, issue, sources)
+        val attempt =
+            Attempt(
+                materialKey = MaterialKey.of(pkg.observed, env),
+                derivedKey = DerivedKey.of(env),
+                bootCount = if (pkg.read) env.bootCount else checkNotNull(prev).attempt.bootCount,
+                issue =
+                    failed?.let { (stage, failure) ->
+                        Issue(stage, failure, env.appVersion, prev?.attempt?.issue?.firstFailedOn ?: today, today)
+                    },
+                retry = failed?.second?.category == IssueCategory.TRANSIENT && !pkg.retryOnly,
+                labels = if (failed == null) emptyMap() else pkg.fallbackLabels,
+            )
+        return PackageState(pkg.key, pkg.observed, current, attempt, prev?.genres.orEmpty())
     }
 
     // ジャンルは「成功した空」と「失敗」を分ける。失敗した回は既存のジャンルを保つ（新しい入口はジャンルなし）
@@ -439,35 +311,6 @@ public object IndexRules {
                 }
             }.filterValues { it.isNotEmpty() }
 
-    /**
-     * 欠けの行を書く。区分が一時的で、再試行だけがきっかけでなければ `retryOnce` を立てる。
-     * 続けて欠けている間は初めの日を保つ。
-     */
-    private fun issueOf(
-        failure: Failure,
-        previous: Issue?,
-        retryOnly: Boolean,
-        env: Environment,
-        today: String,
-    ): Issue =
-        Issue(
-            failure = failure,
-            failedVersion = env.appVersion,
-            checkedVersion = env.appVersion,
-            retryOnce = failure.category == IssueCategory.TRANSIENT && !retryOnly,
-            firstFailedOn = previous?.firstFailedOn ?: today,
-            lastFailedOn = today,
-        )
-
-    // その回に確かめられなかった段の前の行。確かめた版だけを今の版にする（古いまま残すと、版の違いが毎回の読み直しのきっかけになり、
-    // 同期が収束しない）。例外が起きた版は変えない。印は、再試行だけがきっかけの回にだけ消費する。鍵の変化と重なった回に下ろすと、
-    // その段を確かめないまま再試行の機会を失う
-    private fun kept(
-        issue: Issue,
-        retryOnly: Boolean,
-        env: Environment,
-    ): Issue = issue.copy(retryOnce = issue.retryOnce && !retryOnly, checkedVersion = env.appVersion)
-
     private fun DeviceObservation.frozen(): DeviceObservation =
         DeviceObservation(
             profiles.mapValues { (_, listing) ->
@@ -481,13 +324,31 @@ public object IndexRules {
             profile.copy(
                 packages =
                     profile.packages.mapValues { (_, read) ->
-                        read.copy(
-                            labels = read.labels.toMap(),
-                            localized = read.localized.mapValues { it.value.toList() },
-                            signerDns = read.signerDns.toList(),
-                        )
+                        when (read) {
+                            is MaterialRead.Read -> {
+                                read.copy(
+                                    labels = read.labels.toMap(),
+                                    localized = read.localized.mapValues { it.value.toList() },
+                                    signerDns = read.signerDns.toList(),
+                                )
+                            }
+
+                            is MaterialRead.Failed -> {
+                                read.copy(labels = read.labels.toMap())
+                            }
+                        }
                     },
             )
+        }
+
+    // キーの語の区切りまで写し取る（外側のリストだけを写すと、呼ぶ側の区切りのリストの変更が公開した写しに及ぶ）
+    @JvmName("frozenOutcomes")
+    private fun Map<KeyJob, KeyOutcome>.frozen(): Map<KeyJob, KeyOutcome> =
+        mapValues { (_, outcome) ->
+            when (outcome) {
+                is KeyOutcome.Built -> KeyOutcome.Built(outcome.keys.map { it.copy(wordStarts = it.wordStarts.toList()) })
+                is KeyOutcome.Failed -> outcome
+            }
         }
 
     private fun GenreResult.frozen(): GenreResult =
@@ -497,54 +358,58 @@ public object IndexRules {
         }
 }
 
-/** 入口 1 つのキーの作り方。 */
-internal sealed interface EntryPlan {
-    /** 前のキーを保つ（`ENTRY` が欠けた回の旧い入口）。 */
-    data object Keep : EntryPlan
-
-    /** 表示名の代わりのキーにする。 */
-    data class Substitute(
-        val label: String,
-    ) : EntryPlan
-
-    /** 生成器に頼む。 */
-    data class Generate(
-        val job: KeyJob,
-    ) : EntryPlan
-}
-
-/** 材料を当て終えた組 1 つ。 */
-internal class PreparedPackage(
-    val key: PackageKey,
-    val prev: PackageState?,
-    val observed: PackageObservation,
-    val materials: Materials,
-    val entries: Map<String, EntryPlan>,
-    val retryOnly: Boolean,
-    val read: Boolean,
+/** 作り直しの材料（読めた回の値か、キーだけを作る回の検索に使う値）。 */
+internal class Materials(
+    val key: MaterialKey,
+    val labels: Map<String, String>,
+    val localized: Map<String, List<String>>,
+    val signerDns: List<String>,
 )
 
+/** 結果を待つ組 1 つ。[materials] は読み取りが成功したかキーだけを作る組で、[failed] は読み取りの本当の失敗。 */
+@Suppress("LongParameterList")
+internal class PreparedPackage(
+    val key: PackageKey,
+    val observed: PackageObservation,
+    val read: Boolean,
+    val retryOnly: Boolean,
+    val materials: Materials?,
+    val failed: Pair<Stage, Failure>?,
+    val fallbackLabels: Map<String, String>,
+    round: Any,
+) {
+    /** 入口 → 生成器への頼み。読み取りが失敗した組は空。 */
+    val jobs: Map<String, KeyJob> =
+        materials
+            ?.labels
+            ?.keys
+            ?.sorted()
+            ?.associateWith { entry ->
+                KeyJob(
+                    AppEntry(
+                        AppId(key.packageName, entry, key.profileSerial),
+                        materials.labels.getValue(entry),
+                        localizedLabels = materials.localized[entry].orEmpty(),
+                        signerNames = materials.signerDns,
+                    ),
+                    round,
+                )
+            }.orEmpty()
+}
+
 /**
- * 材料を当て終え、キーの生成を待つ同期 1 回（[IndexRules.prepare] の結果）。観測・材料・環境と生成の頼みを 1 つに束ね、
+ * 材料の結果を受け、キーの生成を待つ同期 1 回（[IndexRules.prepare] の結果）。計画・材料と生成の頼みを 1 つに束ね、
  * [IndexRules.apply] がこれと生成の結果だけを受け取るようにする（別々に渡すと、別の回のものを組み合わせても気づけないため）。
  */
 public class PreparedSync internal constructor(
-    internal val previous: IndexSnapshot,
-    internal val observation: DeviceObservation,
     internal val plan: SyncPlan,
     internal val reads: Map<Long, ProfileReads>,
-    internal val env: Environment,
     internal val today: String,
     internal val valid: Set<Long>,
     internal val packages: Map<PackageKey, PreparedPackage>,
 ) {
-    /** 生成器に頼む入口。代わりのキーの入口は入らない（ここで作るため）。 */
-    public val jobs: List<KeyJob> =
-        packages.values.flatMap { pkg ->
-            pkg.entries.values
-                .filterIsInstance<EntryPlan.Generate>()
-                .map { it.job }
-        }
+    /** 生成器に頼む入口。 */
+    public val jobs: List<KeyJob> = packages.values.flatMap { it.jobs.values }
 
     /** 一覧と材料の両方が有効なプロファイル。 */
     public val appliedProfiles: Set<Long> get() = valid

@@ -136,11 +136,11 @@ class RecordsRulesTest {
     @Test
     fun `プロファイルの削除の後の遅い記録と古い取り消しは拒まれる`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
-        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0, WORK))
+        val confirmed = confirm(ready(), setOf(0, WORK))
         val opened = apply(confirmed, open(rescues = listOf(pair("めーる", work)), launched = work))
         val id = opened.notices.single().id
 
-        val removed = RecordsRules.profilesConfirmed(opened, setOf(0))
+        val removed = confirm(opened, setOf(0))
         assertEquals(setOf(WORK), removed.profiles.removed)
         assertFalse(removed.canUndo(id))
         assertTrue(removed.notices.isEmpty())
@@ -155,7 +155,7 @@ class RecordsRulesTest {
     fun `確認がまだの間は削除も拒否もせず、確認した集合にない新しい番号も受ける`() {
         val work = AppId("jp.example.mail", "Inbox", 12)
         assertTrue(RecordsRules.change(ready(), open(launched = work)).write != null)
-        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val confirmed = confirm(ready(), setOf(0))
         assertTrue(confirmed.profiles.removed.isEmpty())
         assertTrue(RecordsRules.change(confirmed, open(launched = work)).write != null)
     }
@@ -163,16 +163,16 @@ class RecordsRulesTest {
     @Test
     fun `確認の後に消えた未知の番号への初回の記録は、問い合わせ直して不在なら拒む`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
-        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val confirmed = confirm(ready(), setOf(0))
         val request = open(selection = pair("めーる", work), launched = work)
         assertEquals(setOf(WORK), RecordsRules.unconfirmed(confirmed, request))
         // 問い合わせ直しても {0}。頼みの番号を渡すので、行がなくても削除済みになる
-        val rechecked = RecordsRules.profilesConfirmed(confirmed, setOf(0), asked = RecordsRules.unconfirmed(confirmed, request))
+        val rechecked = confirm(confirmed, setOf(0), asked = RecordsRules.unconfirmed(confirmed, request))
         assertEquals(setOf(WORK), rechecked.profiles.removed)
         assertNull(RecordsRules.change(rechecked, request).write)
         assertTrue(RecordsRules.unconfirmed(rechecked, request).isEmpty())
         // 問い合わせ直して存在すれば受ける
-        val present = RecordsRules.profilesConfirmed(confirmed, setOf(0, WORK), asked = setOf(WORK))
+        val present = confirm(confirmed, setOf(0, WORK), asked = setOf(WORK))
         assertTrue(RecordsRules.change(present, request).write != null)
         assertTrue(RecordsRules.unconfirmed(present, request).isEmpty())
     }
@@ -180,7 +180,7 @@ class RecordsRulesTest {
     @Test
     fun `問い合わせに失敗した間に書いた番号も、次の頼みで問い合わせ直し、不在なら拒む`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
-        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val confirmed = confirm(ready(), setOf(0))
         val first = open(launched = work)
         assertEquals(setOf(WORK), RecordsRules.unconfirmed(confirmed, first))
         // 問い合わせが失敗したので確認を変えずに書く（分からない間は拒まない）
@@ -188,7 +188,7 @@ class RecordsRulesTest {
         assertEquals(setOf(0L), written.profiles.confirmed)
         val second = open(launched = work, at = NOW + 1)
         assertEquals(setOf(WORK), RecordsRules.unconfirmed(written, second))
-        val rechecked = RecordsRules.profilesConfirmed(written, setOf(0), asked = RecordsRules.unconfirmed(written, second))
+        val rechecked = confirm(written, setOf(0), asked = RecordsRules.unconfirmed(written, second))
         assertNull(RecordsRules.change(rechecked, second).write)
         assertEquals(setOf(WORK), rechecked.profiles.pendingPrune)
     }
@@ -211,19 +211,19 @@ class RecordsRulesTest {
         val hidden = LearnedRecord(NormalizedText("あ".repeat(80)), AppId("jp.example.mail", "Inbox", WORK), 1, NOW, rescued = false)
         val records = UserRecords(LearnedMemory(listOf(hidden)), LaunchHistory.EMPTY)
         assertTrue(records.serials.isEmpty())
-        val loaded = RecordsRules.loaded(RecordsRules.profilesConfirmed(RecordsState(), setOf(0)), records, storedSerials = setOf(WORK))
+        val loaded = RecordsRules.loaded(confirm(RecordsState(), setOf(0)), records, storedSerials = setOf(WORK))
         assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), RecordsRules.pruneChange(loaded)!!.write)
         val pruned = RecordsRules.commit(loaded, RecordsRules.pruneChange(loaded)!!, written = true)
         assertTrue(pruned.storedSerials.isEmpty())
         // 読み込みの後の確認でも、表の番号で消えた番号を見つける
-        val later = RecordsRules.profilesConfirmed(RecordsRules.loaded(RecordsState(), records, storedSerials = setOf(0, WORK)), setOf(0))
+        val later = confirm(RecordsRules.loaded(RecordsState(), records, storedSerials = setOf(0, WORK)), setOf(0))
         assertEquals(setOf(WORK), later.profiles.pendingPrune)
     }
 
     @Test
     fun `確認の後に書いた新しい番号の行は、読み直しても消さない`() {
         val work = AppId("jp.example.mail", "Inbox", 12)
-        val confirmed = RecordsRules.profilesConfirmed(ready(), setOf(0))
+        val confirmed = confirm(ready(), setOf(0))
         val written = apply(confirmed, open(launched = work))
         val reloaded = RecordsRules.loaded(RecordsRules.loadFailed(written, "io"), written.records!!, written.records!!.serials)
         assertTrue(reloaded.profiles.removed.isEmpty())
@@ -234,13 +234,13 @@ class RecordsRulesTest {
     fun `プロファイルの整理に失敗したら、集合が変わらないまま次の機会に再試行する`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
         val records = UserRecords(LearnedMemory.EMPTY, LaunchHistory(mapOf(work to LaunchRecord(1, NOW), WEATHER to LaunchRecord(1, NOW))))
-        val removed = RecordsRules.profilesConfirmed(RecordsRules.profilesConfirmed(ready(records), setOf(0, WORK)), setOf(0))
+        val removed = confirm(confirm(ready(records), setOf(0, WORK)), setOf(0))
         val prune = RecordsRules.pruneChange(removed)!!
         assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), prune.write)
 
         val failed = RecordsRules.commit(removed, prune, written = false)
         // 同じ集合の確認は配られないが、次の機会に同じ整理を作れる
-        assertEquals(prune, RecordsRules.pruneChange(RecordsRules.profilesConfirmed(failed, setOf(0))))
+        assertEquals(prune.write, RecordsRules.pruneChange(confirm(failed, setOf(0)))!!.write)
         val done = RecordsRules.commit(failed, prune, written = true)
         assertEquals(setOf(0L), done.records!!.serials)
         assertNull(RecordsRules.pruneChange(done))
@@ -251,7 +251,7 @@ class RecordsRulesTest {
     fun `読み込みの前に確認した集合にない番号の記録は、読み込んだ後の整理の対象になる`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
         val records = UserRecords(LearnedMemory.EMPTY, LaunchHistory(mapOf(work to LaunchRecord(1, NOW))))
-        val confirmed = RecordsRules.profilesConfirmed(RecordsState(), setOf(0))
+        val confirmed = confirm(RecordsState(), setOf(0))
         assertNull(RecordsRules.pruneChange(confirmed))
         val loaded = RecordsRules.loaded(confirmed, records, records.serials)
         assertEquals(setOf(WORK), loaded.profiles.pendingPrune)
@@ -260,7 +260,7 @@ class RecordsRulesTest {
 
     @Test
     fun `読み込みでは消えたプロファイルの記録を受けず、その数を返す`() {
-        val removed = RecordsRules.profilesConfirmed(RecordsRules.profilesConfirmed(ready(), setOf(0, WORK)), setOf(0))
+        val removed = confirm(confirm(ready(), setOf(0, WORK)), setOf(0))
         val imported =
             listOf(
                 LearnedRecord(NormalizedText("てんき"), WEATHER, 3, NOW - DAY, rescued = true),
@@ -290,6 +290,57 @@ class RecordsRulesTest {
         )
         assertNull(RecordsRules.change(state, RecordsRequest.Remove(pair("ちず", WEATHER))).write)
     }
+
+    @Test
+    fun `古い確認が後から届いても当てず、その後の確認で存在が分かり記録も書いた番号を消さない`() {
+        val work = AppId("jp.example.mail", "Inbox", WORK)
+        val state = RecordsRules.profilesConfirmed(ready(), setOf(0), seq = 1)
+        // 集合の通知が先に {0} を問い合わせ（番号 2）、列に入っている間に、頼みの前の問い合わせ直しが {0, 10} を返す（番号 3）
+        val request = open(selection = pair("めーる", work), launched = work)
+        val rechecked = RecordsRules.profilesConfirmed(state, setOf(0, WORK), seq = 3, asked = RecordsRules.unconfirmed(state, request))
+        val written = apply(rechecked, request)
+        assertEquals(setOf(WORK), written.records!!.serials)
+        val stale = RecordsRules.profilesConfirmed(written, setOf(0), seq = 2)
+        assertSame(written, stale)
+        assertTrue(stale.profiles.removed.isEmpty())
+        assertNull(RecordsRules.pruneChange(stale))
+        // 同じ番号の確認も、当てた後なら捨てる
+        assertSame(written, RecordsRules.profilesConfirmed(written, setOf(0), seq = 3))
+        // 新しい確認なら当てる
+        assertEquals(setOf(WORK), RecordsRules.profilesConfirmed(written, setOf(0), seq = 4).profiles.removed)
+    }
+
+    @Test
+    fun `問い合わせ直しが失敗した後に書いた番号は、その問い合わせより前に問い合わせた確認では消さない`() {
+        val work = AppId("jp.example.mail", "Inbox", 12)
+        val state = RecordsRules.profilesConfirmed(ready(), setOf(0), seq = 1)
+        // {0} の確認（番号 2）が列にある間に、問い合わせ直し（番号 3）が失敗し、分からないまま 12 に書く
+        val written = apply(RecordsRules.profileQueryFailed(state, seq = 3), open(launched = work))
+        val stale = RecordsRules.profilesConfirmed(written, setOf(0), seq = 2)
+        assertTrue(stale.profiles.removed.isEmpty())
+        assertNull(RecordsRules.pruneChange(stale))
+        // 書いた後に問い合わせた確認なら、不在と決める
+        assertEquals(setOf(12L), RecordsRules.profilesConfirmed(stale, setOf(0), seq = 4).profiles.removed)
+    }
+
+    @Test
+    fun `確認に渡した集合を呼ぶ側が後で変えても、確認した事実を失わない`() {
+        val existing = mutableSetOf(0L, WORK)
+        val confirmed = RecordsRules.profilesConfirmed(ready(), existing, seq = 1)
+        existing -= WORK
+        assertEquals(setOf(0L, WORK), confirmed.profiles.confirmed)
+        // 行のない 10 も、前に確認した集合にあったので、次の確認で消えれば削除済みになる
+        assertEquals(setOf(WORK), RecordsRules.profilesConfirmed(confirmed, setOf(0), seq = 2).profiles.removed)
+    }
+
+    // 確認の番号を増やしながら確認を当てる（順に届く確認）
+    private fun confirm(
+        state: RecordsState,
+        existing: Set<Long>,
+        asked: Set<Long> = emptySet(),
+    ): RecordsState = RecordsRules.profilesConfirmed(state, existing, ++confirmSeq, asked)
+
+    private var confirmSeq = 0L
 
     private fun apply(
         state: RecordsState,
