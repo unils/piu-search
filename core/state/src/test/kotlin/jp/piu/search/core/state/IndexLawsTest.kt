@@ -28,16 +28,19 @@ class IndexLawsTest {
             var snapshot = IndexSnapshot.EMPTY
             val model = Model()
             var seq = 0L
+            // 消せなかった知らせは次の同期に持ち越す（書き手の規則）
+            var pending = emptyList<Notice>()
             repeat(STEPS) { step ->
                 device = mutate(random, device)
                 env = mutateEnv(random, env)
                 val faults = randomFaults(random, device)
-                val notices = List(random.nextInt(3)) { randomNotice(random, ++seq) }
+                val notices = pending + List(random.nextInt(3)) { randomNotice(random, ++seq) }
                 val today = day(step)
                 log += "step $step: device=$device env=$env faults=$faults notices=$notices"
                 val round = sync(snapshot, device, env, faults, notices, USER_SERIALS, today)
                 val expected = model.step(device, env, faults, notices, today)
                 checkRound(round, expected, device, env)
+                pending = notices.filter { it.seq !in expected.consumable }
                 snapshot = round.next
                 if (random.nextInt(3) == 0) {
                     log += "step $step: 失敗のない同期で回復を確かめる"
@@ -62,6 +65,9 @@ class IndexLawsTest {
         }
         val applied = expected.applied
         law(round.outcome.appliedProfiles == applied) { "当てたプロファイル ${round.outcome.appliedProfiles} が $applied と違う" }
+        law(
+            round.outcome.consumableNotices == expected.consumable,
+        ) { "消してよい知らせ ${round.outcome.consumableNotices} が模型 ${expected.consumable} と違う" }
         // 組ごとの状態の全体（検索に使う値・最後の試み・ジャンル・観測）を模型と比べる
         val indexed = round.next.packages.filterKeys { it.profileSerial in applied }
         law(indexed == expected.packages) {
@@ -194,6 +200,7 @@ class IndexLawsTest {
          * @property applied 当てるプロファイル
          * @property packages 当てるプロファイルの組の、次の状態
          * @property clean 作り直し、失敗を注入しなかった組
+         * @property consumable 消してよい知らせ（解決でき、当てたか消えたプロファイルの組の知らせ）
          */
         class Step(
             val reads: Set<PackageKey>,
@@ -202,6 +209,7 @@ class IndexLawsTest {
             val applied: Set<Long>,
             val packages: Map<PackageKey, PackageState>,
             val clean: Set<PackageKey>,
+            val consumable: Set<Long>,
         )
 
         fun transientlyFailed(): Set<PackageKey> = lastTransient
@@ -256,7 +264,7 @@ class IndexLawsTest {
                     if (failure?.second?.category == IssueCategory.TRANSIENT && reads[key] != true) transient += key
                     val state =
                         when (key) {
-                            in reads -> rebuilt(key, pkg, prev, failure, reads.getValue(key), env, today)
+                            in reads -> rebuilt(key, pkg, prev, failure, reads.getValue(key), key in faults.entry, env, today)
                             in keys -> rekeyed(key, pkg, checkNotNull(prev), failure, env, today)
                             else -> checkNotNull(prev).copy(observed = pkg.observation)
                         }
@@ -265,7 +273,11 @@ class IndexLawsTest {
             }
             packages = next
             lastTransient = transient
-            return Step(reads.keys, keys, reads, applied, next.filterKeys { it.profileSerial in applied }, clean)
+            val consumable =
+                notices
+                    .filter { n -> (n.profileSerial ?: USER_SERIALS[n.userHandle])?.let { it in applied || it in device.removed } == true }
+                    .mapTo(HashSet()) { it.seq }
+            return Step(reads.keys, keys, reads, applied, next.filterKeys { it.profileSerial in applied }, clean, consumable)
         }
 
         // 段の順に最初の失敗。補助の段はアーカイブ済みでは読まない。読む前後の鍵の動きは、一覧の時点の値がある成分だけが効く
@@ -279,10 +291,11 @@ class IndexLawsTest {
                 (key in faults.moved && (pkg.apkKey != null || pkg.updatedAt != null)) ||
                     (key in faults.movedBefore && pkg.apkKey != null) ||
                     (key in faults.movedTime && pkg.updatedAt != null)
-            return faults.entry[key]?.let { Stage.ENTRY to it }
+            // 読んでいる間に替わったことを、段の失敗より先に扱う
+            return (Stage.ENTRY to Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT)).takeIf { moved }
+                ?: faults.entry[key]?.let { Stage.ENTRY to it }
                 ?: faults.label[key]?.takeIf { aux }?.let { Stage.LABEL to it }
                 ?: faults.signer[key]?.takeIf { aux }?.let { Stage.SIGNER to it }
-                ?: (Stage.ENTRY to Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT)).takeIf { moved }
                 ?: keyFailure(key, pkg.labels.keys, faults)
         }
 
@@ -299,6 +312,7 @@ class IndexLawsTest {
             prev: PackageState?,
             failure: Pair<Stage, Failure>?,
             retryOnly: Boolean,
+            entryFailed: Boolean,
             env: Environment,
             today: String,
         ): PackageState {
@@ -328,14 +342,8 @@ class IndexLawsTest {
                             },
                     )
                 }
-            val readLabels =
-                if (failure.first == Stage.ENTRY &&
-                    failure.second.cause != Failure.CHANGED_DURING_READ
-                ) {
-                    emptyMap()
-                } else {
-                    pkg.labels
-                }
+            // ENTRY の段で失敗した読み取りは表示名を返さない（前後の鍵が動いた回も同じ）
+            val readLabels = if (entryFailed) emptyMap() else pkg.labels
             val substitutes =
                 (entries - current?.labels?.keys.orEmpty()).associateWith {
                     readLabels[it] ?: prev?.substitutes?.get(

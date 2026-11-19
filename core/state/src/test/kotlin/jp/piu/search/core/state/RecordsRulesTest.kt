@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test
 class RecordsRulesTest {
     @Test
     fun `読み込みの失敗の間は、空の写しから計算も書き込みもせずに失敗を返す`() {
-        val failed = RecordsRules.loadFailed(RecordsState(), "android.database.sqlite.SQLiteException")
-        for (state in listOf(RecordsState(), failed)) {
+        val failed = RecordsRules.loadFailed(RecordsState.INITIAL, "android.database.sqlite.SQLiteException")
+        for (state in listOf(RecordsState.INITIAL, failed)) {
             val change = RecordsRules.change(state, RecordsRequest.Suppress(pair("てんき", WEATHER), NOW), UNKNOWN)
             assertNull(change.write)
             assertSame(state, change.next)
@@ -50,7 +50,7 @@ class RecordsRulesTest {
         val id = opened.notices.single().id
         val change = RecordsRules.change(opened, open(selection = pair("てんき", WEATHER), at = NOW + 1), exists(0))
         val failed = RecordsRules.commit(change, written = false)
-        assertEquals(opened.records, failed.records)
+        assertEquals(opened.saved, failed.saved)
         assertEquals(setOf(WORK), failed.profiles.removed)
         assertEquals(setOf(WORK), failed.profiles.pendingPrune)
         assertFalse(failed.canUndo(id))
@@ -213,13 +213,13 @@ class RecordsRulesTest {
         assertFalse(gone.canUndo(id))
         assertNull(RecordsRules.change(gone, RecordsRequest.Undo(id), UNKNOWN).write)
         val pruned = RecordsRules.commit(RecordsRules.pruneChange(gone)!!, written = true)
-        assertTrue(12L !in pruned.records!!.serials)
+        assertTrue(12L !in pruned.saved!!.serials)
     }
 
     @Test
     fun `確認に渡した集合を呼ぶ側が後で変えても、確認した事実を失わない`() {
         val existing = mutableSetOf(0L, WORK)
-        val confirmed = RecordsRules.checked(ready(), ProfileCheck.Existing(existing))
+        val confirmed = RecordsRules.checked(ready(), ProfileCheck.of(0, existing))
         existing -= WORK
         assertEquals(setOf(0L, WORK), confirmed.profiles.confirmed)
         // 行のない 10 も、前に確認した集合にあったので、次の確認で消えれば削除済みになる
@@ -229,7 +229,7 @@ class RecordsRulesTest {
     @Test
     fun `読み込んだ起動の記録の Map を後で変えても、写しも次の書き込みも変わらない`() {
         val source = mutableMapOf(WEATHER to LaunchRecord(1, NOW))
-        val state = RecordsRules.loaded(RecordsState(), UserRecords(LearnedMemory.EMPTY, LaunchHistory(source)), setOf(0), UNKNOWN)
+        val state = RecordsRules.loaded(RecordsState.INITIAL, UserRecords(LearnedMemory.EMPTY, LaunchHistory(source)), setOf(0), UNKNOWN)
         source[WEATHER] = LaunchRecord(9, NOW)
         source[PAY] = LaunchRecord(1, NOW)
         assertEquals(mapOf(WEATHER to LaunchRecord(1, NOW)), state.records!!.launches.records)
@@ -244,12 +244,12 @@ class RecordsRulesTest {
         val hidden = LearnedRecord(NormalizedText("あ".repeat(80)), AppId("jp.example.mail", "Inbox", WORK), 1, NOW, rescued = false)
         val records = UserRecords(LearnedMemory(listOf(hidden)), LaunchHistory.EMPTY)
         assertTrue(records.serials.isEmpty())
-        val loaded = RecordsRules.loaded(RecordsState(), records, storedSerials = setOf(WORK), exists(0))
+        val loaded = RecordsRules.loaded(RecordsState.INITIAL, records, storedSerials = setOf(WORK), exists(0))
         assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), RecordsRules.pruneChange(loaded)!!.write)
         val pruned = RecordsRules.commit(RecordsRules.pruneChange(loaded)!!, written = true)
         assertTrue(pruned.storedSerials.isEmpty())
         // 読み込みの後の確認でも、表の番号で消えた番号を見つける
-        val later = RecordsRules.checked(RecordsRules.loaded(RecordsState(), records, setOf(0, WORK), UNKNOWN), exists(0))
+        val later = RecordsRules.checked(RecordsRules.loaded(RecordsState.INITIAL, records, setOf(0, WORK), UNKNOWN), exists(0))
         assertEquals(setOf(WORK), later.profiles.pendingPrune)
     }
 
@@ -284,7 +284,7 @@ class RecordsRulesTest {
         // 同じ集合の確認でも、次の機会に同じ整理を作れる
         assertEquals(prune.write, RecordsRules.pruneChange(RecordsRules.checked(failed, exists(0)))!!.write)
         val done = RecordsRules.commit(prune, written = true)
-        assertEquals(setOf(0L), done.records!!.serials)
+        assertEquals(setOf(0L), done.saved!!.serials)
         assertNull(RecordsRules.pruneChange(done))
         assertEquals(setOf(WORK), done.profiles.removed)
     }
@@ -293,7 +293,7 @@ class RecordsRulesTest {
     fun `読み込みの時点で確かめた集合にない番号の記録は、整理の対象になる`() {
         val work = AppId("jp.example.mail", "Inbox", WORK)
         val records = UserRecords(LearnedMemory.EMPTY, LaunchHistory(mapOf(work to LaunchRecord(1, NOW))))
-        val loaded = RecordsRules.loaded(RecordsState(), records, records.serials, exists(0))
+        val loaded = RecordsRules.loaded(RecordsState.INITIAL, records, records.serials, exists(0))
         assertEquals(setOf(WORK), loaded.profiles.pendingPrune)
         assertEquals(RecordsWrite(deleteSerials = setOf(WORK)), RecordsRules.pruneChange(loaded)!!.write)
         // 削除を確かめた番号の行が読み戻されたら、確かめられない読み込みでも整理し直す
@@ -328,6 +328,49 @@ class RecordsRulesTest {
     }
 
     @Test
+    fun `検証できない一覧（取れない・空・自分の番号がない・番号の取れない項目がある）は確かめられなかったとし、削除も拒否もしない`() {
+        val work = AppId("jp.example.mail", "Inbox", WORK)
+        val state = apply(ready(), open(launched = work), exists(0, WORK))
+        for (serials in listOf(null, emptyList(), listOf(WORK), listOf(0L, -1L))) {
+            val check = ProfileCheck.of(0, serials)
+            assertEquals(UNKNOWN, check)
+            val after = RecordsRules.checked(state, check)
+            assertTrue(after.profiles.removed.isEmpty())
+            assertNull(RecordsRules.pruneChange(after))
+            assertTrue(RecordsRules.change(after, open(launched = work, at = NOW + 1), check).write != null)
+        }
+        // 自分の番号を含み、すべての番号が取れた一覧だけが存在の集合になる
+        assertEquals(setOf(0L, WORK), (ProfileCheck.of(0, listOf(0L, WORK)) as ProfileCheck.Existing).serials)
+    }
+
+    @Test
+    fun `削除を確かめたプロファイルの記録は、整理が終わる前から画面に出す写しに出さず、保存の基準には整理まで残す`() {
+        val work = AppId("jp.example.mail", "Inbox", WORK)
+        val opened = apply(ready(), open(selection = pair("めーる", work), launched = work), exists(0, WORK))
+        val removed = RecordsRules.checked(opened, exists(0))
+        assertTrue(removed.records!!.serials.isEmpty())
+        assertEquals(setOf(WORK), removed.saved!!.serials)
+        // 整理の保存に失敗しても、画面には出さない
+        val failed = RecordsRules.commit(RecordsRules.pruneChange(removed)!!, written = false)
+        assertTrue(failed.records!!.serials.isEmpty())
+        val pruned = RecordsRules.commit(RecordsRules.pruneChange(removed)!!, written = true)
+        assertTrue(pruned.saved!!.serials.isEmpty())
+    }
+
+    @Test
+    fun `既にある行への読み込みは、回数は大きいほう・救済と印はどちらかにあれば残し・時刻は読み込みの時刻にそろえる`() {
+        val old = LearnedRecord(NormalizedText("てんき"), WEATHER, 5, NOW + DAY, rescued = false, suppressed = true)
+        val state = ready(UserRecords(LearnedMemory(listOf(old)), LaunchHistory.EMPTY))
+        val imported = LearnedRecord(NormalizedText("てんき"), WEATHER, 3, NOW - DAY, rescued = true, suppressed = false)
+        val row =
+            apply(state, RecordsRequest.Import(listOf(imported), NOW))
+                .saved!!
+                .learned.records
+                .getValue(pair("てんき", WEATHER))
+        assertEquals(LearnedRecord(NormalizedText("てんき"), WEATHER, 5, NOW + DAY, rescued = true, suppressed = true), row)
+    }
+
+    @Test
     fun `忘却と削除は学習だけを変え、変わらなければ書かない`() {
         val old = LearnedRecord(NormalizedText("てんき"), WEATHER, 1, NOW - LearningConfig.DEFAULT.forgetAfterMillis, rescued = false)
         val state = ready(UserRecords(LearnedMemory(listOf(old)), LaunchHistory.EMPTY))
@@ -347,7 +390,7 @@ class RecordsRulesTest {
     ): RecordsState = RecordsRules.commit(RecordsRules.change(state, request, check), written = true)
 
     private fun ready(records: UserRecords = UserRecords.EMPTY): RecordsState =
-        RecordsRules.loaded(RecordsState(), records, records.serials, UNKNOWN)
+        RecordsRules.loaded(RecordsState.INITIAL, records, records.serials, UNKNOWN)
 
     private fun open(
         selection: LearnedPair? = null,
@@ -364,7 +407,7 @@ class RecordsRulesTest {
         val WEATHER = AppId("jp.example.weather", "Main", 0)
         val PAY = AppId("jp.example.pay", "Main", 0)
 
-        fun exists(vararg serials: Long): ProfileCheck = ProfileCheck.Existing(serials.toSet())
+        fun exists(vararg serials: Long): ProfileCheck = ProfileCheck.of(0, serials.toList())
 
         fun pair(
             query: String,

@@ -94,7 +94,7 @@ internal data class Round(
     val previous: IndexSnapshot,
     val observation: DeviceObservation,
     val plan: SyncPlan,
-    val reads: Map<Long, ProfileReads>,
+    val reads: List<ProfileReads>,
     val jobs: Map<PackageKey, List<KeyJob>>,
     val built: Map<KeyJob, KeyOutcome>,
     val genres: GenreResult,
@@ -139,18 +139,19 @@ internal fun sync(
     return Round(previous, observation, plan, reads, jobs, built, genres, outcome)
 }
 
-// 偽の読み手。段の順（ENTRY・LABEL・SIGNER）に、注入した失敗の最初のものを本当の失敗として返す。
+// 偽の読み手。読む前後の鍵を取り、段の順（ENTRY・LABEL・SIGNER）に、注入した失敗の最初のものを本当の失敗として返す。
 // アーカイブ済み（補助の材料を頼まれない）は補助の段を読まないので、その段の失敗も起きず、空で成功する
 private fun read(
     device: FakeDevice,
     plan: SyncPlan,
     faults: Faults,
-): Map<Long, ProfileReads> =
-    plan.reads.entries.groupBy { it.key.profileSerial }.mapValues { (serial, jobs) ->
-        val profile = device.profiles.getValue(serial)
+): List<ProfileReads> =
+    plan.profileReads.values.map { request ->
+        val profile = device.profiles.getValue(request.serial)
         ProfileReads(
+            request,
             if (profile.readsComplete) ListingStatus.COMPLETE else ListingStatus.UNAVAILABLE,
-            jobs.associate { (key, job) -> job to readPackage(device.pkg(key), key, job.auxiliary, faults) },
+            request.jobs.associateWith { job -> readPackage(device.pkg(job.key), job.key, job.auxiliary, faults) },
         )
     }
 
@@ -160,11 +161,6 @@ private fun readPackage(
     aux: Boolean,
     faults: Faults,
 ): MaterialRead {
-    faults.entry[key]?.let { return MaterialRead.Failed(Stage.ENTRY, it) }
-    if (aux) {
-        faults.label[key]?.let { return MaterialRead.Failed(Stage.LABEL, it, pkg.labels) }
-        faults.signer[key]?.let { return MaterialRead.Failed(Stage.SIGNER, it, pkg.labels) }
-    }
     val keys = KeyObservation(pkg.apkKey, pkg.updatedAt)
     // moved は読んだ後の APK と時刻、movedBefore は読む前の APK だけ、movedTime は読んだ後の時刻だけを変える
     val after =
@@ -174,6 +170,11 @@ private fun readPackage(
             else -> keys
         }
     val before = if (key in faults.movedBefore) KeyObservation("moved-before", pkg.updatedAt) else keys
+    faults.entry[key]?.let { return MaterialRead.Failed(Stage.ENTRY, it, before, after) }
+    if (aux) {
+        faults.label[key]?.let { return MaterialRead.Failed(Stage.LABEL, it, before, after, pkg.labels) }
+        faults.signer[key]?.let { return MaterialRead.Failed(Stage.SIGNER, it, before, after, pkg.labels) }
+    }
     return MaterialRead.Read(
         labels = pkg.labels,
         before = before,

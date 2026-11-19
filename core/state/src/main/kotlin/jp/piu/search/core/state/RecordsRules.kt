@@ -9,16 +9,16 @@ import jp.piu.search.core.search.LearnedRecord
 import jp.piu.search.core.search.LearningDecision
 
 /** 記録の読み込みの状態。失敗を空の記録に置き換えない（空の写しから保存すると、保存済みの記録を上書きするため）。 */
-public sealed interface RecordsLoad {
+internal sealed interface RecordsLoad {
     /** 読み込み中。変更の頼みは読み込みを待つ（待つのは呼ぶ側）。 */
-    public data object Loading : RecordsLoad
+    data object Loading : RecordsLoad
 
     /**
      * 読み込みに失敗した。次の頼みと前面への復帰で読み直す。
      *
      * @property cause 理由
      */
-    public data class Failed(
+    data class Failed(
         val cause: String,
     ) : RecordsLoad
 
@@ -27,7 +27,7 @@ public sealed interface RecordsLoad {
      *
      * @property records 写し
      */
-    public data class Ready(
+    data class Ready(
         val records: UserRecords,
     ) : RecordsLoad
 }
@@ -38,16 +38,38 @@ public sealed interface RecordsLoad {
  */
 public sealed interface ProfileCheck {
     /**
-     * 有効な一覧で確かめた。
+     * 有効な一覧で確かめた。[of] で検証した一覧からだけ作る（空の集合などを渡して、すべての記録を消さないため）。
      *
-     * @property serials 存在するプロファイルのシリアル番号
+     * @property serials 存在するプロファイルのシリアル番号。自分の番号を含む
      */
-    public data class Existing(
-        val serials: Set<Long>,
-    ) : ProfileCheck
+    public class Existing internal constructor(
+        public val serials: Set<Long>,
+    ) : ProfileCheck {
+        override fun equals(other: Any?): Boolean = other is Existing && other.serials == serials
+
+        override fun hashCode(): Int = serials.hashCode()
+
+        override fun toString(): String = "Existing($serials)"
+    }
 
     /** 確かめられなかった。最後に確認した状態を保ち、確認済みの削除は忘れず、まだ確認していない番号は拒まない。 */
     public data object Unknown : ProfileCheck
+
+    /** 作り方。 */
+    public companion object {
+        /**
+         * OS の一覧 [serials] から作る。一覧が取れなかった（null）・自分の番号 [own] を含まない（空を含む）・
+         * 番号を取れなかった項目（負の番号）がある一覧は、確かめられなかった（[Unknown]）とする。
+         * 一部しか取れない一覧を存在の集合として当てると、存在するプロファイルの記録を消すため（今の `ExistingProfiles` と同じ規則）。
+         *
+         * @param own このアプリが動いているユーザーのシリアル番号
+         * @param serials 同じグループのユーザーのシリアル番号（`UserManager.getSerialNumberForUser` の値）。問い合わせに失敗したなら null
+         */
+        public fun of(
+            own: Long,
+            serials: Collection<Long>?,
+        ): ProfileCheck = if (serials == null || own !in serials || serials.any { it < 0 }) Unknown else Existing(serials.toSet())
+    }
 }
 
 /**
@@ -101,7 +123,10 @@ public data class UndoMaterial(
 /**
  * 記録の側の状態の全体（作った後は変えない）。知らせと取り消し材料はメモリだけに持つ。
  *
- * @property load 読み込みの状態と写し
+ * DB の差分の基準にする保存した写し（[saved]）と、画面に出す写し（[records]）を分ける。削除を確かめたプロファイルの記録は、
+ * 整理（DB から消す書き込み）が終わるまで保存した写しに残るが、画面には出さない（削除は整理を待たずに画面に効かせる）。
+ *
+ * @property load 読み込みの状態と保存した写し
  * @property profiles 知っているプロファイル
  * @property notices まだ出し終えていない知らせ
  * @property undo 知らせの識別子 → まだ有効な取り消し材料
@@ -109,19 +134,42 @@ public data class UndoMaterial(
  * @property storedSerials DB の表に行のあるプロファイルの番号（表から直に数えた値）。写しに見えない行（長すぎる語の学習など）の番号も含み、
  *   整理の対象を決めるのに使う
  */
-public data class RecordsState(
-    val load: RecordsLoad = RecordsLoad.Loading,
+@ConsistentCopyVisibility
+public data class RecordsState internal constructor(
+    internal val load: RecordsLoad = RecordsLoad.Loading,
     val profiles: ProfileKnowledge = ProfileKnowledge(),
     val notices: List<RescueNotice> = emptyList(),
-    val undo: Map<Long, UndoMaterial> = emptyMap(),
-    val nextNoticeId: Long = 1,
-    val storedSerials: Set<Long> = emptySet(),
+    internal val undo: Map<Long, UndoMaterial> = emptyMap(),
+    internal val nextNoticeId: Long = 1,
+    internal val storedSerials: Set<Long> = emptySet(),
 ) {
-    /** 読めていれば写し、そうでなければ null。 */
-    public val records: UserRecords? get() = (load as? RecordsLoad.Ready)?.records
+    // DB の差分の基準。削除を確かめた番号の記録も、整理が終わるまで含む
+    internal val saved: UserRecords? get() = (load as? RecordsLoad.Ready)?.records
+
+    /** 画面に出す写し。削除を確かめたプロファイルの記録を除く。読めていなければ null。 */
+    public val records: UserRecords?
+        get() =
+            saved?.let {
+                if (profiles.removed.isEmpty() ||
+                    it.serials.none { s -> s in profiles.removed }
+                ) {
+                    it
+                } else {
+                    it.without(profiles.removed)
+                }
+            }
+
+    /** 読み込みに失敗した理由。失敗していなければ null。 */
+    public val loadFailure: String? get() = (load as? RecordsLoad.Failed)?.cause
 
     /** 知らせ [id] の取り消しがまだ有効か。 */
     public fun canUndo(id: Long): Boolean = id in undo
+
+    /** 定数。 */
+    public companion object {
+        /** 読み込み前の状態。 */
+        public val INITIAL: RecordsState = RecordsState()
+    }
 }
 
 /** 記録の変更の頼み。 */
@@ -300,9 +348,9 @@ public object RecordsRules {
         asked: Set<Long>,
     ): RecordsState {
         if (check !is ProfileCheck.Existing) return state
-        // 呼ぶ側の集合を写し取る。後で呼ぶ側が中身を変えても、確認した事実（行のない番号が存在したこと）を失わないため
-        val existing = check.serials.toSet()
-        val known = state.profiles.confirmed.orEmpty() + state.records?.serials.orEmpty() + state.storedSerials + asked
+        // 集合は ProfileCheck.of が写し取っている
+        val existing = check.serials
+        val known = state.profiles.confirmed.orEmpty() + state.saved?.serials.orEmpty() + state.storedSerials + asked
         return state.copy(profiles = state.profiles.copy(confirmed = existing)).withRemoved(known - existing)
     }
 
@@ -332,7 +380,7 @@ public object RecordsRules {
      * 書き手は頼みのたびと前面への復帰のたびに試す。プロファイルの変化の知らせだけに頼ると、再試行の機会がないため。
      */
     public fun pruneChange(state: RecordsState): RecordsChange? {
-        val records = state.records ?: return null
+        val records = state.saved ?: return null
         val targets = state.profiles.pendingPrune
         if (targets.isEmpty()) return null
         val next =
@@ -356,7 +404,7 @@ public object RecordsRules {
         check: ProfileCheck,
     ): RecordsChange {
         val base = checked(state, check, serialsOf(request))
-        val records = base.records ?: return RecordsChange(base, null, RecordsResult.Failure(RecordsFailure.NOT_LOADED), base)
+        val records = base.saved ?: return RecordsChange(base, null, RecordsResult.Failure(RecordsFailure.NOT_LOADED), base)
         return compute(base, records, request)
     }
 

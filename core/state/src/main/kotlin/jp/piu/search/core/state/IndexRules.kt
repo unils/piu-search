@@ -71,7 +71,8 @@ public object IndexRules {
             }
             previous.packages.keys.filterTo(removals) { it.profileSerial == serial && it.packageName !in listing.packages }
         }
-        return SyncPlan(reads, keys, removals, GenreRequest(genreTargets), noticeTargets, previous, frozen, env)
+        val profileReads = reads.values.groupBy { it.key.profileSerial }.mapValues { (serial, jobs) -> ProfileReadRequest(serial, jobs) }
+        return SyncPlan(reads, profileReads, keys, removals, GenreRequest(genreTargets), noticeTargets, previous, frozen, env)
     }
 
     /**
@@ -85,20 +86,21 @@ public object IndexRules {
      * 補助の材料を頼まなかった組の補助の材料・一覧の入口の分そろわない表示名は、呼ぶ側の誤りとして [IllegalArgumentException] で止める。
      *
      * @param plan [plan] の結果
-     * @param reads プロファイルごとの材料の読み取りの結果。材料を頼んだプロファイルの分だけがちょうどいる
+     * @param reads 材料の読み取りの結果。[SyncPlan.profileReads] の頼みごとにちょうど 1 つ（読めなかった結果も頼みを持つ）
      * @param today 欠けの日（UTC の `YYYY-MM-DD`）
      */
     public fun prepare(
         plan: SyncPlan,
-        reads: Map<Long, ProfileReads>,
+        reads: Collection<ProfileReads>,
         today: String,
     ): PreparedSync {
-        val frozenReads = reads.frozen()
-        val jobsBySerial = plan.reads.values.groupBy { it.key.profileSerial }
-        require(frozenReads.keys == jobsBySerial.keys) { "材料の読み取りのプロファイルが頼みと合わない: ${frozenReads.keys} ${jobsBySerial.keys}" }
-        for ((serial, profile) in frozenReads) {
+        val requests = plan.profileReads.values
+        require(reads.size == requests.size && reads.all { r -> requests.any { it === r.request } }) { "材料の読み取りの結果が頼みと合わない" }
+        val frozenReads = reads.associate { it.request.serial to it.frozen() }
+        require(frozenReads.size == requests.size) { "同じ頼みの結果が 2 つある" }
+        for (profile in frozenReads.values) {
             if (profile.complete) {
-                require(profile.packages.keys == jobsBySerial.getValue(serial).toSet()) { "材料の読み取りが頼みと合わない: プロファイル $serial" }
+                require(profile.packages.keys == profile.request.jobs.toSet()) { "材料の読み取りが頼みと合わない: プロファイル ${profile.request.serial}" }
             }
         }
         val statuses = statuses(plan, frozenReads)
@@ -199,6 +201,7 @@ public object IndexRules {
         if (attempt.materialKey != MaterialKey.of(observed, env)) reasons += ReadReason.KEY_CHANGED
         if (noticed) reasons += ReadReason.NOTICE
         if (attempt.retry) reasons += ReadReason.RETRY
+        // 版が変われば、欠けのある組は KEYS だけの欠けでも材料から読み直す。版の更新はまれで、キーだけを作り直す経路を残すと規則が増えるため
         if (issue != null && issue.version != env.appVersion) reasons += ReadReason.VERSION
         if (issue != null && attempt.derivedKey != DerivedKey.of(env)) reasons += ReadReason.DERIVED_CHANGED
         // 回数が取れない端末では読み直さない。プロセスがない間の更新の取りこぼしは知らせに頼る
@@ -219,7 +222,7 @@ public object IndexRules {
     // 一覧の時点で鍵がなければ前後を比べない（片方がない比較では替わったかを決められない）
     private fun changedDuringRead(
         observed: PackageObservation,
-        read: MaterialRead.Read,
+        read: MaterialRead,
     ): Boolean {
         val apkMoved = observed.apkKey != null && (read.before.apkKey != observed.apkKey || read.after.apkKey != observed.apkKey)
         val timeMoved =
@@ -241,6 +244,11 @@ public object IndexRules {
             failure: Failure,
             labels: Map<String, String>,
         ) = PreparedPackage(key, observed, read = true, job.retryOnly, null, stage to failure, labels, round)
+        // 読んでいる間に替わったなら、段の失敗より先に扱う（替わった APK の決定的な失敗を確定せず、再試行するため）
+        if (changedDuringRead(observed, read)) {
+            val labels = (read as? MaterialRead.Read)?.labels ?: (read as MaterialRead.Failed).labels
+            return failed(Stage.ENTRY, Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT), labels)
+        }
         return when (read) {
             is MaterialRead.Failed -> {
                 require(read.stage != Stage.KEYS) { "読み取りの失敗に KEYS の段: $key" }
@@ -252,13 +260,9 @@ public object IndexRules {
                 require(job.auxiliary || (read.localized.isEmpty() && read.signerDns.isEmpty())) { "補助の材料を頼んでいない組の補助の材料: $key" }
                 // 表示名の欠けた成功を受けると、パッケージ名のキーを今の鍵で確定し、次の同期で読み直さない
                 require(read.labels.keys == observed.entries) { "表示名が一覧の入口と合わない: $key ${read.labels.keys} ${observed.entries}" }
-                if (changedDuringRead(observed, read)) {
-                    failed(Stage.ENTRY, Failure(Failure.CHANGED_DURING_READ, IssueCategory.TRANSIENT), read.labels)
-                } else {
-                    val localized = read.localized.filter { (entry, names) -> entry in observed.entries && names.isNotEmpty() }
-                    val materials = Materials(MaterialKey.of(observed, env), read.labels, localized, read.signerDns)
-                    PreparedPackage(key, observed, read = true, job.retryOnly, materials, null, read.labels, round)
-                }
+                val localized = read.localized.filter { (entry, names) -> entry in observed.entries && names.isNotEmpty() }
+                val materials = Materials(MaterialKey.of(observed, env), read.labels, localized, read.signerDns)
+                PreparedPackage(key, observed, read = true, job.retryOnly, materials, null, read.labels, round)
             }
         }
     }
@@ -335,8 +339,8 @@ public object IndexRules {
             removedProfiles.toSet(),
         )
 
-    private fun Map<Long, ProfileReads>.frozen(): Map<Long, ProfileReads> =
-        mapValues { (_, profile) ->
+    private fun ProfileReads.frozen(): ProfileReads =
+        let { profile ->
             profile.copy(
                 packages =
                     profile.packages.mapValues { (_, read) ->

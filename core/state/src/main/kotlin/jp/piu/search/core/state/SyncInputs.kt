@@ -110,10 +110,25 @@ public class GenreRequest internal constructor(
 }
 
 /**
+ * プロファイル 1 つの材料の読み取りの頼み。頼んだ計画 1 つに結び付く（等しさは同じものかどうか）。
+ * 読めた結果も読めなかった結果も、この頼みを持って返す（別の計画の「読めなかった」を受けて、更新と削除を見送らないため）。
+ *
+ * @property serial プロファイルのシリアル番号
+ * @property jobs このプロファイルの組の頼み
+ */
+public class ProfileReadRequest internal constructor(
+    public val serial: Long,
+    public val jobs: List<MaterialJob>,
+) {
+    override fun toString(): String = "ProfileReadRequest($serial, $jobs)"
+}
+
+/**
  * 同期 1 回の計画（[IndexRules.plan] の出力）。前の写し・観測・環境を中に束ね、[IndexRules.prepare] に渡し直す引数をなくす
  * （別の回のものを組み合わせても気づけないため）。
  *
- * @property reads 作り直す組 → 材料の読み取りの頼み。読んだ結果は頼みごとに返す（[ProfileReads.packages]）
+ * @property reads 作り直す組 → 材料の読み取りの頼み
+ * @property profileReads プロファイル → 材料の読み取りの頼み。結果はこの頼みごとに 1 つ返す（[ProfileReads]）
  * @property keys 材料は読まずにキーだけを作り直す組（欠けのない組で、キーの鍵だけが違う）
  * @property removals 消す候補の組。当てられるプロファイルの分だけを [IndexRules.apply] が消す
  * @property genres ジャンルの問い合わせの頼み
@@ -121,6 +136,7 @@ public class GenreRequest internal constructor(
  */
 public class SyncPlan internal constructor(
     public val reads: Map<PackageKey, MaterialJob>,
+    public val profileReads: Map<Long, ProfileReadRequest>,
     public val keys: Set<PackageKey>,
     public val removals: Set<PackageKey>,
     public val genres: GenreRequest,
@@ -152,10 +168,19 @@ public data class KeyObservation(
 /**
  * 組 1 つの材料の読み取りの結果。成功（空を含む）と本当の失敗に分け、部分の結果は持たない（組ごとに全部か無かで当てるため）。
  * ないことが決まっているもの（その言語の名前の資源がない・名前が資源でない・署名がない・アーカイブ済み）は、空の値の成功にする。
+ *
+ * 成功でも失敗でも、取れた読む前後の鍵を持つ。[IndexRules] は先に前後の鍵の動き（[Failure.CHANGED_DURING_READ]）を判定し、
+ * その後で完全な材料か組の失敗かを決める。読んでいる間に APK が替わったなら、段の失敗より替わったことを先に扱い、再試行するため。
  */
 public sealed interface MaterialRead {
+    /** 読む前の鍵。取れなかった成分は null。 */
+    public val before: KeyObservation
+
+    /** 読んだ後の鍵。取れなかった成分は null。 */
+    public val after: KeyObservation
+
     /**
-     * すべての段を読めた。前後の鍵の比較は [IndexRules] が行う。
+     * すべての段を読めた。
      *
      * @property labels 入口ごとの表示名。一覧のすべての入口の分がいる（取れなかったなら [Failed] にする）
      * @property before 読む前の鍵
@@ -165,8 +190,8 @@ public sealed interface MaterialRead {
      */
     public data class Read(
         val labels: Map<String, String>,
-        val before: KeyObservation,
-        val after: KeyObservation,
+        override val before: KeyObservation,
+        override val after: KeyObservation,
         val localized: Map<String, List<String>> = emptyMap(),
         val signerDns: List<String> = emptyList(),
     ) : MaterialRead
@@ -176,24 +201,30 @@ public sealed interface MaterialRead {
      *
      * @property stage 失敗した段（[Stage.KEYS] 以外）
      * @property failure 失敗
+     * @property before 読む前の鍵
+     * @property after 読んだ後の鍵（失敗の後に取る）
      * @property labels 失敗の前に取れた表示名。検索に使う値のない入口の代わりの表示名にだけ使う
      */
     public data class Failed(
         val stage: Stage,
         val failure: Failure,
+        override val before: KeyObservation,
+        override val after: KeyObservation,
         val labels: Map<String, String> = emptyMap(),
     ) : MaterialRead
 }
 
 /**
- * プロファイル 1 つの材料の読み取りの結果。計画が材料を頼んだプロファイルの分だけを返す（ほかのプロファイルの結果は受けない）。
+ * プロファイル 1 つの材料の読み取りの結果。
  *
+ * @property request 答えた頼み
  * @property status 読み終えた後に確かめたプロファイルの状態。[ListingStatus.COMPLETE] でなければ結果を使わない
  *   （一時停止を正常な空にしないため）。一時停止などの読めない状態と、問い合わせの失敗を分ける
- * @property packages 頼み → 結果。[ListingStatus.COMPLETE] なら、このプロファイルの頼みの分がちょうどいる
+ * @property packages 頼み → 結果。[ListingStatus.COMPLETE] なら、頼みの組の分がちょうどいる
  * @property failure [ListingStatus.FAILED] の理由
  */
 public data class ProfileReads(
+    val request: ProfileReadRequest,
     val status: ListingStatus,
     val packages: Map<MaterialJob, MaterialRead> = emptyMap(),
     val failure: String? = null,

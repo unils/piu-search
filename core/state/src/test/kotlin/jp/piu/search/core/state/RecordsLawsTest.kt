@@ -38,18 +38,24 @@ class RecordsLawsTest {
                         ),
                 ),
             )
-            var state = RecordsState()
+            var state = RecordsState.INITIAL
             val existing = INITIAL.toMutableSet()
             val created = INITIAL.toMutableSet()
             // 有効な一覧で存在を確かめたことのある番号
             val confirmedEver = HashSet<Long>()
 
+            // OS の一覧の問い合わせ。1/4 で、取れない・空・自分の番号がない・番号の取れない項目がある一覧になる（どれも確かめられなかった扱い）
             fun query(): ProfileCheck =
-                if (random.nextInt(4) == 0) {
-                    ProfileCheck.Unknown
-                } else {
-                    ProfileCheck.Existing(existing.toSet())
-                }
+                ProfileCheck.of(
+                    0,
+                    when (random.nextInt(16)) {
+                        0 -> null
+                        1 -> emptyList()
+                        2 -> existing - 0L
+                        3 -> existing.toList() + -1L
+                        else -> existing.toList()
+                    },
+                )
 
             // その場で確かめた不在が漏れなく効く: 存在を確かめたことのある番号と、表に行のある番号のうち今ないものは削除済み
             fun checkAbsence(
@@ -134,8 +140,10 @@ class RecordsLawsTest {
                         law(before.profiles.removed.all { it in state.profiles.removed }) { "確認した削除を忘れた: $request" }
                     }
                 }
-                state.records?.let { records ->
-                    law(db.records() == records) { "DB と写しが違う: db=${db.records()} 写し=$records" }
+                state.saved?.let { saved ->
+                    law(db.records() == saved) { "DB と保存した写しが違う: db=${db.records()} 写し=$saved" }
+                    // 画面に出す写しは、削除を確かめた番号の記録を整理の前から除く
+                    law(state.records == saved.without(state.profiles.removed)) { "画面に出す写しに削除したプロファイルの記録が残る" }
                 }
                 val removed = state.profiles.removed
                 law(removed.none { it in existing }) { "存在するプロファイル ${removed.intersect(existing)} を削除済みにした" }
@@ -173,6 +181,24 @@ class RecordsLawsTest {
                 ) { "起動 $launched の行 ${db.records().launches.records[launched]} が $expected でない" }
             }
 
+            is RecordsRequest.Import -> {
+                // 受けた記録ごとに、前の行（同じ頼みで先に合わせた行を含む）と合わせた値を、頼みと前の行から直に計算する
+                val expected = dbBefore.learned.records.toMutableMap()
+                for (record in request.records.filter { before.profiles.accepts(it.app.profileSerial) }) {
+                    val old = expected[record.pair]
+                    expected[record.pair] =
+                        LearnedRecord(
+                            record.query,
+                            record.app,
+                            maxOf(old?.count ?: 0, record.count),
+                            maxOf(request.at, old?.lastUsedAt ?: request.at),
+                            rescued = old?.rescued == true || record.rescued,
+                            suppressed = old?.suppressed == true || record.suppressed,
+                        )
+                }
+                law(db.records().learned.records == expected) { "読み込みの後の行が期待と違う: $request" }
+            }
+
             is RecordsRequest.Undo -> {
                 if (!before.canUndo(request.noticeId)) {
                     law(change.write == null && db.records() == dbBefore) { "古い取り消し ${request.noticeId} で表が変わった" }
@@ -198,13 +224,13 @@ class RecordsLawsTest {
         }
         val used = decision.used?.takeIf { accepts(it.app.profileSerial) } ?: return
         val old =
-            before.records
+            before.saved
                 ?.learned
                 ?.records
                 ?.get(used) ?: return
         if (!old.rescued || old.suppressed) return
         val now =
-            after.records!!
+            after.saved!!
                 .learned.records
                 .getValue(used)
         law(now.lastUsedAt >= request.at) { "使った学習のキー $used の時刻が進まない: $request" }

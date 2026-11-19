@@ -284,19 +284,24 @@ public data class PackageState(
             genres.mapValues { it.value.toList() },
         )
 
-    // 検索に使う値と最後の試みの整合。保存した写しの読み戻しで、壊れた組み合わせを検索に出さないため
-    internal fun requireConsistent() {
+    // 検索に使う値・最後の試み・観測の整合。保存した写しの読み戻しで、壊れた組み合わせを検索に出したまま固定しないため
+    internal fun isConsistent(): Boolean {
         val c = current
         val served = c?.labels?.keys.orEmpty()
-        require(c == null || c.labels.keys == c.keysByEntry.keys) { "表示名とキーの入口が違う: $key" }
-        require(served.none { it in substitutes }) { "入口が検索に使う値と代わりの表示名の両方にある: $key" }
-        require(served + substitutes.keys == observed.entries) { "一覧の入口が検索に使う値と代わりの表示名に合わない: $key" }
-        require(attempt.materialKey.entries == observed.entries) { "最後の試みの鍵の入口が一覧と違う: $key" }
-        if (attempt.issue == null) {
-            require(c != null && c.materialKey == attempt.materialKey && c.derivedKey == attempt.derivedKey) {
-                "成功した試みに対応する検索に使う値がない: $key"
-            }
-        }
+        val tried = attempt.materialKey
+        val parts =
+            (c == null || c.labels.keys == c.keysByEntry.keys) &&
+                served.none { it in substitutes } &&
+                served + substitutes.keys == observed.entries
+        // 試した鍵の観測の成分が観測と違えば、どちらかが壊れている
+        val observedMatches =
+            tried.entries == observed.entries && tried.apkKey == observed.apkKey && tried.updatedAt == observed.updatedAt &&
+                tried.archived == observed.archived
+        // 成功した試みは、同じ鍵の検索に使う値が全入口を持ち、代わりの表示名も再試行の枠もない
+        val success =
+            attempt.issue != null ||
+                (c != null && c.materialKey == tried && c.derivedKey == attempt.derivedKey && substitutes.isEmpty() && !attempt.retry)
+        return parts && observedMatches && success
     }
 }
 
@@ -344,7 +349,8 @@ public class IndexSnapshot internal constructor(
 
         /**
          * 保存した写しの読み戻し。組を入れ子まで写し取り（呼ぶ側が組み立てに使った集まりを後で変えても、公開した写しが変わらないため）、
-         * 組ごとに検索に使う値と最後の試みの整合を確かめる。合わなければ [IllegalArgumentException] で止め、呼ぶ側は空から作り直す。
+         * 組ごとに検索に使う値・最後の試み・観測の整合を確かめる。合わない組は写しに入れず、次の同期でまだない組として作り直す
+         * （壊れた組を成功のまま固定すると、同じ鍵では読み直さないため）。同じ組が 2 つあれば [IllegalArgumentException] で止める。
          *
          * @param packages 組の状態
          * @param listings プロファイルごとの最後の一覧の状態
@@ -354,9 +360,8 @@ public class IndexSnapshot internal constructor(
             listings: Map<Long, ListingStatus>,
         ): IndexSnapshot {
             val frozen = packages.map { it.frozen() }
-            frozen.forEach { it.requireConsistent() }
             require(frozen.map { it.key }.toSet().size == frozen.size) { "同じ組が 2 つある" }
-            return IndexSnapshot(frozen.associateBy { it.key }, listings.toMap())
+            return IndexSnapshot(frozen.filter { it.isConsistent() }.associateBy { it.key }, listings.toMap())
         }
     }
 }
