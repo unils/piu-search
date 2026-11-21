@@ -13,6 +13,8 @@ import jp.piu.search.core.state.ProfileCheck
 import jp.piu.search.core.state.RecordsWrite
 import jp.piu.search.core.text.NormalizedText
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 // 記録の側のテストに共通の材料。自分の番号は 0、仕事用は 11
 
@@ -44,9 +46,9 @@ internal fun seedWrite(): RecordsWrite =
 
 /** 問い合わせの答えを差し替えられる [ProfileProbe]。null は問い合わせの失敗。 */
 internal class FakeProbe(
-    var serials: Set<Long>? = setOf(OWN, WORK),
+    @Volatile var serials: Set<Long>? = setOf(OWN, WORK),
 ) : ProfileProbe {
-    var calls = 0
+    @Volatile var calls = 0
 
     override fun check(): ProfileCheck {
         calls++
@@ -63,6 +65,9 @@ internal class FaultyStorage(
 ) : RecordsStorage {
     var failLoads = 0
     var failWrites = 0
+
+    // 書き込みの失敗の型。SQLite の失敗（RuntimeException）のほか、保存先の入出力の失敗（IOException）も試す
+    var writeFailure: () -> Exception = { SQLiteFullException("書き込みの失敗") }
     var loads = 0
     val writes = ArrayList<RecordsWrite>()
 
@@ -78,10 +83,43 @@ internal class FaultyStorage(
     override fun write(write: RecordsWrite) {
         if (failWrites > 0) {
             failWrites--
-            throw SQLiteFullException("書き込みの失敗")
+            throw writeFailure()
         }
         delegate.write(write)
         writes += write
+    }
+}
+
+/**
+ * [blocks] に当たる書き込みを、[release] まで止める保存先。本物のスレッドの上で、書き込みの途中の公開値や取り消しを見るために使う。
+ * 止めた書き込みは、[failBlocked] なら DB に触れずに失敗させる。
+ */
+internal class BlockingStorage(
+    private val delegate: RecordsStorage,
+    private val blocks: (RecordsWrite) -> Boolean,
+) : RecordsStorage {
+    val entered = CountDownLatch(1)
+    val release = CountDownLatch(1)
+
+    @Volatile var failBlocked = false
+
+    override fun load(): StoredRecords = delegate.load()
+
+    override fun write(write: RecordsWrite) {
+        if (blocks(write) && entered.count > 0) {
+            entered.countDown()
+            check(release.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) { "止めた書き込みが解かれない" }
+            if (failBlocked) throw SQLiteFullException("止めた書き込みの失敗")
+        }
+        delegate.write(write)
+    }
+
+    fun awaitEntered() {
+        check(entered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) { "書き込みが始まらない" }
+    }
+
+    private companion object {
+        const val TIMEOUT_SECONDS = 30L
     }
 }
 
@@ -98,5 +136,12 @@ internal fun <T> withRawDatabase(
         db.close()
     }
 }
+
+/** 1 行目の 1 列目。NULL なら null（getLong は NULL を 0 で返すので、所有者の書き忘れを 0 と取り違えないため）。 */
+internal fun SQLiteDatabase.longOrNull(sql: String): Long? =
+    rawQuery(sql, null).use {
+        check(it.moveToFirst()) { "行がない: $sql" }
+        if (it.isNull(0)) null else it.getLong(0)
+    }
 
 internal fun SQLiteDatabase.count(sql: String): Long = rawQuery(sql, null).use { if (it.moveToFirst()) it.getLong(0) else -1 }

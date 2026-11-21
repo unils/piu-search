@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Process
 import android.os.UserManager
 import androidx.room.Room
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LaunchHistory
 import jp.piu.search.core.search.LaunchRecord
@@ -22,11 +23,12 @@ import java.io.File
 import java.util.concurrent.Callable
 
 /**
- * 記録の DB（Room の版 7。学習・起動の記録・インストールの印）。[RecordsActor] の保存先で、ほかから読み書きしない。
+ * 記録の DB（Room の版 7。学習・起動の記録・インストールの印）。[RecordsActor] の保存先で、ほかから読み書きしない
+ * （外からは [RecordsActor.open] だけで開く。同じ DB に書き手を 2 つ作らないため）。
  *
  * 読み書きはファイルに触れるので、画面のスレッドでは呼ばない（Room が例外を投げる）。
  */
-public class RecordsDatabase internal constructor(
+internal class RecordsDatabase(
     private val room: RecordsRoomDatabase,
     private val guard: RecordsInstallationGuard?,
 ) : RecordsStorage,
@@ -88,22 +90,13 @@ public class RecordsDatabase internal constructor(
         room.close()
     }
 
-    /** 開き方。 */
-    public companion object {
+    companion object {
         /**
          * アプリの `databases` の下の [name] を開く。なければ作る。版 6 以前の DB なら、最初に触れたときに版 7 へ移行する。
-         * 製品の `piu.db` への切り替えは別に行うので、名前は呼ぶ側が決める。
-         */
-        public fun open(
-            context: Context,
-            name: String,
-        ): RecordsDatabase = open(context, name, allowMainThread = false)
-
-        /**
          * テストのため、[allowMainThread] で画面のスレッドからの読み書きを許せる（Robolectric はテストを画面のスレッドで動かす）。
          * [name] が null ならメモリの上に作り、転送の整理をしない（印を比べる DB の印がないため）。
          */
-        internal fun open(
+        fun open(
             context: Context,
             name: String?,
             allowMainThread: Boolean,
@@ -117,6 +110,7 @@ public class RecordsDatabase internal constructor(
                     Room.databaseBuilder(appContext, RecordsRoomDatabase::class.java, name)
                 }
             builder.addMigrations(*RecordsRoomDatabase.MIGRATIONS)
+            builder.openHelperFactory(KeepOnCorruptionFactory(FrameworkSQLiteOpenHelperFactory()))
             if (allowMainThread) builder.allowMainThreadQueries()
             val guard =
                 name?.let {
@@ -129,13 +123,11 @@ public class RecordsDatabase internal constructor(
         }
 
         // 0.2.0 の InstallationGuard と同じファイル。同じ端末の更新で印を一致させるため
-        internal const val MARKER_FILE = "installation-id"
+        const val MARKER_FILE = "installation-id"
 
-        private fun ownSerialOf(context: Context): Long {
-            val serial = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
-            // 負は自分のユーザーが見つからない場合で、実際には起きないはず。全件を消すより、主ユーザー（0）として扱った 0.2.0 の振る舞いに倒す
-            return if (serial >= 0) serial else 0
-        }
+        // 負（自分のユーザーが見つからない）もそのまま渡す。0.2.0 は主ユーザー（0）に倒したが、転送の付け替え先を誤るので、照合が保留する
+        private fun ownSerialOf(context: Context): Long =
+            context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
 
         private fun recordOf(row: LearnedRow): LearnedRecord =
             LearnedRecord(

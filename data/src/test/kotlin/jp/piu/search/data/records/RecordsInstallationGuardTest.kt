@@ -66,7 +66,7 @@ class RecordsInstallationGuardTest {
             val stored = db.load()
             assertEquals(setOf(pair("よみ", OWN_APP), pair("よみ", WORK_APP)), stored.records.learned.records.keys)
             assertEquals(setOf(WORK_APP), stored.records.launches.records.keys)
-            withRawDatabase(context, LocalDatabase.FILE_NAME) { assertEquals(OWN, it.count("SELECT owner_serial FROM installation")) }
+            withRawDatabase(context, LocalDatabase.FILE_NAME) { assertEquals(OWN, it.longOrNull("SELECT owner_serial FROM installation")) }
         } finally {
             context.deleteDatabase(LocalDatabase.FILE_NAME)
         }
@@ -93,8 +93,9 @@ class RecordsInstallationGuardTest {
         val source = AppId(OWN_APP.packageName, "Main", 10)
         open(own = 10).write(
             RecordsWrite(
-                learnedPut = listOf(record("よみ", source), record("よみ", OWN_APP), record("よみ", WORK_APP)),
-                launchPut = mapOf(source to LaunchRecord(4, 400)),
+                // 移行元の 0 の行は、移行先の番号と同じでも別のプロファイルのもの。中身を変えて、付け替えた行と見分ける
+                learnedPut = listOf(record("よみ", source, count = 4), record("よみ", OWN_APP, count = 9), record("よみ", WORK_APP)),
+                launchPut = mapOf(source to LaunchRecord(4, 400), OWN_APP to LaunchRecord(9, 900)),
             ),
         )
         reopen()
@@ -102,7 +103,7 @@ class RecordsInstallationGuardTest {
         // 移行元の 0 と 11 は、移行元の別のプロファイル。移行先の同じ番号と取り違えないよう捨てる
         val stored = open(own = OWN).load()
         assertEquals(
-            setOf(record("よみ", OWN_APP)),
+            setOf(record("よみ", OWN_APP, count = 4)),
             stored.records.learned.records.values
                 .toSet(),
         )
@@ -133,7 +134,7 @@ class RecordsInstallationGuardTest {
         assertTrue(marker.renameTo(aside))
         assertTrue(marker.mkdir())
         val db = open()
-        assertThrows(InstallationMarkerUnavailableException::class.java) { db.load() }
+        assertThrows(InstallationCheckPendingException::class.java) { db.load() }
         // 転送とみなして消さず、印も作り直さない
         withRawDatabase(context, FILE) { assertEquals(2L, it.count("SELECT COUNT(DISTINCT profile_serial) FROM learned")) }
         assertTrue(marker.isDirectory)
@@ -190,6 +191,110 @@ class RecordsInstallationGuardTest {
         }
         assertEquals(setOf(OWN), db.load().storedSerials)
     }
+
+    @Test
+    fun aMarkerThatCannotBeSavedFailsTheLoadInsteadOfCleaningUpWithAnUnsavedToken() {
+        open().write(seedWrite())
+        reopen()
+        val oldToken = withRawDatabase(context, FILE) { it.stringOf("SELECT token FROM installation") }
+        // 印がなく（DB だけが転送された）、印のファイルも書けない。印の置き場をファイルで塞ぐ
+        val dir = context.noBackupFilesDir
+        dir.deleteRecursively()
+        assertTrue(dir.createNewFile())
+        try {
+            repeat(2) {
+                val db = open()
+                assertThrows(InstallationCheckPendingException::class.java) { db.load() }
+                assertThrows(InstallationCheckPendingException::class.java) {
+                    db.write(
+                        RecordsWrite(
+                            launchPut =
+                                mapOf(WORK_APP to LaunchRecord(7, 7)),
+                        ),
+                    )
+                }
+                reopen()
+            }
+            // 保存していない乱数で整理も印の更新もしない（次の起動で、その間に受けた記録まで消さないため）
+            withRawDatabase(context, FILE) { raw ->
+                assertEquals(oldToken, raw.stringOf("SELECT token FROM installation"))
+                assertEquals(1L, raw.count("SELECT COUNT(*) FROM learned WHERE profile_serial = $WORK"))
+                assertEquals(1L, raw.count("SELECT COUNT(*) FROM launch_stat WHERE profile_serial = $WORK"))
+            }
+        } finally {
+            assertTrue(dir.delete())
+        }
+        // 印を保存できるようになったら、転送として 1 回だけ整理する。その後に受けた仕事用の記録は残る
+        val restored = open()
+        assertEquals(setOf(OWN), restored.load().storedSerials)
+        restored.write(RecordsWrite(launchPut = mapOf(WORK_APP to LaunchRecord(1, 5))))
+        reopen()
+        assertEquals(setOf(OWN, WORK), open().load().storedSerials)
+    }
+
+    @Test
+    fun aFailedMarkerUpdateInTheDatabaseRollsBackTheCleanup() {
+        open().write(seedWrite())
+        reopen()
+        val oldToken = withRawDatabase(context, FILE) { it.stringOf("SELECT token FROM installation") }
+        context.noBackupFilesDir.deleteRecursively()
+        // 整理の後、印の更新そのもので失敗させる
+        withRawDatabase(context, FILE) {
+            it.execSQL("CREATE TRIGGER fail_mark_update BEFORE UPDATE ON installation BEGIN SELECT RAISE(ABORT, '印の失敗'); END")
+            it.execSQL("CREATE TRIGGER fail_mark_insert BEFORE INSERT ON installation BEGIN SELECT RAISE(ABORT, '印の失敗'); END")
+        }
+        val db = open()
+        assertThrows(RuntimeException::class.java) { db.load() }
+        withRawDatabase(context, FILE) { raw ->
+            assertEquals(1L, raw.count("SELECT COUNT(*) FROM learned WHERE profile_serial = $WORK"))
+            assertEquals(1L, raw.count("SELECT COUNT(*) FROM launch_stat WHERE profile_serial = $WORK"))
+            assertEquals(oldToken, raw.stringOf("SELECT token FROM installation"))
+            raw.execSQL("DROP TRIGGER fail_mark_update")
+            raw.execSQL("DROP TRIGGER fail_mark_insert")
+        }
+        assertEquals(setOf(OWN), db.load().storedSerials)
+    }
+
+    @Test
+    fun anUnknownOwnSerialHoldsTheTransferUntilItIsKnown() {
+        val source = AppId(OWN_APP.packageName, "Main", 10)
+        open(own = 10).write(RecordsWrite(learnedPut = listOf(record("よみ", source, count = 4), record("よみ", WORK_APP))))
+        reopen()
+        context.noBackupFilesDir.deleteRecursively()
+        // 移行先で自分の番号が取れない（負の値）。付け替え先を決められないので、整理も印の更新もしない
+        var own = -1L
+        val db = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { own }).also(opened::add)
+        assertThrows(InstallationCheckPendingException::class.java) { db.load() }
+        withRawDatabase(context, FILE) { raw ->
+            assertEquals(2L, raw.count("SELECT COUNT(*) FROM learned"))
+            assertEquals(10L, raw.longOrNull("SELECT owner_serial FROM installation"))
+        }
+        own = OWN
+        assertEquals(
+            setOf(record("よみ", OWN_APP, count = 4)),
+            db
+                .load()
+                .records.learned.records.values
+                .toSet(),
+        )
+        withRawDatabase(context, FILE) { assertEquals(OWN, it.longOrNull("SELECT owner_serial FROM installation")) }
+    }
+
+    @Test
+    fun anUnknownOwnSerialOnTheSameInstallationKeepsTheOwner() {
+        open(own = 10).write(seedWrite())
+        reopen()
+        // 同じインストールなら整理は要らない。読めるが、分からない番号で所有者を上書きしない
+        val stored = open(own = -1).load()
+        assertEquals(setOf(OWN, WORK), stored.storedSerials)
+        withRawDatabase(context, FILE) { assertEquals(10L, it.longOrNull("SELECT owner_serial FROM installation")) }
+    }
+
+    private fun android.database.sqlite.SQLiteDatabase.stringOf(sql: String): String =
+        rawQuery(sql, null).use {
+            check(it.moveToFirst())
+            it.getString(0)
+        }
 
     private fun open(own: Long = OWN): RecordsDatabase =
         RecordsDatabase

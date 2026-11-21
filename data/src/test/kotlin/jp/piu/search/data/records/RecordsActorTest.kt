@@ -16,6 +16,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -30,6 +31,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -222,7 +224,7 @@ class RecordsActorTest {
             val actor = actor(reopened)
             val suppress = RecordsRequest.Suppress(pair("よみ", WORK_APP), at = 3000)
             assertEquals(RecordsResult.Failure(RecordsFailure.NOT_LOADED), actor.request(suppress))
-            assertEquals(InstallationMarkerUnavailableException::class.java.name, actor.state.value.loadFailure)
+            assertEquals(InstallationCheckPendingException::class.java.name, actor.state.value.loadFailure)
 
             assertTrue(marker.delete())
             assertTrue(aside.renameTo(marker))
@@ -356,13 +358,227 @@ class RecordsActorTest {
         }
 
     @Test
-    fun anAcceptedRequestIsFinishedEvenIfTheSenderStopsWaiting() =
+    fun anAcceptedRequestIsFinishedEvenIfTheSenderStopsWaiting() {
+        val storage = BlockingStorage(database) { it.launchPut.isNotEmpty() }
+        threaded(storage) { actor, _ ->
+            runBlocking {
+                val sender =
+                    launch(Dispatchers.Default) { actor.request(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1)) }
+                // 書き込みの最中に、送り手だけが待つのをやめる
+                storage.awaitEntered()
+                sender.cancel()
+                storage.release.countDown()
+                withTimeout(TIMEOUT) { actor.refresh().await() }
+            }
+            assertEquals(
+                LaunchRecord(1, 1),
+                database
+                    .load()
+                    .records.launches.records[OWN_APP],
+            )
+        }
+    }
+
+    @Test
+    fun stoppingTheWriterFinishesTheStartedRequestAndCancelsTheQueuedOnes() {
+        val storage = BlockingStorage(database) { it.launchPut.isNotEmpty() }
+        threaded(storage) { actor, scope ->
+            val started = actor.submit(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1))
+            storage.awaitEntered()
+            val queued = actor.submit(RecordsRequest.Open(LearningDecision(null, emptyList()), OTHER_APP, at = 2))
+            scope.cancel()
+            storage.release.countDown()
+            runBlocking {
+                // 始めたトランザクションは結果まで処理する
+                assertTrue(withTimeout(TIMEOUT) { started.await() } is RecordsResult.Success)
+                withTimeout(TIMEOUT) { scope.coroutineContext[Job]!!.join() }
+            }
+            assertTrue(queued.isCancelled)
+            assertEquals(
+                setOf(OWN_APP),
+                database
+                    .load()
+                    .records.launches.records.keys,
+            )
+        }
+    }
+
+    @Test
+    fun aRemovalIsPublishedBeforeThePruneIsWritten() {
+        database.write(seedWrite())
+        val storage = BlockingStorage(database) { it.deleteSerials.isNotEmpty() }
+        threaded(storage) { actor, _ ->
+            runBlocking { withTimeout(TIMEOUT) { actor.refresh().await() } }
+            probe.serials = setOf(OWN)
+            val refresh = actor.refresh()
+            storage.awaitEntered()
+            // 整理の書き込みを止めている間も、画面には削除が効いている
+            assertEquals(
+                setOf(OWN),
+                actor.state.value.records
+                    ?.serials,
+            )
+            storage.failBlocked = true
+            storage.release.countDown()
+            runBlocking { withTimeout(TIMEOUT) { refresh.await() } }
+            assertEquals(
+                setOf(OWN),
+                actor.state.value.records
+                    ?.serials,
+            )
+            assertEquals(setOf(WORK), actor.state.value.profiles.pendingPrune)
+        }
+    }
+
+    @Test
+    fun aWriteInProgressIsNotPublishedAndAFailedOneIsNeverPublished() {
+        database.write(seedWrite())
+        val storage = BlockingStorage(database) { it.learnedPut.isNotEmpty() }
+        threaded(storage) { actor, _ ->
+            runBlocking { withTimeout(TIMEOUT) { actor.refresh().await() } }
+            val before = actor.state.value
+            val reply = actor.submit(RecordsRequest.Suppress(pair("よみ", OWN_APP), at = 3000))
+            storage.awaitEntered()
+            assertEquals(before, actor.state.value)
+            storage.failBlocked = true
+            storage.release.countDown()
+            assertEquals(RecordsResult.Failure(RecordsFailure.WRITE_FAILED), runBlocking { withTimeout(TIMEOUT) { reply.await() } })
+            assertEquals(before, actor.state.value)
+        }
+    }
+
+    @Test
+    fun theFirstLoadPrunesProfilesThatNoLongerExistWithoutWaitingForARequest() =
         runTest {
+            database.write(seedWrite())
+            probe.serials = setOf(OWN)
             val actor = actor(database)
-            val sender = launch { actor.request(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1)) }
             runCurrent()
-            sender.cancel()
+            assertEquals(
+                setOf(OWN),
+                actor.state.value.records
+                    ?.serials,
+            )
+            assertEquals(setOf(OWN), database.load().storedSerials)
+        }
+
+    @Test
+    fun profileChecksDuringLoadFailuresAreKept() =
+        runTest {
+            database.write(seedWrite())
+            val storage = FaultyStorage(database).apply { failLoads = 2 }
+            val actor = actor(storage)
+            // 1 回目: 両方あると確かめたが、読めない。2 回目: 仕事用が消えたと確かめたが、また読めない
+            runCurrent()
+            probe.serials = setOf(OWN)
             actor.refresh().await()
+            assertTrue(actor.state.value.loadFailure != null)
+            // DB が戻り、今度は問い合わせが失敗する。確かめた削除は忘れない
+            probe.serials = null
+            actor.refresh().await()
+            assertEquals(
+                setOf(OWN),
+                actor.state.value.records
+                    ?.serials,
+            )
+            assertEquals(
+                RecordsResult.Success(),
+                actor.request(RecordsRequest.Open(LearningDecision(pair("おそい", WORK_APP), emptyList()), WORK_APP, at = 9)),
+            )
+            assertEquals(setOf(OWN), database.load().storedSerials)
+        }
+
+    @Test
+    fun onlyOneWriterCanBeOpenedForTheSameDatabase() {
+        val name = "m802a-records-single-writer.db"
+        val first = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val actor = RecordsActor.open(context, name, first, probe)
+            runBlocking {
+                withTimeout(
+                    TIMEOUT,
+                ) { actor.request(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1)) }
+            }
+            // 2 つ目の書き手は、それぞれの写しから書いて増分を失うので作らせない。同じものを渡す
+            val second = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            assertThrows(IllegalStateException::class.java) { RecordsActor.open(context, name, second, probe) }
+            second.cancel()
+            // 止めれば、同じ名前でまた作れる（前の書き手の DB は閉じている）
+            first.cancel()
+            runBlocking { withTimeout(TIMEOUT) { first.coroutineContext[Job]!!.join() } }
+            val again = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            try {
+                val reopened = RecordsActor.open(context, name, again, probe)
+                val result =
+                    runBlocking {
+                        withTimeout(
+                            TIMEOUT,
+                        ) { reopened.request(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 2)) }
+                    }
+                assertTrue(result is RecordsResult.Success)
+                assertEquals(
+                    LaunchRecord(2, 2),
+                    reopened.state.value.records
+                        ?.launches
+                        ?.records
+                        ?.get(OWN_APP),
+                )
+            } finally {
+                again.cancel()
+                runBlocking { withTimeout(TIMEOUT) { again.coroutineContext[Job]!!.join() } }
+            }
+        } finally {
+            first.cancel()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun clearingTheLearningKeepsTheLaunchesAndViceVersa() =
+        runTest {
+            database.write(seedWrite())
+            val actor = actor(database)
+            assertTrue(actor.request(RecordsRequest.ClearLearned) is RecordsResult.Success)
+            assertTrue(
+                database
+                    .load()
+                    .records.learned.records
+                    .isEmpty(),
+            )
+            assertEquals(
+                setOf(OWN_APP, WORK_APP),
+                database
+                    .load()
+                    .records.launches.records.keys,
+            )
+            actor.request(RecordsRequest.Open(LearningDecision(pair("よみ", OWN_APP), emptyList()), null, at = 5))
+            assertTrue(actor.request(RecordsRequest.ClearLaunches) is RecordsResult.Success)
+            assertTrue(
+                database
+                    .load()
+                    .records.launches.records
+                    .isEmpty(),
+            )
+            assertEquals(
+                setOf(pair("よみ", OWN_APP)),
+                database
+                    .load()
+                    .records.learned.records.keys,
+            )
+        }
+
+    @Test
+    fun anIOExceptionFromTheStorageFailsOnlyThatRequest() =
+        runTest {
+            val storage =
+                FaultyStorage(database).apply {
+                    failWrites = 1
+                    writeFailure = { java.io.IOException("保存先の入出力の失敗") }
+                }
+            val actor = actor(storage)
+            val open = RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1)
+            assertEquals(RecordsResult.Failure(RecordsFailure.WRITE_FAILED), actor.request(open))
+            assertTrue(actor.request(open) is RecordsResult.Success)
             assertEquals(
                 LaunchRecord(1, 1),
                 database
@@ -394,6 +610,19 @@ class RecordsActorTest {
 
     private fun TestScope.actor(storage: RecordsStorage): RecordsActor =
         RecordsActor(backgroundScope, storage, probe, StandardTestDispatcher(testScheduler))
+
+    // 書き手と送り手を本物のスレッドで動かす
+    private fun threaded(
+        storage: RecordsStorage,
+        body: (RecordsActor, CoroutineScope) -> Unit,
+    ) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            body(RecordsActor(scope, storage, probe, Dispatchers.IO), scope)
+        } finally {
+            scope.cancel()
+        }
+    }
 
     private fun trigger(sql: String) {
         withRawDatabase(context, FILE) { it.execSQL(sql) }

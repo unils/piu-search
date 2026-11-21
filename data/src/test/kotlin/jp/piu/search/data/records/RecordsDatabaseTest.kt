@@ -13,6 +13,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 // 記録の DB の読み書きが、1 つのトランザクションで全部か無かになることを、本物の SQLite で確かめる
 @RunWith(AndroidJUnit4::class)
@@ -104,8 +105,11 @@ class RecordsDatabaseTest {
             )
         }
         assertThrows(RuntimeException::class.java) { db.write(RecordsWrite(deleteSerials = setOf(WORK))) }
-        // 学習の表を先に消していても戻る
-        assertEquals(setOf(OWN, WORK), db.load().storedSerials)
+        // 学習の表を先に消していても戻る。両表の和集合でなく、表ごとに確かめる
+        withRawDatabase(context, FILE) { raw ->
+            assertEquals(1L, raw.count("SELECT COUNT(*) FROM learned WHERE profile_serial = $WORK"))
+            assertEquals(1L, raw.count("SELECT COUNT(*) FROM launch_stat WHERE profile_serial = $WORK"))
+        }
         withRawDatabase(context, FILE) { it.execSQL("DROP TRIGGER fail_prune") }
         db.write(RecordsWrite(deleteSerials = setOf(WORK)))
         assertEquals(setOf(OWN), db.load().storedSerials)
@@ -122,6 +126,27 @@ class RecordsDatabaseTest {
                 .isEmpty(),
         )
         assertEquals(setOf(OWN_APP, WORK_APP), stored.records.launches.records.keys)
+    }
+
+    @Test
+    fun aCorruptDatabaseIsKeptAsItIsAndTheLoadFails() {
+        open().write(seedWrite())
+        opened.forEach(RecordsDatabase::close)
+        opened.clear()
+        // 先頭（SQLite の見出し）を壊す。Room の既定では、破損の知らせで原本を消し、空の DB を作り直して開いてしまう
+        val file = context.getDatabasePath(FILE)
+        val bytes = file.readBytes()
+        "壊れた見出し".toByteArray().copyInto(bytes)
+        file.writeBytes(bytes)
+        repeat(2) {
+            val db = open()
+            assertThrows(RuntimeException::class.java) { db.load() }
+            db.close()
+            opened.clear()
+            assertTrue(file.readBytes().contentEquals(bytes))
+        }
+        // 原本と別に、調べるための写しを残す
+        assertTrue(File(file.path + ".corrupt").readBytes().contentEquals(bytes))
     }
 
     private fun open(): RecordsDatabase = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { OWN }).also(opened::add)
