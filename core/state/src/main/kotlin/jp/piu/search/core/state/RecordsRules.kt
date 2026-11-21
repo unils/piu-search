@@ -219,15 +219,13 @@ public sealed interface RecordsRequest {
     ) : RecordsRequest
 
     /**
-     * 全消去。表の全行を消す。
-     *
-     * @property learned 学習を消すか
-     * @property launches 起動の記録を消すか
+     * 学習の全消去。学習の表の全行を消し、起動の記録は残す（学習の一覧の画面の操作）。
+     * 起動の記録の全消去（[ClearLaunches]）と頼みを分ける。引数の既定値で両方を消す形だと、移植のときに起動の記録まで消しやすいため。
      */
-    public data class Clear(
-        val learned: Boolean = true,
-        val launches: Boolean = true,
-    ) : RecordsRequest
+    public data object ClearLearned : RecordsRequest
+
+    /** 起動の記録の全消去。起動の記録の表の全行を消し、学習は残す（設定の画面の操作）。 */
+    public data object ClearLaunches : RecordsRequest
 
     /**
      * 書き出した学習を読み込んで合わせる。ファイルの読み取りと解析は呼ぶ側が先に済ませる（列を長く止めないため）。
@@ -370,7 +368,12 @@ public object RecordsRules {
                 request.records.mapTo(HashSet()) { it.app.profileSerial }
             }
 
-            is RecordsRequest.Undo, is RecordsRequest.Remove, is RecordsRequest.Clear, is RecordsRequest.Forget -> {
+            is RecordsRequest.Undo,
+            is RecordsRequest.Remove,
+            RecordsRequest.ClearLearned,
+            RecordsRequest.ClearLaunches,
+            is RecordsRequest.Forget,
+            -> {
                 emptySet()
             }
         }
@@ -458,8 +461,12 @@ public object RecordsRules {
                 saved(state, records, UserRecords(records.learned.removed(request.pair), records.launches))
             }
 
-            is RecordsRequest.Clear -> {
-                clear(state, records, request)
+            RecordsRequest.ClearLearned -> {
+                clear(state, records, learned = true)
+            }
+
+            RecordsRequest.ClearLaunches -> {
+                clear(state, records, learned = false)
             }
 
             is RecordsRequest.Import -> {
@@ -499,8 +506,9 @@ public object RecordsRules {
                 launched?.let { records.launches.recorded(it, request.at) } ?: records.launches,
             )
         var id = state.nextNoticeId
+        // 知らせは、最新の学習に当たった救済だけに作る。抑制した組・長すぎる語の救済は学習に当たらず、取り消すものがないため
         val made =
-            accepted.rescues.map {
+            accepted.rescues.filter { next.learned.records[it]?.let { r -> r.rescued && !r.suppressed } == true }.map {
                 RescueNotice(id++, it, request.labels[it] ?: it.app.packageName, accepted.selection, request.at)
             }
         // 回数が上限で値が変わらない組も、後の保存を古い取り消しで巻き戻さないよう無効にする
@@ -529,23 +537,26 @@ public object RecordsRules {
         return base.copy(next = base.next.invalidate { it.id == noticeId })
     }
 
+    // learned なら学習の表を、そうでなければ起動の記録の表を消す
     private fun clear(
         state: RecordsState,
         records: UserRecords,
-        request: RecordsRequest.Clear,
+        learned: Boolean,
     ): RecordsChange {
-        if (!request.learned && !request.launches) return RecordsChange(state, null, RecordsResult.Success(), state)
         val next =
-            UserRecords(
-                if (request.learned) records.learned.cleared() else records.learned,
-                if (request.launches) LaunchHistory.EMPTY else records.launches,
-            )
+            if (learned) {
+                UserRecords(
+                    records.learned.cleared(),
+                    records.launches,
+                )
+            } else {
+                UserRecords(records.learned, LaunchHistory.EMPTY)
+            }
         // 差分ではなく全行を消す。旧版などの写しに見えない行も残さないため
-        val write = RecordsWrite(clearLearned = request.learned, clearLaunches = request.launches)
-        // 片方の表だけを消したときは、残る表の行の番号が分からないので、表の番号を保つ（整理で余分に消しても害はない）
-        val stored = if (request.learned && request.launches) emptySet() else state.storedSerials
-        val ready = state.copy(load = RecordsLoad.Ready(next), storedSerials = stored)
-        return RecordsChange(if (request.learned) ready.invalidate { true } else ready, write, RecordsResult.Success(), state)
+        val write = RecordsWrite(clearLearned = learned, clearLaunches = !learned)
+        // 片方の表だけを消すので、残る表の行の番号が分からない。表の番号を保つ（整理で余分に消しても害はない）
+        val ready = state.copy(load = RecordsLoad.Ready(next))
+        return RecordsChange(if (learned) ready.invalidate { true } else ready, write, RecordsResult.Success(), state)
     }
 
     // 差分を書く変更。書くものがなければ書き込みをせず、同じ状態を返す。値が変わった組の取り消しの材料を無効にする

@@ -42,7 +42,7 @@ include(
     ":core:text",
     ":core:reading",
     ":core:search",
-    // 索引と記録の写しと、同期・記録の規則（まだどこからも使わない）
+    // 索引と記録の写しと、同期・記録の規則（data の記録の書き手から使う。app からはまだ使わない）
     ":core:state",
     ":data",
     ":app",
