@@ -10,6 +10,7 @@
 | `core/text/` | 文字の正規化、かなとローマ字の変換 |
 | `core/reading/` | 形態素解析（Kuromoji）による読みの付与 |
 | `core/search/` | 索引、照合と並べ替え、ジャンルの語彙、学習の規則 |
+| `core/state/` | v0.3 の状態と規則（索引と記録の写し、同期の計画と適用、記録の操作）。まだ使われていない |
 | `data/` | 端末のアプリの読み取りとデータベース |
 | `build-logic/` | 独自の Gradle プラグイン（マニフェストや依存関係などの検査） |
 | `release-test/` | リリース版（R8 による最適化を通したもの）を外から操作する計器テスト |
@@ -21,7 +22,7 @@
 | `docs/` | 要件・設計・調査・決定の記録と、開発・版の出し方の手順 |
 | `fastlane/metadata/` | F-Droid 向けの説明文と更新履歴 |
 
-`core/` の 3 モジュールは Android に依存しない純粋な Kotlin で書かれており、JVM の上だけでテストできる。`release-test/`・`benchmark/`・`test-apps/`・`tools/` はテストと検査のためのもので、配布する APK には含まれない。
+`core/` の 4 モジュールは Android に依存しない純粋な Kotlin で書かれており、JVM の上だけでテストできる。`release-test/`・`benchmark/`・`test-apps/`・`tools/` はテストと検査のためのもので、配布する APK には含まれない。
 
 ## 開発環境の構築
 
