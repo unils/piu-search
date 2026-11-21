@@ -29,6 +29,9 @@ compose-bom = "2026.09.00"
 # 2.8.5（2026-09-09）が 2.x の最新。3.0（androidx.room3）は KMP 向けで、すべての操作が coroutine になる。
 # 索引は裏のスレッドでまとめて読み書きするだけなので 2.x を使う（2026-10-28 に Google Maven と公式の更新履歴で確かめた）
 room = "2.8.5"
+# 記録の書き手（data の RecordsActor）の Channel・StateFlow。1.9.0 は app が Room・lifecycle・Compose から推移的にすでに使う版で、
+# 明示しても APK の中身は変わらない。最新の安定版は 1.11.0（2026-11-21 に Maven Central で確かめた）。上げるのは別の変更にする。Apache-2.0
+kotlinx-coroutines = "1.9.0"
 # 形態素解析器。0.9.0（2015-09）が最新で、更新はない（docs/research/reading-sources.md）
 kuromoji = "0.9.0"
 
@@ -64,6 +67,8 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kuromoji-ipadic = { module = "com.atilika.kuromoji:kuromoji-ipadic", version.ref = "kuromoji" }
 
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
