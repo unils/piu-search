@@ -301,7 +301,7 @@ class RecordsLawsTest {
             }
 
             5 -> {
-                RecordsRequest.Clear(random.nextBoolean(), random.nextBoolean())
+                if (random.nextBoolean()) RecordsRequest.ClearLearned else RecordsRequest.ClearLaunches
             }
 
             6 -> {

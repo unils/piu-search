@@ -145,17 +145,48 @@ class RecordsRulesTest {
     }
 
     @Test
+    fun `抑制した組の救済は学習に当たらないので、知らせも取り消しの材料も作らない`() {
+        val suppressed = apply(ready(), RecordsRequest.Suppress(pair("おかね", PAY), NOW))
+        val change = RecordsRules.change(suppressed, open(rescues = listOf(pair("おかね", PAY), pair("おかね", WEATHER))), UNKNOWN)
+        // 当たった救済（抑制していない組）だけに知らせを作る
+        assertEquals(listOf(pair("おかね", WEATHER)), (change.result as RecordsResult.Success).notices.map { it.pair })
+        val next = RecordsRules.commit(change, written = true)
+        assertEquals(listOf(pair("おかね", WEATHER)), next.notices.map { it.pair })
+        assertEquals(
+            true,
+            next.records!!
+                .learned.records
+                .getValue(pair("おかね", PAY))
+                .suppressed,
+        )
+    }
+
+    @Test
     fun `全消去は表の全行を消し、取り消しを無効にする`() {
         val opened = apply(ready(), open(rescues = listOf(pair("おかね", PAY)), launched = PAY))
-        val change = RecordsRules.change(opened, RecordsRequest.Clear(), UNKNOWN)
-        assertEquals(RecordsWrite(clearLearned = true, clearLaunches = true), change.write)
+        val change = RecordsRules.change(opened, RecordsRequest.ClearLearned, UNKNOWN)
+        // 学習の全消去は、起動の記録を残す
+        assertEquals(RecordsWrite(clearLearned = true), change.write)
         val cleared = RecordsRules.commit(change, written = true)
-        assertEquals(UserRecords.EMPTY, cleared.records)
+        assertTrue(
+            cleared.records!!
+                .learned.records
+                .isEmpty(),
+        )
+        assertEquals(opened.records!!.launches.records, cleared.records!!.launches.records)
         assertTrue(cleared.undo.isEmpty() && cleared.notices.isEmpty())
 
-        val launchesOnly = apply(opened, RecordsRequest.Clear(learned = false))
+        // 起動の記録の全消去は、学習と取り消しを残す
+        val launchChange = RecordsRules.change(opened, RecordsRequest.ClearLaunches, UNKNOWN)
+        assertEquals(RecordsWrite(clearLaunches = true), launchChange.write)
+        val launchesOnly = RecordsRules.commit(launchChange, written = true)
+        assertTrue(
+            launchesOnly.records!!
+                .launches.records
+                .isEmpty(),
+        )
+        assertEquals(opened.records!!.learned.records, launchesOnly.records!!.learned.records)
         assertTrue(launchesOnly.canUndo(opened.notices.single().id))
-        assertNull(RecordsRules.change(opened, RecordsRequest.Clear(learned = false, launches = false), UNKNOWN).write)
     }
 
     @Test
