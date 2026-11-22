@@ -7,6 +7,7 @@ import android.os.UserHandle
 import android.util.Log
 import jp.piu.search.core.reading.ReadingAnalyzer
 import jp.piu.search.core.state.Environment
+import jp.piu.search.core.state.GenreResult
 import jp.piu.search.core.state.IndexRules
 import jp.piu.search.core.state.IndexSnapshot
 import jp.piu.search.core.state.Notice
@@ -38,6 +39,7 @@ import kotlin.coroutines.CoroutineContext
  * @property loadFailure 読み戻しの失敗の理由。空から全件を作り直す
  * @property running 同期の途中
  * @property syncFailure 最後の同期が全体で失敗した理由（観測の例外・規則の誤り）。次に終わった同期で消える
+ * @property genreFailure 最後に終わった同期のジャンルの問い合わせの失敗の理由。成功なら null（既存のジャンルを保った）
  * @property unsaved 公開した写しを、まだ保存できていない（未保存の印）
  * @property lastSavedAt 最後に保存できた時刻（ミリ秒）。保存したことがなければ null
  */
@@ -46,6 +48,7 @@ public data class IndexStatus(
     val loadFailure: String? = null,
     val running: Boolean = false,
     val syncFailure: String? = null,
+    val genreFailure: String? = null,
     val unsaved: Boolean = false,
     val lastSavedAt: Long? = null,
 )
@@ -285,7 +288,9 @@ public class IndexActor internal constructor(
         val reads = plan.profileReads.values.map(reader::readMaterials)
         val prepared = IndexRules.prepare(plan, reads, utcDay(clock()))
         val built = if (prepared.jobs.isEmpty()) emptyMap() else keys.build(prepared.jobs)
-        val outcome = IndexRules.apply(prepared, reader.genres(plan.genres), built)
+        val genres = reader.genres(plan.genres)
+        val outcome = IndexRules.apply(prepared, genres, built)
+        statusFlow.value = statusFlow.value.copy(genreFailure = (genres as? GenreResult.Failed)?.cause)
         current = outcome.snapshot
         published.value = current
         outcome.consumableNotices.forEach { seq -> unapplied.remove(seq)?.let { awaitingSave[seq] = it } }

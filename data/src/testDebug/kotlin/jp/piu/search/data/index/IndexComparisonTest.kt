@@ -164,11 +164,34 @@ class IndexComparisonTest {
             assertEquals(listOf(Allowance.SUCCESS_EMPTY), report.diffs.map { it.allowance })
         }
 
+    @Test
+    fun aGenreQueryThatFailedOnEitherSideMakesTheComparisonInconclusive() =
+        runTest {
+            device.install(installed("io.example.maps", "地図", genres = listOf(GenreId("map"))))
+            device.genreFailure = IllegalStateException()
+            val old = oldSync()
+            val new = newSync()
+            val both = compare(old, new)
+            assertFalse(both.comparable)
+            assertEquals(
+                listOf("new:genres:java.lang.IllegalStateException", "old:genres:java.lang.IllegalStateException"),
+                both.failedProfiles,
+            )
+            // 片側だけの失敗でも成り立たない
+            val oneSide = IndexComparison.compare(old.first, old.second, null, new, newGenreFailure, Build.VERSION_CODES.S, OWN)
+            assertEquals(listOf("new:genres:java.lang.IllegalStateException"), oneSide.failedProfiles)
+            assertTrue(oneSide.render().startsWith("NOT COMPARABLE"))
+        }
+
     private fun compare(
         old: Pair<StoredIndex, Map<Long, ProfileReadStatus>>,
         new: IndexSnapshot,
         sdkInt: Int = Build.VERSION_CODES.S,
-    ) = IndexComparison.compare(old.first, old.second, new, sdkInt, OWN)
+    ) = IndexComparison.compare(old.first, old.second, oldGenreFailure, new, newGenreFailure, sdkInt, OWN)
+
+    // 直前の同期のジャンルの失敗
+    private var oldGenreFailure: String? = null
+    private var newGenreFailure: String? = null
 
     private fun oldSync(): Pair<StoredIndex, Map<Long, ProfileReadStatus>> {
         val database = LocalDatabase.open(context, null, allowMainThread = true).also(databases::add)
@@ -182,6 +205,7 @@ class IndexComparisonTest {
                 profiles = ProfileReconciler({ database.profiles }, device::existingProfiles),
                 appVersionCode = 1,
             ).sync()
+        oldGenreFailure = report.genreFailure
         return database.index.load() to report.profileResults
     }
 
@@ -191,12 +215,14 @@ class IndexComparisonTest {
             IndexActor(
                 backgroundScope,
                 IndexDatabase.open(context, null, allowMainThread = true),
-                DeviceAppsReader(device, device::existingProfiles, sdkInt),
+                // 偽の端末の仕事用のアプリは、自分のプロファイルにない
+                DeviceAppsReader(device, device::existingProfiles, sdkInt) { false },
                 keys,
                 1,
                 StandardTestDispatcher(testScheduler),
             )
         actor.requestSync().await()
+        newGenreFailure = actor.status.value.genreFailure
         return actor.snapshot.value
     }
 

@@ -146,7 +146,8 @@ class DeviceAppsReaderTest {
                 IndexActor(
                     backgroundScope,
                     IndexDatabase.open(context, null, allowMainThread = true),
-                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.R),
+                    // 自分のプロファイルの PackageManager から見えないと確かめられた
+                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.R) { false },
                     GeneratorKeyFactory(
                         {},
                         { SearchKeyGenerator(ReadingOf("地図" to "ちず"), LatinWordReader(BrandTable.parse(emptyList()))) },
@@ -161,16 +162,24 @@ class DeviceAppsReaderTest {
             assertTrue(keys.any { it.kind == SearchKeyKind.READING && it.text.value == "ちず" })
             assertTrue(keys.any { it.kind == SearchKeyKind.PUBLISHER })
 
-            // API 31 以上の同じ例外は、一覧の後に消えたこと（一時的な失敗）
-            val modern = DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.S)
-            val plan = IndexRules.plan(IndexSnapshot.EMPTY, modern.observe(emptySet()), ENV)
-            val read =
-                modern
-                    .readMaterials(plan.profileReads.getValue(WORK))
-                    .packages.values
-                    .single() as MaterialRead.Failed
-            assertEquals(Stage.LABEL to IssueCategory.TRANSIENT, read.stage to read.failure.category)
-            assertEquals(PackageManager.NameNotFoundException::class.java.name, read.failure.cause)
+            // 次のときは LABEL の失敗のまま: API 31 以上（一覧の後に消えた）、自分の側から見える（別の理由を隠さない）、
+            // 見えるかの問い合わせが失敗した（隠さない側に倒す）
+            val failing =
+                listOf(
+                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.S) { false },
+                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.R) { true },
+                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.R) { null },
+                )
+            for (other in failing) {
+                val plan = IndexRules.plan(IndexSnapshot.EMPTY, other.observe(emptySet()), ENV)
+                val read =
+                    other
+                        .readMaterials(plan.profileReads.getValue(WORK))
+                        .packages.values
+                        .single() as MaterialRead.Failed
+                assertEquals(Stage.LABEL to IssueCategory.TRANSIENT, read.stage to read.failure.category)
+                assertEquals(PackageManager.NameNotFoundException::class.java.name, read.failure.cause)
+            }
         }
 
     // API 30 以下の経路（自分のプロファイルの createPackageContext）を、仕事用にしかないアプリで再現する

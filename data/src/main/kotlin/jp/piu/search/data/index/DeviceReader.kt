@@ -89,13 +89,19 @@ public interface DeviceReader {
  *
  * @param existingProfiles 存在するプロファイルの番号。問い合わせが失敗したら null
  * @param sdkInt 端末の API レベル。テストで差し替える
+ * @param visibleToOwnProfile パッケージ名が自分のプロファイルの `PackageManager` から見えるか。問い合わせが失敗したら null
  */
 internal class DeviceAppsReader(
     private val apps: DeviceApps,
     private val existingProfiles: () -> Set<Long>?,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
+    private val visibleToOwnProfile: (String) -> Boolean? = { null },
 ) : DeviceReader {
-    constructor(context: Context) : this(AndroidDeviceApps(context.applicationContext), ExistingProfiles(context)::serials)
+    constructor(context: Context) : this(
+        AndroidDeviceApps(context.applicationContext),
+        ExistingProfiles(context)::serials,
+        visibleToOwnProfile = { packageName -> visibleTo(context.packageManager, packageName) },
+    )
 
     override val readerVersion: Int = READER_VERSION
 
@@ -212,14 +218,16 @@ internal class DeviceAppsReader(
 
     // API 30 以下は、別の言語の名前を自分のプロファイルのパッケージの資源から読む（LocalizedLabelReader）。仕事用にしかないアプリでは
     // createPackageContext が NameNotFoundException になり、APK が替わるまで同じ。読めた表示名と署名まで捨てて代わりのキーにしないため、
-    // 別の言語の名前だけがないとする。API 31 以上の NameNotFoundException は一覧の後に消えたことなので、一時的な失敗のまま
+    // 別の言語の名前だけがないとする。自分のプロファイルから見えないと確かめられたときだけで、見える・確かめられないなら失敗のまま
+    // （一覧の後に消えた・別の理由を隠さないため）。API 31 以上の NameNotFoundException は一覧の後に消えたことなので、一時的な失敗のまま
     private fun absentFromOwnProfile(
         job: MaterialJob,
         failure: ReadFailure,
     ): Boolean =
         sdkInt < Build.VERSION_CODES.S &&
             failure.cause == NAME_NOT_FOUND &&
-            stamps[job.key]?.firstOrNull()?.isCurrentProfile == false
+            stamps[job.key]?.firstOrNull()?.isCurrentProfile == false &&
+            visibleToOwnProfile(job.key.packageName) == false
 
     override fun genres(request: GenreRequest): GenreResult =
         try {
@@ -238,6 +246,21 @@ internal class DeviceAppsReader(
         // その言語に名前の資源がない（values-ja だけにある名前など）。ないことが決まっているので空で成功とする
         private val NOT_FOUND: String = Resources.NotFoundException::class.java.name
         private val NAME_NOT_FOUND: String = PackageManager.NameNotFoundException::class.java.name
+
+        // API 30 以下でだけ呼ぶので、flags を Int で渡す古い形を使う
+        @Suppress("DEPRECATION")
+        private fun visibleTo(
+            packageManager: PackageManager,
+            packageName: String,
+        ): Boolean? =
+            try {
+                packageManager.getApplicationInfo(packageName, 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            } catch (_: RuntimeException) {
+                null
+            }
 
         private fun statusOf(status: ProfileReadStatus): ListingStatus =
             when (status) {

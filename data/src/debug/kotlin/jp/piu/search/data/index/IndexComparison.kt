@@ -23,6 +23,7 @@ import jp.piu.search.data.MaterialIssue
 import jp.piu.search.data.MaterialStage
 import jp.piu.search.data.ProfileReadStatus
 import jp.piu.search.data.StoredIndex
+import jp.piu.search.data.SyncReport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,8 +66,8 @@ internal data class IndexDiff(
 /**
  * 比べた結果。
  *
- * @property failedProfiles どちらかで一覧か材料の問い合わせが失敗したプロファイル（"old:番号" か "new:番号"）。
- *   あれば、そのプロファイルの組が両方から抜けても差に出ないので、比較は成り立たない
+ * @property failedProfiles どちらかで失敗した問い合わせ（プロファイルなら "old:番号" か "new:番号"、ジャンルなら "old:genres:理由" か
+ *   "new:genres:理由"）。あれば、その組やジャンルが両方で古いまま・抜けたままでも差に出ないので、比較は成り立たない
  */
 internal class ComparisonReport(
     val pairs: Int,
@@ -81,7 +82,7 @@ internal class ComparisonReport(
 
     fun render(): String =
         buildString {
-            if (!comparable) appendLine("NOT COMPARABLE: failed profiles $failedProfiles")
+            if (!comparable) appendLine("NOT COMPARABLE: failed $failedProfiles")
             appendLine("pairs=$pairs diffs=${diffs.size} disallowed=${if (comparable) disallowed.size.toString() else "unknown"}")
             Allowance.entries.forEach { a -> appendLine("allowed(${a.code})=${diffs.count { it.allowance == a }}") }
             (disallowed + diffs.filter { it.allowance != null }).forEach { d ->
@@ -120,42 +121,53 @@ internal object IndexComparison {
         try {
             val old = LocalDatabase.open(context, OLD_DB)
             val writer = DatabaseWriter()
-            val oldProfiles: Map<Long, ProfileReadStatus>
+            val oldReport: SyncReport
             val oldIndex =
                 try {
-                    oldProfiles = IndexSync(context, old, analyzer, writer, appVersionCode = version).sync().profileResults
+                    oldReport = IndexSync(context, old, analyzer, writer, appVersionCode = version).sync()
                     old.index.load()
                 } finally {
                     writer.close()
                     old.close()
                 }
-            val newSnapshot =
+            val (newSnapshot, newGenreFailure) =
                 runBlocking {
                     val job = SupervisorJob()
                     try {
                         val actor = IndexActor.openNamed(context, NEW_DB, CoroutineScope(job + Dispatchers.IO), version, analyzer)
                         actor.requestSync().await()
                         check(actor.status.value.syncFailure == null) { "新しい同期が失敗した: ${actor.status.value.syncFailure}" }
-                        actor.snapshot.value
+                        actor.snapshot.value to actor.status.value.genreFailure
                     } finally {
                         job.cancelAndJoin()
                     }
                 }
             val own = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
-            return compare(oldIndex, oldProfiles, newSnapshot, Build.VERSION.SDK_INT, own)
+            return compare(
+                oldIndex,
+                oldReport.profileResults,
+                oldReport.genreFailure,
+                newSnapshot,
+                newGenreFailure,
+                Build.VERSION.SDK_INT,
+                own,
+            )
         } finally {
             listOf(OLD_DB, NEW_DB).forEach(context::deleteDatabase)
         }
     }
 
     /**
-     * 0.2.0 の保存した索引 [old]（同期のプロファイルごとの結果 [oldProfiles]）と、新しい写し [new] を比べる。
+     * 0.2.0 の保存した索引 [old]（同期のプロファイルごとの結果 [oldProfiles]・ジャンルの失敗 [oldGenreFailure]）と、
+     * 新しい写し [new]（ジャンルの失敗 [newGenreFailure]）を比べる。
      * [sdkInt] と [ownSerial] は、API 30 以下で仕事用にしかないアプリの別の言語の名前を「成功した空」と分けるのに使う。
      */
     fun compare(
         old: StoredIndex,
         oldProfiles: Map<Long, ProfileReadStatus>,
+        oldGenreFailure: String?,
         new: IndexSnapshot,
+        newGenreFailure: String?,
         sdkInt: Int,
         ownSerial: Long,
     ): ComparisonReport {
@@ -164,7 +176,8 @@ internal object IndexComparison {
                 new.listings
                     .filterValues { it == ListingStatus.FAILED }
                     .keys
-                    .map { "new:$it" }
+                    .map { "new:$it" } +
+                listOfNotNull(oldGenreFailure?.let { "old:genres:$it" }, newGenreFailure?.let { "new:genres:$it" })
         val isSuccessEmpty = { issue: MaterialIssue ->
             (issue.stage == MaterialStage.LABEL && issue.cause == NOT_FOUND) ||
                 (issue.stage == MaterialStage.SIGNER && issue.cause == MaterialCauses.NO_SIGNERS) ||
