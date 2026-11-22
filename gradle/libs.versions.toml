@@ -3,7 +3,7 @@
 agp = "9.5.1"
 kotlin = "2.4.21"
 # KSP 2.3 系は Kotlin の版から切り離されている（KSP2）。Room のコード生成に使う
-ksp = "2.3.13"
+ksp = "2.3.14"
 spotless = "8.11.0"
 ktlint = "1.8.0"
 kover = "0.9.11"
