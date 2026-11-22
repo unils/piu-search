@@ -111,7 +111,7 @@ class SettingsTest {
 
     @Test
     fun showingTheGuideAgainOpensTheSearchScreenWithIt() {
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SettingsActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_ONBOARDING_AGAIN_TAG).performScrollTo().performClick()
             assertFalse(SettingsStore(context).onboardingDismissed)
@@ -122,7 +122,7 @@ class SettingsTest {
 
     @Test
     fun searchScreenOpensSettingsFromTheGearAndRereadsThemOnReturn() {
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_BUTTON_TAG).performClick()
             scenario.onActivity { activity ->
@@ -132,7 +132,7 @@ class SettingsTest {
             val bottom = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top
 
             // 設定画面で上に変えて戻った（画面が裏に回って前に戻る）
-            SettingsStore(context).search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
+            context.appContainer.settings.search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
@@ -145,12 +145,12 @@ class SettingsTest {
     fun settingsAreRereadWhenTheSearchScreenResumesWithoutStopping() {
         // 設定画面を開いてすぐ戻ると、OS が検索の画面の onStop を出す前に戻ることがある（onPause → onResume だけ。
         // SettingsInstrumentedTest.choosingTopInSettingsMovesTheSearchBarUp が時々落ちた原因）
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
             val bottom = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top
 
             scenario.moveToState(Lifecycle.State.STARTED)
-            SettingsStore(context).search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
+            context.appContainer.settings.search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
             val top = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top

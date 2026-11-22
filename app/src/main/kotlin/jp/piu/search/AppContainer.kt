@@ -75,7 +75,7 @@ class AppContainer(
     }
 
     /** 学習の書き出し・読み込みの結果で、学習の一覧の画面がまだ出し終えていないもの。画面を作り直しても失わないよう、ここに置く。 */
-    val backupOutcome: PendingResult<BackupOutcome> = PendingResult()
+    val backupOutcome: ResultBox<BackupOutcome> = ResultBox()
 
     /**
      * 直近にアプリを開いたときの、起動の記録か学習の保存に失敗したか。

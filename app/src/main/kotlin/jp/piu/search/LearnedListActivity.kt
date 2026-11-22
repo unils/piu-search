@@ -60,7 +60,7 @@ class LearnedListActivity : ComponentActivity() {
             ViewModelProvider(
                 this,
                 viewModelFactory {
-                    initializer { LearnedListViewModel(container.backupOutcome, ContextCompat.getMainExecutor(applicationContext)) }
+                    initializer { LearnedListViewModel(container.backupOutcome) }
                 },
             )[LearnedListViewModel::class.java]
         val dateFormat = DateFormat.getDateInstance(DateFormat.MEDIUM)
