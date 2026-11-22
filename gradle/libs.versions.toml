@@ -36,7 +36,7 @@ kuromoji = "0.9.0"
 # JUnit 6（Jupiter の API）。JVM のモジュールと build-logic で使う
 junit = "6.1.3"
 junit4 = "4.13.2"
-robolectric = "4.17"
+robolectric = "4.18.1"
 androidx-test-ext-junit = "1.3.0"
 androidx-test-runner = "1.7.0"
 androidx-test-espresso = "3.7.0"
