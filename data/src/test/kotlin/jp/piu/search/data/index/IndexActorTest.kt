@@ -88,6 +88,41 @@ class IndexActorTest {
         }
 
     @Test
+    fun eachFinishedSyncOfThisProcessIsSummarizedIncludingAWholeFailure() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            reader.install(WORK_MAIL, app("メール"))
+            val actor = actor(FaultyIndexStorage(database()))
+            runCurrent()
+            assertNull(actor.status.value.lastSync)
+
+            actor.requestSync().await()
+            val first = checkNotNull(actor.status.value.lastSync)
+            assertEquals(2, first.materialsRead)
+            assertEquals(2, first.keysBuilt)
+            assertEquals(0, first.removed)
+            assertFalse(first.failed)
+
+            actor.requestSync().await()
+            val unchanged = checkNotNull(actor.status.value.lastSync)
+            assertEquals(listOf(0, 0, 0), listOf(unchanged.materialsRead, unchanged.keysBuilt, unchanged.removed))
+
+            reader.profiles.getValue(WORK).remove(WORK_MAIL.packageName)
+            actor.requestSync().await()
+            assertEquals(
+                1,
+                actor.status.value.lastSync
+                    ?.removed,
+            )
+
+            reader.failObserve = true
+            actor.requestSync().await()
+            val failed = checkNotNull(actor.status.value.lastSync)
+            assertTrue(failed.failed)
+            assertNotNull(actor.status.value.syncFailure)
+        }
+
+    @Test
     fun aFailedSaveKeepsThePublishedSnapshotAndTheNextSyncRewritesItWithoutReadingMaterials() =
         runTest {
             reader.install(MAPS, app("地図"))
