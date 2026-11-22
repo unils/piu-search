@@ -9,28 +9,28 @@ import java.io.File
 import java.io.IOException
 
 /**
- * 破損を知らされても DB のファイルを消さない open helper。
- *
- * 既定（`SupportSQLiteOpenHelper.Callback.onCorruption`）は DB のファイルを消し、Android は開く途中の破損なら直後に開き直すので、
- * 空の DB ができて、記録が空のまま読めてしまう。記録は作り直せないので、原本をそのまま残し、調べるための写し（`<名前>.corrupt`）を作る。
- * 開き直しも同じ破損で失敗し、書き手には読み込みの失敗として届く（空の写しを公開しない）。
+ * SQLite が破損を知らせたら、「壊れて作り直した」の印 [mark] を残してから、既定の扱い（DB のファイルを消し、開き直して空から始める）に任せる
+ * open helper。壊れることはまれなので、原本を残して記録を使えないままにするより、空から始めて、そのことを利用者に 1 回知らせる。
+ * 印は `noBackupFilesDir` の小さなファイルで、[RecordsActor] が公開し、画面が知らせを出したら消す。
  */
-internal class KeepOnCorruptionFactory(
+internal class MarkOnCorruptionFactory(
     private val delegate: SupportSQLiteOpenHelper.Factory,
+    private val mark: File,
 ) : SupportSQLiteOpenHelper.Factory {
     override fun create(configuration: SupportSQLiteOpenHelper.Configuration): SupportSQLiteOpenHelper =
         delegate.create(
             SupportSQLiteOpenHelper.Configuration
                 .builder(configuration.context)
                 .name(configuration.name)
-                .callback(KeepOnCorruption(configuration.callback))
+                .callback(MarkOnCorruption(configuration.callback, mark))
                 .noBackupDirectory(configuration.useNoBackupDirectory)
                 .allowDataLossOnRecovery(configuration.allowDataLossOnRecovery)
                 .build(),
         )
 
-    private class KeepOnCorruption(
+    private class MarkOnCorruption(
         private val delegate: SupportSQLiteOpenHelper.Callback,
+        private val mark: File,
     ) : SupportSQLiteOpenHelper.Callback(delegate.version) {
         override fun onConfigure(db: SupportSQLiteDatabase) = delegate.onConfigure(db)
 
@@ -51,15 +51,17 @@ internal class KeepOnCorruptionFactory(
         override fun onOpen(db: SupportSQLiteDatabase) = delegate.onOpen(db)
 
         override fun onCorruption(db: SupportSQLiteDatabase) {
-            val path = db.path ?: return
-            Log.w(TAG, "記録の DB の破損を検出した。原本を残す")
+            Log.w(TAG, "記録の DB の破損を検出した。消して作り直す")
+            // 印を残せなくても作り直す（知らせが出ないだけで、記録の機能は使える）
             try {
-                File(path).copyTo(File("$path.corrupt"), overwrite = true)
+                mark.parentFile?.mkdirs()
+                mark.createNewFile()
             } catch (e: IOException) {
-                Log.w(TAG, "破損した記録の DB の写しを作れない: ${e.javaClass.name}")
+                Log.w(TAG, "作り直しの印を残せない: ${e.javaClass.name}")
             } catch (e: SecurityException) {
-                Log.w(TAG, "破損した記録の DB の写しを作れない: ${e.javaClass.name}")
+                Log.w(TAG, "作り直しの印を残せない: ${e.javaClass.name}")
             }
+            delegate.onCorruption(db)
         }
     }
 

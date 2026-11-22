@@ -62,6 +62,14 @@ public class RecordsActor internal constructor(
      */
     public val state: StateFlow<RecordsState> = published.asStateFlow()
 
+    private val rebuiltFlow = MutableStateFlow(false)
+
+    /**
+     * SQLite が破損を知らせ、記録の DB を消して空から作り直したか。画面は 1 回だけ知らせを出し、[acknowledgeRebuilt] で消す。
+     * 印はファイルに残すので、知らせる前にプロセスが終わっても次の起動で出る。
+     */
+    public val rebuiltAfterCorruption: StateFlow<Boolean> = rebuiltFlow.asStateFlow()
+
     internal val job: Job =
         scope.launch(context) {
             // 頼みを待たずに読み込み、消えたプロファイルの整理まで試す。頼みは読み込みが終わってから処理する（Loading の間の頼みは待つ）
@@ -97,6 +105,11 @@ public class RecordsActor internal constructor(
      * 整理の再試行を集合の変化の知らせだけに頼らないため（同じ集合は [StateFlow] が配らない）。
      */
     public fun refresh(): Deferred<Unit> = send(Message.Refresh())
+
+    /** 作り直したことを利用者に知らせた。[rebuiltAfterCorruption] を下ろす。 */
+    public fun acknowledgeRebuilt() {
+        send(Message.AcknowledgeRebuilt())
+    }
 
     /** 知らせ [id] を出し終えた。取り消しの材料は保つ。 */
     public fun consumeNotice(id: Long) {
@@ -146,6 +159,12 @@ public class RecordsActor internal constructor(
                 is Message.Consume -> {
                     current = RecordsRules.consumeNotice(current, message.id)
                     publish()
+                    message.reply.complete(Unit)
+                }
+
+                is Message.AcknowledgeRebuilt -> {
+                    storage.clearRebuilt()
+                    noticeRebuilt()
                     message.reply.complete(Unit)
                 }
 
@@ -207,6 +226,12 @@ public class RecordsActor internal constructor(
                 Log.w(TAG, "記録を読めない: ${e.javaClass.name}")
                 RecordsRules.checked(RecordsRules.loadFailed(current, e.javaClass.name), check)
             }
+        noticeRebuilt()
+    }
+
+    // 破損は DB に触れたときに知らされるので、読み書きのたびに印を見る
+    private fun noticeRebuilt() {
+        rebuiltFlow.value = storage.rebuiltAfterCorruption()
     }
 
     // 書くものがなければ書けたとみなす（規則の commit と resultOf も、書くものがなければ書き込みの成否を見ない）
@@ -221,6 +246,8 @@ public class RecordsActor internal constructor(
             // SQLite の失敗（容量・入出力・制約）の RuntimeException と、保存先の IOException。トランザクションは戻っている
             Log.w(TAG, "記録を保存できない: ${e.javaClass.name}")
             false
+        } finally {
+            noticeRebuilt()
         }
     }
 
@@ -254,6 +281,8 @@ public class RecordsActor internal constructor(
         ) : Message<Unit>()
 
         class Snapshot : Message<UserRecords?>()
+
+        class AcknowledgeRebuilt : Message<Unit>()
     }
 
     /** 作り方。 */

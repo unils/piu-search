@@ -5,6 +5,7 @@ package jp.piu.search.data.records
 import android.content.Context
 import android.os.Process
 import android.os.UserManager
+import android.util.Log
 import androidx.room.Room
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import jp.piu.search.core.search.AppId
@@ -31,6 +32,7 @@ import java.util.concurrent.Callable
 internal class RecordsDatabase(
     private val room: RecordsRoomDatabase,
     private val guard: RecordsInstallationGuard?,
+    private val rebuiltMark: File? = null,
 ) : RecordsStorage,
     Closeable {
     private val dao = room.recordsDao()
@@ -86,6 +88,21 @@ internal class RecordsDatabase(
         guarded = true
     }
 
+    override fun rebuiltAfterCorruption(): Boolean =
+        try {
+            rebuiltMark?.isFile == true
+        } catch (_: SecurityException) {
+            false
+        }
+
+    override fun clearRebuilt() {
+        try {
+            rebuiltMark?.delete()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "作り直しの印を消せない: ${e.javaClass.name}")
+        }
+    }
+
     override fun close() {
         room.close()
     }
@@ -110,7 +127,8 @@ internal class RecordsDatabase(
                     Room.databaseBuilder(appContext, RecordsRoomDatabase::class.java, name)
                 }
             builder.addMigrations(*RecordsRoomDatabase.MIGRATIONS)
-            builder.openHelperFactory(KeepOnCorruptionFactory(FrameworkSQLiteOpenHelperFactory()))
+            val mark = name?.let { File(appContext.noBackupFilesDir, "$it$REBUILT_SUFFIX") }
+            mark?.let { builder.openHelperFactory(MarkOnCorruptionFactory(FrameworkSQLiteOpenHelperFactory(), it)) }
             if (allowMainThread) builder.allowMainThreadQueries()
             val guard =
                 name?.let {
@@ -119,15 +137,20 @@ internal class RecordsDatabase(
                         ownSerial,
                     )
                 }
-            return RecordsDatabase(builder.build(), guard)
+            return RecordsDatabase(builder.build(), guard, mark)
         }
 
         // 0.2.0 の InstallationGuard と同じファイル。同じ端末の更新で印を一致させるため
         const val MARKER_FILE = "installation-id"
 
+        // 「壊れて作り直した」の印のファイルの名前の後ろ（DB の名前に付ける）
+        const val REBUILT_SUFFIX = ".rebuilt"
+
         // 負（自分のユーザーが見つからない）もそのまま渡す。0.2.0 は主ユーザー（0）に倒したが、転送の付け替え先を誤るので、照合が保留する
         private fun ownSerialOf(context: Context): Long =
             context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
+
+        private const val TAG = "PiuRecordsDb"
 
         private fun recordOf(row: LearnedRow): LearnedRecord =
             LearnedRecord(

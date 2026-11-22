@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.LaunchRecord
 import jp.piu.search.core.state.RecordsWrite
+import jp.piu.search.core.state.UserRecords
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -129,24 +130,20 @@ class RecordsDatabaseTest {
     }
 
     @Test
-    fun aCorruptDatabaseIsKeptAsItIsAndTheLoadFails() {
+    fun aCorruptDatabaseIsRebuiltEmptyAndLeavesAMark() {
         open().write(seedWrite())
         opened.forEach(RecordsDatabase::close)
         opened.clear()
-        // 先頭（SQLite の見出し）を壊す。Room の既定では、破損の知らせで原本を消し、空の DB を作り直して開いてしまう
-        val file = context.getDatabasePath(FILE)
-        val bytes = file.readBytes()
-        "壊れた見出し".toByteArray().copyInto(bytes)
-        file.writeBytes(bytes)
-        repeat(2) {
-            val db = open()
-            assertThrows(RuntimeException::class.java) { db.load() }
-            db.close()
-            opened.clear()
-            assertTrue(file.readBytes().contentEquals(bytes))
-        }
-        // 原本と別に、調べるための写しを残す
-        assertTrue(File(file.path + ".corrupt").readBytes().contentEquals(bytes))
+        corrupt(context, FILE)
+        // 壊れることはまれなので、Room の既定と同じく消して新しく始める。そのことを利用者に 1 回知らせるための印を残す
+        val db = open()
+        val stored = db.load()
+        assertEquals(UserRecords.EMPTY, stored.records)
+        assertTrue(stored.storedSerials.isEmpty())
+        assertTrue(rebuiltMark(context, FILE).isFile)
+        // 作り直した DB には書ける
+        db.write(seedWrite())
+        assertEquals(setOf(OWN, WORK), db.load().storedSerials)
     }
 
     private fun open(): RecordsDatabase = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { OWN }).also(opened::add)

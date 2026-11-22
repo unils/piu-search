@@ -29,4 +29,10 @@ internal interface RecordsStorage {
 
     /** [write] を 1 つのトランザクションで書く。 */
     fun write(write: RecordsWrite)
+
+    /** 破損を知らされて、DB を消して作り直したか（利用者にまだ知らせていない）。 */
+    fun rebuiltAfterCorruption(): Boolean = false
+
+    /** 作り直したことを利用者に知らせた。 */
+    fun clearRebuilt() {}
 }

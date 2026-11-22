@@ -88,6 +88,10 @@ internal class FaultyStorage(
         delegate.write(write)
         writes += write
     }
+
+    override fun rebuiltAfterCorruption(): Boolean = delegate.rebuiltAfterCorruption()
+
+    override fun clearRebuilt() = delegate.clearRebuilt()
 }
 
 /**
@@ -113,6 +117,10 @@ internal class BlockingStorage(
         }
         delegate.write(write)
     }
+
+    override fun rebuiltAfterCorruption(): Boolean = delegate.rebuiltAfterCorruption()
+
+    override fun clearRebuilt() = delegate.clearRebuilt()
 
     fun awaitEntered() {
         check(entered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) { "書き込みが始まらない" }
@@ -145,3 +153,20 @@ internal fun SQLiteDatabase.longOrNull(sql: String): Long? =
     }
 
 internal fun SQLiteDatabase.count(sql: String): Long = rawQuery(sql, null).use { if (it.moveToFirst()) it.getLong(0) else -1 }
+
+/** DB のファイルの先頭（SQLite の見出し）を壊す。開くと SQLite が破損を知らせる。 */
+internal fun corrupt(
+    context: Context,
+    name: String,
+) {
+    val file = context.getDatabasePath(name)
+    val bytes = file.readBytes()
+    "壊れた見出し".toByteArray().copyInto(bytes)
+    file.writeBytes(bytes)
+}
+
+/** 「壊れて作り直した」の印のファイル。 */
+internal fun rebuiltMark(
+    context: Context,
+    name: String,
+): java.io.File = java.io.File(context.noBackupFilesDir, "$name.rebuilt")

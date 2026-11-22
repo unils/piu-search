@@ -568,6 +568,28 @@ class RecordsActorTest {
         }
 
     @Test
+    fun aCorruptDatabaseStartsEmptyAndTellsTheUserOnce() =
+        runTest {
+            database.write(seedWrite())
+            database.close()
+            opened.clear()
+            corrupt(context, FILE)
+            val reopened = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { OWN }).also(opened::add)
+            val actor = actor(reopened)
+            runCurrent()
+            // 空の Ready で始め、作り直したことを出す
+            assertEquals(UserRecords.EMPTY, actor.state.value.records)
+            assertTrue(actor.rebuiltAfterCorruption.value)
+            // ほかの頼みでは消えない。画面が知らせを出したら消す
+            assertTrue(actor.request(RecordsRequest.Open(LearningDecision(null, emptyList()), OWN_APP, at = 1)) is RecordsResult.Success)
+            assertTrue(actor.rebuiltAfterCorruption.value)
+            actor.acknowledgeRebuilt()
+            actor.refresh().await()
+            assertTrue(!actor.rebuiltAfterCorruption.value)
+            assertTrue(!rebuiltMark(context, FILE).exists())
+        }
+
+    @Test
     fun anIOExceptionFromTheStorageFailsOnlyThatRequest() =
         runTest {
             val storage =
