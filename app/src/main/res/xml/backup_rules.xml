@@ -4,9 +4,14 @@
     Android 9〜11。索引・学習・起動の記録の DB と設定だけを、端末間転送に含める。
     root からは databases と shared_prefs をたどらないため、領域を明示する。
     include があると列挙した領域だけが対象になり、requireFlags によりクラウドには何も送らない。
+    索引の DB（index.db と、その WAL・共有メモリ・ジャーナルのファイル）は外す。受け取った側の端末で作り直すため。
     Android 12 以降は data_extraction_rules.xml が使われる
 -->
 <full-backup-content>
     <include domain="database" path="." requireFlags="deviceToDeviceTransfer" />
     <include domain="sharedpref" path="." requireFlags="deviceToDeviceTransfer" />
+    <exclude domain="database" path="index.db" />
+    <exclude domain="database" path="index.db-wal" />
+    <exclude domain="database" path="index.db-shm" />
+    <exclude domain="database" path="index.db-journal" />
 </full-backup-content>
