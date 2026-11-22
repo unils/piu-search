@@ -2,6 +2,7 @@
 
 package jp.piu.search
 
+import jp.piu.search.data.index.IndexActor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,6 +27,7 @@ class BackupRulesTest {
         val includes = rules.children("include")
         assertEquals(setOf("database", "sharedpref"), includes.map { it.getAttribute("domain") }.toSet())
         assertTrue(includes.all { it.getAttribute("path") == "." && it.getAttribute("requireFlags") == "deviceToDeviceTransfer" })
+        assertIndexExcluded(rules.children("exclude"))
     }
 
     @Test
@@ -52,6 +54,16 @@ class BackupRulesTest {
         val transfer = rules.children("device-transfer").single().children("include")
         assertEquals(setOf("database", "sharedpref"), transfer.map { it.getAttribute("domain") }.toSet())
         assertTrue(transfer.all { it.getAttribute("path") == "." })
+        assertIndexExcluded(rules.children("device-transfer").single().children("exclude"))
+    }
+
+    // 索引の DB は受け取った側で作り直す。SQLite の付属のファイルも外さないと、本体のない WAL だけが移る
+    private fun assertIndexExcluded(excludes: List<Element>) {
+        val name = IndexActor.FILE_NAME
+        assertEquals(
+            setOf(name, "$name-wal", "$name-shm", "$name-journal"),
+            excludes.filter { it.getAttribute("domain") == "database" }.map { it.getAttribute("path") }.toSet(),
+        )
     }
 
     private fun parse(file: File): Element =
