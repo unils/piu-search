@@ -73,7 +73,11 @@ dependencies {
     api(project(":core:text"))
     api(project(":core:reading"))
     api(project(":core:search"))
+    // 記録の書き手が、写しの型（RecordsState・UserRecords）と頼みの型を公開する
+    api(project(":core:state"))
 
+    // 記録の書き手が StateFlow・Deferred を公開するので api にする（Room から推移的に入っていたものを明示する）
+    api(libs.kotlinx.coroutines.core)
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)
 
@@ -82,6 +86,8 @@ dependencies {
     testImplementation(libs.androidx.test.ext.junit)
     // 書き出したスキーマの JSON から古い版のデータベースを作り、移行を確かめる（MigrationTestHelper）
     testImplementation(libs.room.testing)
+    // 記録の書き手の順序と取り消しのテスト（仮想の時計の Dispatcher）
+    testImplementation(libs.kotlinx.coroutines.test)
     // 計器テスト（エミュレータの上）。本物の PackageManager と LauncherApps を相手にする
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)

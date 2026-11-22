@@ -2,6 +2,7 @@
 
 package jp.piu.search.core.state
 
+import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.GenreId
 import jp.piu.search.core.search.SearchKeyKind
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -353,18 +354,19 @@ class IndexRulesTest {
     }
 
     @Test
-    fun `生成の結果は、頼んだ同期の頼みとちょうど一致するものだけを受ける（入力が同じでも別の回の結果は受けない）`() {
+    fun `生成の結果は、頼んだ入口の分がちょうどそろうものだけを受ける`() {
         val device = device(MAPS to maps())
         val first = sync(IndexSnapshot.EMPTY, device).next
-        val v8 = ENV.copy(generatorVersion = 8)
-        val plan = IndexRules.plan(first, device.observe(), v8)
+        val plan = IndexRules.plan(first, device.observe(), ENV.copy(generatorVersion = 8))
         val prepared = IndexRules.prepare(plan, emptyList(), TODAY)
         assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, noGenres(plan), emptyMap()) }
-        // 同じ入力を、前の版の生成器で作った別の回の頼み
-        val stale = IndexRules.prepare(IndexRules.plan(first, device.observe(), ENV.copy(generatorVersion = 9)), emptyList(), TODAY)
-        assertEquals(prepared.jobs.single().entry, stale.jobs.single().entry)
+        val other = KeyJob(AppEntry(appId(PackageKey(0, "other"), "Main"), "他"))
         assertThrows<IllegalArgumentException> {
-            IndexRules.apply(prepared, noGenres(plan), mapOf(stale.jobs.single() to KeyOutcome.Built(emptyList())))
+            IndexRules.apply(
+                prepared,
+                noGenres(plan),
+                prepared.jobs.associateWith { KeyOutcome.Built(emptyList()) } + (other to KeyOutcome.Built(emptyList())),
+            )
         }
     }
 
@@ -627,25 +629,25 @@ class IndexRulesTest {
     }
 
     @Test
-    fun `材料とジャンルの結果は、頼んだ計画の頼みに答えたものだけを受ける`() {
+    fun `頼んでいない入口のジャンルが来たら止める`() {
         val device = device(MAPS to maps())
-        val first = sync(IndexSnapshot.EMPTY, device).next
-        val ja = IndexRules.plan(first, device.observe(), ENV.copy(locale = "ja-JP-x"))
-        val en = IndexRules.plan(first, device.observe(), ENV.copy(locale = "en-US"))
+        val plan = IndexRules.plan(IndexSnapshot.EMPTY, device.observe(), ENV)
         val seen = KeyObservation(maps().apkKey, maps().updatedAt)
-        val jaReads = readsOf(ja, MaterialRead.Read(maps().labels, seen, seen, maps().localized, maps().signers))
-        val prepared = IndexRules.prepare(ja, jaReads, TODAY)
-        assertThrows<IllegalArgumentException> { IndexRules.prepare(en, jaReads, TODAY) }
+        val prepared =
+            IndexRules.prepare(
+                plan,
+                readsOf(plan, MaterialRead.Read(maps().labels, seen, seen, maps().localized, maps().signers)),
+                TODAY,
+            )
         val built = prepared.jobs.associateWith { KeyOutcome.Built(fakeKeys(it.entry, ENV)) }
-        assertThrows<IllegalArgumentException> { IndexRules.apply(prepared, noGenres(en), built) }
         assertThrows<IllegalArgumentException> {
             IndexRules.apply(
                 prepared,
-                GenreResult.Found(ja.genres, mapOf(appId(PackageKey(0, "other"), "Main") to listOf(GenreId("maps")))),
+                GenreResult.Found(plan.genres, mapOf(appId(PackageKey(0, "other"), "Main") to listOf(GenreId("maps")))),
                 built,
             )
         }
-        IndexRules.apply(prepared, noGenres(ja), built)
+        IndexRules.apply(prepared, noGenres(plan), built)
     }
 
     @Test
@@ -667,15 +669,12 @@ class IndexRulesTest {
     }
 
     @Test
-    fun `読み取りの結果は、読めなかった結果も、計画が出したプロファイルの頼みに答えたものだけを受ける`() {
+    fun `読み取りの結果は、読めなかった結果も、計画が頼んだプロファイルの分だけを 1 つずつ受ける`() {
         val first = sync(IndexSnapshot.EMPTY, device(WORK_MAIL to mail(), PackageKey(WORK, "gone") to mail())).next
         val updated = device(WORK_MAIL to mail().copy(apkKey = "apk-2"))
         val a = IndexRules.plan(first, updated.observe(), ENV)
-        val b = IndexRules.plan(first, updated.observe(), ENV)
         val failedForA = listOf(ProfileReads(a.profileReads.getValue(WORK), ListingStatus.UNAVAILABLE))
         IndexRules.prepare(a, failedForA, TODAY)
-        // 別の計画の「読めなかった」を受けると、b で読めていても更新と削除を見送ってしまう
-        assertThrows<IllegalArgumentException> { IndexRules.prepare(b, failedForA, TODAY) }
         // 材料を頼まなかったプロファイルの結果も受けない（頼みのない計画には結果を渡せない）
         val idle = IndexRules.plan(first, device(WORK_MAIL to mail()).observe(), ENV)
         assertTrue(idle.profileReads.isEmpty())
@@ -683,19 +682,6 @@ class IndexRulesTest {
         assertThrows<IllegalArgumentException> { IndexRules.prepare(idle, failedForA, TODAY) }
         // 同じ頼みの結果を 2 つ渡しても止める
         assertThrows<IllegalArgumentException> { IndexRules.prepare(a, failedForA + failedForA, TODAY) }
-    }
-
-    @Test
-    fun `プロファイルの頼みの中の組の結果も、その計画の頼みのものだけを受ける`() {
-        val device = device(MAPS to maps())
-        val a = IndexRules.plan(IndexSnapshot.EMPTY, device.observe(), ENV)
-        val b = IndexRules.plan(IndexSnapshot.EMPTY, device.observe(), ENV)
-        val seen = KeyObservation(maps().apkKey, maps().updatedAt)
-        val read = MaterialRead.Read(maps().labels, seen, seen)
-        // b のプロファイルの頼みに、a の組の頼みの結果を入れる
-        val mixed = listOf(ProfileReads(b.profileReads.getValue(0), ListingStatus.COMPLETE, mapOf(a.reads.getValue(MAPS) to read)))
-        assertThrows<IllegalArgumentException> { IndexRules.prepare(b, mixed, TODAY) }
-        IndexRules.prepare(b, readsOf(b, read), TODAY)
     }
 
     @Test
