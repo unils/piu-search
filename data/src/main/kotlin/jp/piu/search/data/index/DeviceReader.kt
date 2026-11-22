@@ -3,7 +3,9 @@
 package jp.piu.search.data.index
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Resources
+import android.os.Build
 import android.os.UserHandle
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.state.DeviceObservation
@@ -80,15 +82,18 @@ public interface DeviceReader {
  * 0.2.0 の読み手（[DeviceApps]: `AppSource`・`InstalledAppReader`・`LocalizedLabelReader`・`SignerReader`・`GenreResolver`）を包む [DeviceReader]。
  * 何を・どう読むかは変えず、結果の形だけを同期の規則の入力に変える。
  *
- * ないことが決まっているもの（その言語に名前の資源がない `Resources.NotFoundException`・署名がない `NO_SIGNERS`）は、
- * 失敗でなく空の値で読めたとする。名前が資源でない・アーカイブ済みは、もとから読み手が失敗にしない。
+ * ないことが決まっているもの（その言語に名前の資源がない `Resources.NotFoundException`・署名がない `NO_SIGNERS`・
+ * API 30 以下で仕事用のプロファイルにしかないアプリの別の言語の名前）は、失敗でなく空の値で読めたとする。
+ * 名前が資源でない・アーカイブ済みは、もとから読み手が失敗にしない。
  * それ以外の段の失敗は、段の順（ENTRY・LABEL・SIGNER）で最初のものを組の失敗にする。
  *
  * @param existingProfiles 存在するプロファイルの番号。問い合わせが失敗したら null
+ * @param sdkInt 端末の API レベル。テストで差し替える
  */
 internal class DeviceAppsReader(
     private val apps: DeviceApps,
     private val existingProfiles: () -> Set<Long>?,
+    private val sdkInt: Int = Build.VERSION.SDK_INT,
 ) : DeviceReader {
     constructor(context: Context) : this(AndroidDeviceApps(context.applicationContext), ExistingProfiles(context)::serials)
 
@@ -190,7 +195,7 @@ internal class DeviceAppsReader(
                 .toMap()
         read.entryFailure?.let { return MaterialRead.Failed(Stage.ENTRY, failureOf(MaterialStage.ENTRY, it), before, after, labels) }
         if (!job.auxiliary) return MaterialRead.Read(labels, before, after)
-        read.labelFailure?.takeUnless { it.cause == NOT_FOUND }?.let {
+        read.labelFailure?.takeUnless { it.cause == NOT_FOUND || absentFromOwnProfile(job, it) }?.let {
             return MaterialRead.Failed(Stage.LABEL, failureOf(MaterialStage.LABEL, it), before, after, labels)
         }
         read.signerFailure?.takeUnless { it.cause == MaterialCauses.NO_SIGNERS }?.let {
@@ -204,6 +209,17 @@ internal class DeviceAppsReader(
             signerDns = read.signers,
         )
     }
+
+    // API 30 以下は、別の言語の名前を自分のプロファイルのパッケージの資源から読む（LocalizedLabelReader）。仕事用にしかないアプリでは
+    // createPackageContext が NameNotFoundException になり、APK が替わるまで同じ。読めた表示名と署名まで捨てて代わりのキーにしないため、
+    // 別の言語の名前だけがないとする。API 31 以上の NameNotFoundException は一覧の後に消えたことなので、一時的な失敗のまま
+    private fun absentFromOwnProfile(
+        job: MaterialJob,
+        failure: ReadFailure,
+    ): Boolean =
+        sdkInt < Build.VERSION_CODES.S &&
+            failure.cause == NAME_NOT_FOUND &&
+            stamps[job.key]?.firstOrNull()?.isCurrentProfile == false
 
     override fun genres(request: GenreRequest): GenreResult =
         try {
@@ -221,6 +237,7 @@ internal class DeviceAppsReader(
 
         // その言語に名前の資源がない（values-ja だけにある名前など）。ないことが決まっているので空で成功とする
         private val NOT_FOUND: String = Resources.NotFoundException::class.java.name
+        private val NAME_NOT_FOUND: String = PackageManager.NameNotFoundException::class.java.name
 
         private fun statusOf(status: ProfileReadStatus): ListingStatus =
             when (status) {

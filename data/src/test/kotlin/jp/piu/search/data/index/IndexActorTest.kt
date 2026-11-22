@@ -9,6 +9,7 @@ import jp.piu.search.core.state.IndexSnapshot
 import jp.piu.search.core.state.ListingStatus
 import jp.piu.search.core.state.PackageKey
 import jp.piu.search.core.state.Stage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -16,6 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -393,14 +395,120 @@ class IndexActorTest {
             runCurrent()
             assertEquals(IndexSnapshot.EMPTY, actor.snapshot.value)
             assertEquals("java.io.IOException", actor.status.value.loadFailure)
-            // 前面になっても、同期の前に空の写しで上書きしない
-            actor.setForeground(true)
-            runCurrent()
+            // 保存の再試行だけでは、同期の前に空の写しで上書きしない
+            actor.retrySave().await()
             assertTrue(storage.saves.isEmpty())
 
             actor.requestSync().await()
             assertEquals(listOf(MAPS), reader.reads)
             assertEquals(1, storage.saves.size)
+        }
+
+    @Test
+    fun returningToTheForegroundSyncsWithoutNoticesAndMergesWithASyncRequest() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            val actor = actor(FaultyIndexStorage(database()))
+            actor.requestSync().await()
+            // Callback のない変更（プロセスがない間の更新）も、前面への復帰の観測で拾う
+            reader.install(MAIL, app("メール"))
+            actor.setForeground(true)
+            runCurrent()
+            assertEquals(setOf(MAPS, MAIL), actor.snapshot.value.packages.keys)
+            assertEquals(2, reader.observeCalls)
+
+            // 続けて送った前面への復帰と同期の頼みは、1 回の観測にまとめる
+            actor.setForeground(false)
+            actor.setForeground(true)
+            actor.requestSync().await()
+            assertEquals(3, reader.observeCalls)
+        }
+
+    @Test
+    fun aNoticeFollowedByGoingToTheBackgroundIsOnlyHeld() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            reader.serials[OWN_USER] = OWN
+            val actor = actor(FaultyIndexStorage(database()))
+            actor.setForeground(true)
+            actor.requestSync().await()
+            // 同期を始める直前の前面の状態で決める
+            actor.packagesChanged(listOf(MAPS.packageName), OWN_USER)
+            actor.setForeground(false)
+            runCurrent()
+            assertEquals(1, reader.observeCalls)
+            assertEquals(1 to 0, actor.pendingNotices())
+        }
+
+    @Test
+    fun theUnsavedMarkIsVisibleWithTheNewSnapshotWhileSaving() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            val storage = FaultyIndexStorage(database())
+            val actor = actor(storage)
+            var seen: Pair<Set<PackageKey>, IndexStatus>? = null
+            storage.onSave = { seen = actor.snapshot.value.packages.keys to actor.status.value }
+            actor.requestSync().await()
+            assertEquals(setOf(MAPS), seen?.first)
+            assertEquals(true, seen?.second?.unsaved)
+            assertEquals(false, seen?.second?.running)
+            assertFalse(actor.status.value.unsaved)
+        }
+
+    @Test
+    fun staleIconsAreSentEvenWhenTheSnapshotDoesNotChange() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            reader.install(MAIL, app("メール"))
+            reader.serials[OWN_USER] = OWN
+            val actor = actor(FaultyIndexStorage(database()))
+            val stale = ArrayList<Set<PackageKey>>()
+            backgroundScope.launch { actor.staleIcons.collect { stale += it } }
+            runCurrent()
+            actor.requestSync().await()
+            runCurrent()
+            assertEquals(listOf(setOf(MAPS, MAIL)), stale)
+
+            // アイコンだけが替わった更新。読み直しても写しは同じだが、失効は流す
+            val before = actor.snapshot.value
+            actor.packagesChanged(listOf(MAPS.packageName), OWN_USER)
+            actor.requestSync().await()
+            runCurrent()
+            assertEquals(before, actor.snapshot.value)
+            assertEquals(listOf(setOf(MAPS, MAIL), setOf(MAPS)), stale)
+
+            reader.profiles.getValue(OWN).remove(MAIL.packageName)
+            actor.requestSync().await()
+            runCurrent()
+            assertEquals(setOf(MAIL), stale.last())
+        }
+
+    @Test
+    fun stoppingWhileReadingCancelsTheWaitingRepliesAndClearsRunning() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            reader.duringRead = { throw CancellationException("読み取りの途中で止める") }
+            val actor = actor(FaultyIndexStorage(database()))
+            val reply = actor.requestSync()
+            runCurrent()
+            assertTrue(actor.job.isCancelled)
+            assertTrue(reply.isCancelled)
+            assertFalse(actor.status.value.running)
+            assertTrue(actor.requestSync().isCancelled)
+        }
+
+    @Test
+    fun stoppingWhileRetryingTheSaveCancelsTheReply() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            val storage = FaultyIndexStorage(database()).apply { failSaves = 1 }
+            val actor = actor(storage)
+            actor.requestSync().await()
+            storage.onSave = { throw CancellationException("保存の途中で止める") }
+            val reply = actor.retrySave()
+            runCurrent()
+            assertTrue(actor.job.isCancelled)
+            assertTrue(reply.isCancelled)
         }
 
     @Test

@@ -3,12 +3,17 @@
 package jp.piu.search.data.index
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Resources
+import android.os.Build
+import android.os.Process
+import android.os.UserManager
 import jp.piu.search.core.reading.KuromojiReadingAnalyzer
 import jp.piu.search.core.search.IndexedApp
 import jp.piu.search.core.search.SearchKey
 import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.state.IndexSnapshot
+import jp.piu.search.core.state.ListingStatus
 import jp.piu.search.core.state.PackageKey
 import jp.piu.search.data.DatabaseWriter
 import jp.piu.search.data.IndexSync
@@ -16,6 +21,7 @@ import jp.piu.search.data.LocalDatabase
 import jp.piu.search.data.MaterialCauses
 import jp.piu.search.data.MaterialIssue
 import jp.piu.search.data.MaterialStage
+import jp.piu.search.data.ProfileReadStatus
 import jp.piu.search.data.StoredIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +36,7 @@ internal enum class Allowance(
     /** どちらかで本当の失敗（一時的・不具合の疑い・CHANGED_DURING_READ）があった組のキーと表示名。 */
     REAL_FAILURE("a"),
 
-    /** 0.2.0 が欠けとして記録し、新しい同期が「成功した空」とするもの（名前の資源がない・署名がない）の欠けの行。 */
+    /** 0.2.0 が欠けとして記録し、新しい同期が「成功した空」とするもの（名前の資源がない・署名がない・API 30 以下の仕事用にしかないアプリの別の言語の名前）の欠けの行。 */
     SUCCESS_EMPTY("b"),
 
     /** 欠けの行の日付・版・例外の文字列。 */
@@ -56,17 +62,27 @@ internal data class IndexDiff(
     val allowance: Allowance?,
 )
 
-/** 比べた結果。 */
+/**
+ * 比べた結果。
+ *
+ * @property failedProfiles どちらかで一覧か材料の問い合わせが失敗したプロファイル（"old:番号" か "new:番号"）。
+ *   あれば、そのプロファイルの組が両方から抜けても差に出ないので、比較は成り立たない
+ */
 internal class ComparisonReport(
     val pairs: Int,
     val diffs: List<IndexDiff>,
+    val failedProfiles: List<String> = emptyList(),
 ) {
+    /** 比較が成り立ったか。 */
+    val comparable: Boolean get() = failedProfiles.isEmpty()
+
     /** 許す差の外の差。 */
     val disallowed: List<IndexDiff> get() = diffs.filter { it.allowance == null }
 
     fun render(): String =
         buildString {
-            appendLine("pairs=$pairs diffs=${diffs.size} disallowed=${disallowed.size}")
+            if (!comparable) appendLine("NOT COMPARABLE: failed profiles $failedProfiles")
+            appendLine("pairs=$pairs diffs=${diffs.size} disallowed=${if (comparable) disallowed.size.toString() else "unknown"}")
             Allowance.entries.forEach { a -> appendLine("allowed(${a.code})=${diffs.count { it.allowance == a }}") }
             (disallowed + diffs.filter { it.allowance != null }).forEach { d ->
                 appendLine(
@@ -89,6 +105,7 @@ internal object IndexComparison {
     const val NEW_DB = "compare-v03-index.db"
 
     private val NOT_FOUND: String = Resources.NotFoundException::class.java.name
+    private val NAME_NOT_FOUND: String = PackageManager.NameNotFoundException::class.java.name
 
     /** 端末で 2 つの同期を続けて動かし、比べる。終わったら 2 つの DB を消す。重いので画面のスレッドで呼ばない。 */
     fun runOnDevice(context: Context): ComparisonReport {
@@ -103,9 +120,10 @@ internal object IndexComparison {
         try {
             val old = LocalDatabase.open(context, OLD_DB)
             val writer = DatabaseWriter()
+            val oldProfiles: Map<Long, ProfileReadStatus>
             val oldIndex =
                 try {
-                    IndexSync(context, old, analyzer, writer, appVersionCode = version).sync()
+                    oldProfiles = IndexSync(context, old, analyzer, writer, appVersionCode = version).sync().profileResults
                     old.index.load()
                 } finally {
                     writer.close()
@@ -115,7 +133,7 @@ internal object IndexComparison {
                 runBlocking {
                     val job = SupervisorJob()
                     try {
-                        val actor = IndexActor.open(context, NEW_DB, CoroutineScope(job + Dispatchers.IO), version, analyzer)
+                        val actor = IndexActor.openNamed(context, NEW_DB, CoroutineScope(job + Dispatchers.IO), version, analyzer)
                         actor.requestSync().await()
                         check(actor.status.value.syncFailure == null) { "新しい同期が失敗した: ${actor.status.value.syncFailure}" }
                         actor.snapshot.value
@@ -123,17 +141,38 @@ internal object IndexComparison {
                         job.cancelAndJoin()
                     }
                 }
-            return compare(oldIndex, newSnapshot)
+            val own = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
+            return compare(oldIndex, oldProfiles, newSnapshot, Build.VERSION.SDK_INT, own)
         } finally {
             listOf(OLD_DB, NEW_DB).forEach(context::deleteDatabase)
         }
     }
 
-    /** 0.2.0 の保存した索引 [old] と、新しい写し [new] を比べる。 */
+    /**
+     * 0.2.0 の保存した索引 [old]（同期のプロファイルごとの結果 [oldProfiles]）と、新しい写し [new] を比べる。
+     * [sdkInt] と [ownSerial] は、API 30 以下で仕事用にしかないアプリの別の言語の名前を「成功した空」と分けるのに使う。
+     */
     fun compare(
         old: StoredIndex,
+        oldProfiles: Map<Long, ProfileReadStatus>,
         new: IndexSnapshot,
+        sdkInt: Int,
+        ownSerial: Long,
     ): ComparisonReport {
+        val failed =
+            oldProfiles.filterValues { it == ProfileReadStatus.FAILED }.keys.map { "old:$it" } +
+                new.listings
+                    .filterValues { it == ListingStatus.FAILED }
+                    .keys
+                    .map { "new:$it" }
+        val isSuccessEmpty = { issue: MaterialIssue ->
+            (issue.stage == MaterialStage.LABEL && issue.cause == NOT_FOUND) ||
+                (issue.stage == MaterialStage.SIGNER && issue.cause == MaterialCauses.NO_SIGNERS) ||
+                (
+                    sdkInt < Build.VERSION_CODES.S && issue.stage == MaterialStage.LABEL && issue.cause == NAME_NOT_FOUND &&
+                        issue.key.profileSerial != ownSerial
+                )
+        }
         val oldApps = old.apps.groupBy { PackageKey(it.app.id.profileSerial, it.app.id.packageName) }
         val oldIssues = old.issues.groupBy { PackageKey(it.key.profileSerial, it.key.packageName) }
         val newApps = new.apps().groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
@@ -160,7 +199,7 @@ internal object IndexComparison {
                         null,
                     )
             }
-            val (emptyRows, realRows) = oldIssues[key].orEmpty().partition(::isSuccessEmpty)
+            val (emptyRows, realRows) = oldIssues[key].orEmpty().partition(isSuccessEmpty)
             emptyRows.forEach { diffs += IndexDiff(key, null, "issue", "${it.stage}:${it.cause}", "-", Allowance.SUCCESS_EMPTY) }
             val issue = n.attempt.issue
             val realFailure = realRows.isNotEmpty() || issue != null
@@ -179,7 +218,7 @@ internal object IndexComparison {
                 diffs += entryDiffs(key, entry, oldById.getValue(entry), newById.getValue(entry), realFailure)
             }
         }
-        return ComparisonReport(keys.size, diffs)
+        return ComparisonReport(keys.size, diffs, failed.sorted())
     }
 
     private fun entryDiffs(
@@ -202,8 +241,4 @@ internal object IndexComparison {
     }
 
     private fun text(keys: Collection<SearchKey>): String = keys.map { "${it.kind}:${it.form}:${it.text.value}" }.sorted().toString()
-
-    private fun isSuccessEmpty(issue: MaterialIssue): Boolean =
-        (issue.stage == MaterialStage.LABEL && issue.cause == NOT_FOUND) ||
-            (issue.stage == MaterialStage.SIGNER && issue.cause == MaterialCauses.NO_SIGNERS)
 }

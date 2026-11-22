@@ -3,7 +3,9 @@
 package jp.piu.search.data.index
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Resources
+import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppEntry
@@ -12,15 +14,19 @@ import jp.piu.search.core.search.BrandTable
 import jp.piu.search.core.search.GenreId
 import jp.piu.search.core.search.LatinWordReader
 import jp.piu.search.core.search.SearchKeyGenerator
+import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.state.IndexSnapshot
 import jp.piu.search.data.CountingAnalyzer
 import jp.piu.search.data.FakeDevice
 import jp.piu.search.data.IndexSync
 import jp.piu.search.data.InstalledApp
+import jp.piu.search.data.IssueCategory
 import jp.piu.search.data.LocalDatabase
+import jp.piu.search.data.LocalizedLabelReader
 import jp.piu.search.data.MaterialCauses
 import jp.piu.search.data.MaterialReadException
 import jp.piu.search.data.MaterialStage
+import jp.piu.search.data.ProfileReadStatus
 import jp.piu.search.data.ProfileReconciler
 import jp.piu.search.data.StoredIndex
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -28,6 +34,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
@@ -75,7 +83,7 @@ class IndexComparisonTest {
             device.fail(io, MaterialStage.LABEL, IOException())
             device.fail(cert, MaterialStage.SIGNER, CertificateException())
 
-            val report = IndexComparison.compare(oldSync(), newSync())
+            val report = compare(oldSync(), newSync())
             assertEquals(report.render(), emptyList<IndexDiff>(), report.disallowed)
             assertEquals(7, report.pairs)
             // 0.2.0 が欠けとして書いた「ないことが決まっているもの」
@@ -99,17 +107,17 @@ class IndexComparisonTest {
     @Test
     fun aDifferenceOutsideTheAllowedOnesIsReported() =
         runTest {
-            device.install(installed("io.example.maps", "地図", genres = listOf(GenreId("map"))), installed("io.example.mail", "メール"))
-            val old = oldSync()
+            device.install(installed("io.example.maps", "地図", genres = listOf(GenreId("map"))), installed(MAIL, "メール"))
+            val (old, profiles) = oldSync()
             val new = newSync()
-            assertEquals(emptyList<IndexDiff>(), IndexComparison.compare(old, new).disallowed)
+            assertEquals(emptyList<IndexDiff>(), compare(old to profiles, new).disallowed)
 
             val renamed =
                 old.copy(
                     apps =
                         old.apps.map {
                             if (it.app.id.packageName ==
-                                "io.example.mail"
+                                MAIL
                             ) {
                                 it.copy(app = it.app.copy(label = "別名"))
                             } else {
@@ -118,31 +126,72 @@ class IndexComparisonTest {
                         },
                 )
             val dropped = old.copy(apps = old.apps.filter { it.app.id.packageName != "io.example.maps" })
-            assertEquals(listOf("label"), IndexComparison.compare(renamed, new).disallowed.map { it.what })
-            assertEquals(listOf("pair"), IndexComparison.compare(dropped, new).disallowed.map { it.what })
+            assertEquals(listOf("label"), compare(renamed to profiles, new).disallowed.map { it.what })
+            assertEquals(listOf("pair"), compare(dropped to profiles, new).disallowed.map { it.what })
         }
 
-    private fun oldSync(): StoredIndex {
+    @Test
+    fun aProfileThatFailedOnBothSidesMakesTheComparisonInconclusive() =
+        runTest {
+            device.install(installed("io.example.maps", "地図"), installed("io.example.work", "仕事", profile = WORK))
+            device.failedProfiles += WORK
+            val report = compare(oldSync(), newSync())
+            // 仕事用の組は両方から抜けるので差に出ない。差が 0 件でも、比較が成り立ったとは言わない
+            assertEquals(emptyList<IndexDiff>(), report.diffs)
+            assertEquals(listOf("new:$WORK", "old:$WORK"), report.failedProfiles)
+            assertFalse(report.comparable)
+            assertTrue(report.render().startsWith("NOT COMPARABLE"))
+        }
+
+    @Test
+    fun onApi30TheLocalizedNameOfAWorkOnlyAppIsTheOnlyDifference() =
+        runTest {
+            device.install(installed("io.example.maps", "地図", profile = WORK, signers = listOf("CN=Maps,O=Example Maps")))
+            // API 30 以下の経路: 自分のプロファイルにないパッケージの資源は開けない
+            device.labelReader =
+                LocalizedLabelReader(context) { activity, _ -> throw PackageManager.NameNotFoundException(activity.id.packageName) }
+            val old = oldSync()
+            // 0.2.0 は LABEL の一時的な欠けを書くが、読めた表示名と署名からキーを作る（部分の採用）
+            assertEquals(listOf(MaterialStage.LABEL to IssueCategory.TRANSIENT), old.first.issues.map { it.stage to it.category })
+            assertTrue(
+                old.first.apps
+                    .single()
+                    .app.keys
+                    .any { it.kind == SearchKeyKind.PUBLISHER },
+            )
+            val report = compare(old, newSync(Build.VERSION_CODES.R), Build.VERSION_CODES.R)
+            assertEquals(report.render(), emptyList<IndexDiff>(), report.disallowed)
+            assertEquals(listOf(Allowance.SUCCESS_EMPTY), report.diffs.map { it.allowance })
+        }
+
+    private fun compare(
+        old: Pair<StoredIndex, Map<Long, ProfileReadStatus>>,
+        new: IndexSnapshot,
+        sdkInt: Int = Build.VERSION_CODES.S,
+    ) = IndexComparison.compare(old.first, old.second, new, sdkInt, OWN)
+
+    private fun oldSync(): Pair<StoredIndex, Map<Long, ProfileReadStatus>> {
         val database = LocalDatabase.open(context, null, allowMainThread = true).also(databases::add)
-        IndexSync(
-            database.index,
-            device,
-            { generator() },
-            analyzer,
-            launcherApps = null,
-            profiles = ProfileReconciler({ database.profiles }, device::existingProfiles),
-            appVersionCode = 1,
-        ).sync()
-        return database.index.load()
+        val report =
+            IndexSync(
+                database.index,
+                device,
+                { generator() },
+                analyzer,
+                launcherApps = null,
+                profiles = ProfileReconciler({ database.profiles }, device::existingProfiles),
+                appVersionCode = 1,
+            ).sync()
+        return database.index.load() to report.profileResults
     }
 
-    private suspend fun TestScope.newSync(): IndexSnapshot {
+    private suspend fun TestScope.newSync(sdkInt: Int = Build.VERSION_CODES.S): IndexSnapshot {
         val keys = GeneratorKeyFactory({}, ::generator)
         val actor =
             IndexActor(
                 backgroundScope,
                 IndexDatabase.open(context, null, allowMainThread = true),
-                DeviceAppsReader(device, device::existingProfiles),
+                DeviceAppsReader(device, device::existingProfiles, sdkInt),
                 keys,
                 1,
                 StandardTestDispatcher(testScheduler),
@@ -170,4 +219,8 @@ class IndexComparisonTest {
         ),
         packageUpdatedAt = 1_000,
     )
+
+    private companion object {
+        const val MAIL = "io.example.mail"
+    }
 }

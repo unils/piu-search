@@ -10,6 +10,7 @@ import jp.piu.search.core.state.Environment
 import jp.piu.search.core.state.IndexRules
 import jp.piu.search.core.state.IndexSnapshot
 import jp.piu.search.core.state.Notice
+import jp.piu.search.core.state.PackageKey
 import jp.piu.search.data.MaterialCauses
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -18,8 +19,11 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -59,8 +63,11 @@ public data class IndexStatus(
  * 材料は読み直さない（公開した写しの試みの鍵が今の値なので、同じ入力の同期は何も読まない）。成功したときだけ印を下ろす。
  *
  * 知らせは、届いた時点で「まだ当てていない」に入れ、それを当てた写しを公開したら「保存待ち」に移し、その写しを保存できたら消す。
- * 同期の途中に届いた知らせは、その同期の後に列から取り出すので、その同期では消えない。前面なら続く同期を 1 回起こし、裏なら溜めるだけにする。
- * 続けて届いた頼みは 1 回の同期にまとめる（知らせの対象は落とさない）。
+ * 同期の途中に届いた知らせは、その同期の後に列から取り出すので、その同期では消えない。知らせで同期するかは、同期を始める直前の前面の状態で決め、
+ * 前面なら続く同期を 1 回起こし、裏なら溜めるだけにする。前面になったら、知らせの有無によらず同期する（プロセスがない間の変更を一覧の観測で拾うため）。
+ * 続けて届いた頼み（前面になった・同期の頼み・知らせ）は 1 回の同期にまとめる（知らせの対象は落とさない）。
+ *
+ * 作り直そうとした組と消した組は [staleIcons] に流す。写しが前と同じ回でも流す（アイコンだけが替わった更新を、画面のアイコンの写しから落とすため）。
  */
 public class IndexActor internal constructor(
     scope: CoroutineScope,
@@ -82,6 +89,12 @@ public class IndexActor internal constructor(
     /** 書き手の状態。 */
     public val status: StateFlow<IndexStatus> = statusFlow.asStateFlow()
 
+    // 購読していない間の分は捨てる（アイコンの写しを持つ側は、書き手と同じ寿命で購読し続ける）
+    private val staleFlow = MutableSharedFlow<Set<PackageKey>>(extraBufferCapacity = Int.MAX_VALUE)
+
+    /** アイコンを失効させる組（同期で作り直そうとした組と消した組）。空の回は流さない。 */
+    public val staleIcons: SharedFlow<Set<PackageKey>> = staleFlow.asSharedFlow()
+
     // 以下は書き手の coroutine の中だけで読み書きする
     private var current = IndexSnapshot.EMPTY
 
@@ -90,6 +103,7 @@ public class IndexActor internal constructor(
     private var unsaved = false
     private var foreground = false
     private var syncWanted = false
+    private var noticed = false
     private var nextSeq = 0L
     private val unapplied = LinkedHashMap<Long, Notice>()
     private val awaitingSave = LinkedHashMap<Long, Notice>()
@@ -107,12 +121,19 @@ public class IndexActor internal constructor(
                 handle(message)
                 // 続けて届いている頼みを先に受け、同期を 1 回にまとめる
                 while (isActive) handle(inbox.tryReceive().getOrNull() ?: break)
-                if (syncWanted && isActive) {
+                // 知らせによる同期は、始める直前の前面の状態で決める（知らせの後に裏へ回ったなら溜めるだけ）
+                if ((syncWanted || (noticed && foreground)) && isActive) {
                     syncWanted = false
+                    noticed = false
                     val replies = waiting.toList()
                     waiting.clear()
-                    sync()
-                    replies.forEach { it.complete(Unit) }
+                    try {
+                        sync()
+                        replies.forEach { it.complete(Unit) }
+                    } finally {
+                        // 処理の途中で書き手が止まったら、待つ側を残さない（終わった返信には効かない）
+                        replies.forEach { it.cancel() }
+                    }
                 }
             }
         }
@@ -150,7 +171,10 @@ public class IndexActor internal constructor(
         inbox.trySend(Message.Noticed(packageNames.toList(), user, serial))
     }
 
-    /** 検索画面が前面か。前面になったら、溜めた知らせがあれば同期し、未保存の写しがあれば保存を試す。 */
+    /**
+     * 検索画面が前面か。前面になったら同期する（一覧の観測は毎回行い、未保存の写しがあれば保存も試す）。
+     * 続けて [requestSync] を送っても、まとめて 1 回の同期にする。裏の間は、知らせを溜めるだけにする。
+     */
     public fun setForeground(visible: Boolean) {
         inbox.trySend(Message.Foreground(visible))
     }
@@ -182,20 +206,22 @@ public class IndexActor internal constructor(
                     val notice = Notice(nextSeq++, it, message.serial, handle)
                     unapplied[notice.seq] = notice
                 }
-                if (foreground) syncWanted = true
+                noticed = true
             }
 
             is Message.Foreground -> {
                 foreground = message.visible
-                if (foreground) {
-                    if (unapplied.isNotEmpty()) syncWanted = true
-                    save()
-                }
+                // 同期は最後に保存も試すので、未保存の写しもここで書き直す
+                if (foreground) syncWanted = true
             }
 
             is Message.RetrySave -> {
-                save()
-                message.reply.complete(Unit)
+                try {
+                    save()
+                    message.reply.complete(Unit)
+                } finally {
+                    message.cancel()
+                }
             }
 
             is Message.Inspect -> {
@@ -226,38 +252,45 @@ public class IndexActor internal constructor(
         statusFlow.value = statusFlow.value.copy(running = true)
         var failure: String? = null
         try {
-            val device = reader.environment()
-            val env =
-                Environment(
-                    device.locale,
-                    device.osBuild,
-                    reader.readerVersion,
-                    keys.generatorVersion,
-                    keys.brandTableHash,
-                    appVersion,
-                    device.bootCount,
-                )
-            val known = current.packages.keys.mapTo(HashSet()) { it.profileSerial } + current.listings.keys
-            val observation = reader.observe(known)
-            val notices = unapplied.values.toList()
-            val plan = IndexRules.plan(current, observation, env, notices, userSerials(notices))
-            val reads = plan.profileReads.values.map(reader::readMaterials)
-            val prepared = IndexRules.prepare(plan, reads, utcDay(clock()))
-            val built = if (prepared.jobs.isEmpty()) emptyMap() else keys.build(prepared.jobs)
-            val outcome = IndexRules.apply(prepared, reader.genres(plan.genres), built)
-            current = outcome.snapshot
-            published.value = current
-            outcome.consumableNotices.forEach { seq -> unapplied.remove(seq)?.let { awaitingSave[seq] = it } }
-            if (current != saved) unsaved = true
+            syncOnce()
         } catch (e: CancellationException) {
             throw e
         } catch (e: RuntimeException) {
             // 同期全体の失敗。写しと知らせは前のまま保ち、次の頼みでやり直す
             Log.w(TAG, "索引の同期に失敗した: ${MaterialCauses.causeOf(e)}")
             failure = MaterialCauses.causeOf(e)
+        } finally {
+            // 取り消しで抜けても「同期の途中」を残さない
+            statusFlow.value = statusFlow.value.copy(running = false, syncFailure = failure)
         }
-        statusFlow.value = statusFlow.value.copy(running = false, syncFailure = failure)
         save()
+    }
+
+    private fun syncOnce() {
+        val device = reader.environment()
+        val env =
+            Environment(
+                device.locale,
+                device.osBuild,
+                reader.readerVersion,
+                keys.generatorVersion,
+                keys.brandTableHash,
+                appVersion,
+                device.bootCount,
+            )
+        val known = current.packages.keys.mapTo(HashSet()) { it.profileSerial } + current.listings.keys
+        val observation = reader.observe(known)
+        val notices = unapplied.values.toList()
+        val plan = IndexRules.plan(current, observation, env, notices, userSerials(notices))
+        val reads = plan.profileReads.values.map(reader::readMaterials)
+        val prepared = IndexRules.prepare(plan, reads, utcDay(clock()))
+        val built = if (prepared.jobs.isEmpty()) emptyMap() else keys.build(prepared.jobs)
+        val outcome = IndexRules.apply(prepared, reader.genres(plan.genres), built)
+        current = outcome.snapshot
+        published.value = current
+        outcome.consumableNotices.forEach { seq -> unapplied.remove(seq)?.let { awaitingSave[seq] = it } }
+        if (outcome.staleIcons.isNotEmpty()) staleFlow.tryEmit(outcome.staleIcons)
+        if (current != saved) unsaved = true
     }
 
     // 受けた時点で番号の分からなかった知らせの通知元を、今の番号に解決する。解決できなければ知らせは残る
@@ -283,13 +316,14 @@ public class IndexActor internal constructor(
         }
         val snapshot = current
         val now = clock()
+        // 保存の途中も、公開した写しがまだ保存されていないことを見せる。成功したときだけ下ろす
+        statusFlow.value = statusFlow.value.copy(unsaved = true)
         try {
             storage.save(snapshot, now)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "索引を保存できない: ${e.javaClass.name}")
-            statusFlow.value = statusFlow.value.copy(unsaved = true)
             return
         }
         unsaved = false
@@ -347,8 +381,10 @@ public class IndexActor internal constructor(
         private val writers = HashMap<String, IndexActor>()
 
         /**
-         * アプリの `databases` の下の索引の DB [name] を開き、その書き手を作る。書き手は最初に保存した索引を読み戻す。
+         * アプリの `databases` の下の索引の DB（[FILE_NAME]）を開き、その書き手を作る。書き手は最初に保存した索引を読み戻す。
          * 同じ DB の書き手がまだ動いていれば [IllegalStateException] を投げる。[scope] を取り消して書き手が止まると、DB を閉じる。
+         *
+         * ファイルの名前は受けない。索引の DB は形が変われば中身を捨てるので、記録の DB（`piu.db`）を取り違えて開くと記録が消えるため。
          *
          * @param scope 書き手の寿命。アプリの寿命の scope を渡す
          * @param appVersion このアプリの `versionCode`。欠けを書いた版と比べ、違えば欠けのある組を読み直す
@@ -356,6 +392,15 @@ public class IndexActor internal constructor(
          * @param dispatcher 書き手を動かす Dispatcher。端末の読み取り・キーの生成・保存はここで行う（画面のスレッドにしない）
          */
         public fun open(
+            context: Context,
+            scope: CoroutineScope,
+            appVersion: Int,
+            analyzer: ReadingAnalyzer,
+            dispatcher: CoroutineContext = Dispatchers.IO,
+        ): IndexActor = openNamed(context, FILE_NAME, scope, appVersion, analyzer, dispatcher)
+
+        /** 名前 [name] の索引の DB で [open] する。テストと debug 版の比べる道具だけが、製品と別の名前で使う。 */
+        internal fun openNamed(
             context: Context,
             name: String,
             scope: CoroutineScope,

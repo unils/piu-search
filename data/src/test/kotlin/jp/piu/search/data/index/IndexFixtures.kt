@@ -168,6 +168,9 @@ internal class FaultyIndexStorage(
     var loads = 0
     val saves = ArrayList<IndexSnapshot>()
 
+    /** 保存に入ったときに呼ぶ（保存の途中の公開値を見る・取り消しを注入する）。 */
+    var onSave: () -> Unit = {}
+
     override fun load(): StoredSnapshot {
         loads++
         if (failLoads > 0) {
@@ -181,6 +184,7 @@ internal class FaultyIndexStorage(
         snapshot: IndexSnapshot,
         savedAt: Long,
     ) {
+        onSave()
         if (failSaves > 0) {
             failSaves--
             throw SQLiteFullException("保存の失敗")

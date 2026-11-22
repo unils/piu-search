@@ -2,11 +2,22 @@
 
 package jp.piu.search.data.index
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Resources
+import android.os.Build
+import android.os.Process
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import jp.piu.search.core.reading.ReadingAnalyzer
+import jp.piu.search.core.reading.ReadingToken
 import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.AppId
+import jp.piu.search.core.search.BrandTable
 import jp.piu.search.core.search.GenreId
+import jp.piu.search.core.search.LatinWordReader
+import jp.piu.search.core.search.SearchKeyGenerator
+import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.state.Environment
 import jp.piu.search.core.state.GenreResult
 import jp.piu.search.core.state.IndexRules
@@ -14,15 +25,20 @@ import jp.piu.search.core.state.IndexSnapshot
 import jp.piu.search.core.state.IssueCategory
 import jp.piu.search.core.state.ListingStatus
 import jp.piu.search.core.state.MaterialRead
+import jp.piu.search.core.state.PackageKey
 import jp.piu.search.core.state.PackageObservation
 import jp.piu.search.core.state.ProfileReads
 import jp.piu.search.core.state.Stage
 import jp.piu.search.data.FakeDevice
 import jp.piu.search.data.InstalledApp
+import jp.piu.search.data.LocalizedLabelReader
 import jp.piu.search.data.MaterialCauses
 import jp.piu.search.data.MaterialReadException
 import jp.piu.search.data.MaterialStage
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,9 +48,10 @@ import java.security.cert.CertificateException
 // 0.2.0 の読み手の結果を、同期の規則の入力の形に変えることを、0.2.0 のテストと同じ偽の端末（本物の readPackage と分類を通す）で確かめる
 @RunWith(AndroidJUnit4::class)
 class DeviceAppsReaderTest {
+    private val context: Context = ApplicationProvider.getApplicationContext()
     private val device = FakeDevice()
     private var existing: Set<Long>? = setOf(OWN, WORK)
-    private val reader = DeviceAppsReader(device) { existing }
+    private val reader = DeviceAppsReader(device, { existing })
 
     @Test
     fun theListingIsGroupedByPackageAndRemovedProfilesComeFromTheExistenceQuery() {
@@ -117,6 +134,60 @@ class DeviceAppsReaderTest {
 
         device.genreFailure = IllegalStateException()
         assertEquals("java.lang.IllegalStateException", (reader.genres(plan.genres) as GenreResult.Failed).cause)
+    }
+
+    @Test
+    fun onApi30TheLocalizedNameOfAWorkOnlyAppIsAnEmptySuccessAndTheIndexKeepsReadingsAndThePublisher() =
+        runTest {
+            val maps = installed("io.example.maps", "地図", profile = WORK, signers = listOf("CN=Maps,O=Example Maps"))
+            device.install(maps)
+            device.labelReader = workOnlyLabels()
+            val actor =
+                IndexActor(
+                    backgroundScope,
+                    IndexDatabase.open(context, null, allowMainThread = true),
+                    DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.R),
+                    GeneratorKeyFactory(
+                        {},
+                        { SearchKeyGenerator(ReadingOf("地図" to "ちず"), LatinWordReader(BrandTable.parse(emptyList()))) },
+                    ),
+                    1,
+                    StandardTestDispatcher(testScheduler),
+                )
+            actor.requestSync().await()
+            val state = checkNotNull(actor.snapshot.value.packages[PackageKey(WORK, "io.example.maps")])
+            assertNull(state.attempt.issue)
+            val keys = state.apps().single().keys
+            assertTrue(keys.any { it.kind == SearchKeyKind.READING && it.text.value == "ちず" })
+            assertTrue(keys.any { it.kind == SearchKeyKind.PUBLISHER })
+
+            // API 31 以上の同じ例外は、一覧の後に消えたこと（一時的な失敗）
+            val modern = DeviceAppsReader(device, { existing }, sdkInt = Build.VERSION_CODES.S)
+            val plan = IndexRules.plan(IndexSnapshot.EMPTY, modern.observe(emptySet()), ENV)
+            val read =
+                modern
+                    .readMaterials(plan.profileReads.getValue(WORK))
+                    .packages.values
+                    .single() as MaterialRead.Failed
+            assertEquals(Stage.LABEL to IssueCategory.TRANSIENT, read.stage to read.failure.category)
+            assertEquals(PackageManager.NameNotFoundException::class.java.name, read.failure.cause)
+        }
+
+    // API 30 以下の経路（自分のプロファイルの createPackageContext）を、仕事用にしかないアプリで再現する
+    private fun workOnlyLabels() =
+        LocalizedLabelReader(ApplicationProvider.getApplicationContext()) { activity, _ ->
+            check(activity.user != Process.myUserHandle()) { "この試験は仕事用の組だけ" }
+            throw PackageManager.NameNotFoundException(activity.id.packageName)
+        }
+
+    // 決めた語にだけ読みを付ける形態素解析器
+    private class ReadingOf(
+        vararg readings: Pair<String, String>,
+    ) : ReadingAnalyzer {
+        private val readings = readings.toMap()
+
+        override fun analyze(text: String): List<ReadingToken> =
+            if (text.isBlank()) emptyList() else listOf(ReadingToken(text, readings[text], 0))
     }
 
     private fun read(): Map<String, MaterialRead> {
