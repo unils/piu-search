@@ -37,18 +37,20 @@ class PreparedLaunch internal constructor(
 class AppLauncher(
     context: Context,
     private val users: ProfileUsers,
-) {
+) : Launcher {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val userManager = context.getSystemService(UserManager::class.java)
 
     /**
-     * [app] を開く準備。保存を始める前に呼び、選んだプロファイルだけの一時停止を調べる。
+     * [app] を開く準備。保存を始める前に呼び、選んだプロファイルだけの一時停止を調べる（記録するかは準備の時点で決める）。
      * 再開の確認は取り消されても結果が返らないため、その要求は学習にも起動回数にも数えない（learning.md）。
+     * 起動先は OS に渡す直前に、固定したシリアル番号から引き直す（保存を待つ間にプロファイルが消えたら、開かずに失敗にする）。
      */
-    fun prepare(app: AppId): PreparedLaunch {
-        val user = users.userFor(app.profileSerial)
-        val paused = user != null && user != Process.myUserHandle() && userManager.isQuietModeEnabled(user)
+    override fun prepare(app: AppId): PreparedLaunch {
+        val prepared = users.userFor(app.profileSerial)
+        val paused = prepared != null && prepared != Process.myUserHandle() && userManager.isQuietModeEnabled(prepared)
         return PreparedLaunch(recordsChoice = !paused) {
+            val user = users.userFor(app.profileSerial)
             if (user == null) {
                 false
             } else {

@@ -5,7 +5,7 @@ package jp.piu.search.data
 import jp.piu.search.data.db.PiuRoomDatabase
 
 /** プロファイル単位で、索引と利用者の記録をまとめて扱う保存先。 */
-public interface ProfileStorage {
+internal interface ProfileStorage {
     /** 索引・学習・起動の記録に保存したシリアル番号の和集合。索引だけに頼らず孤立した学習も見つける。 */
     public fun serials(): Set<Long>
 
@@ -14,7 +14,7 @@ public interface ProfileStorage {
 }
 
 /** プロファイルの削除の保存境界。[LocalDatabase.profiles] から得る。 */
-public class ProfileStore internal constructor(
+internal class ProfileStore internal constructor(
     private val database: PiuRoomDatabase,
 ) : ProfileStorage {
     private val dao = database.profileDao()

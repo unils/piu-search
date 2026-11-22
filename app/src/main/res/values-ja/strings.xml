@@ -150,6 +150,7 @@
     <string name="search_record_failed">学習または起動の記録を保存できませんでした</string>
     <string name="search_record_load_failed">学習または起動の記録を読めませんでした</string>
     <string name="open_record_failed">前に選んだ記録を保存できなかった</string>
+    <string name="records_rebuilt">記録を読めなかったため、学習と起動の記録を新しく始めました</string>
     <string name="index_notice_sync">アプリの一覧を更新できませんでした。前の一覧で検索しています</string>
     <string name="index_notice_no_index">アプリの一覧を読めませんでした</string>
     <string name="index_notice_personal">個人用のアプリの一覧を読めませんでした。前の一覧で検索しています</string>

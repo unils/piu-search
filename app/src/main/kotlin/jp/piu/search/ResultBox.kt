@@ -2,6 +2,7 @@
 
 package jp.piu.search
 
+import jp.piu.search.core.state.RecordsFailure
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,11 +41,11 @@ class ResultBox<T : Any> {
 /** 学習の書き出し・読み込みの結果（学習の一覧の画面に知らせる）。 */
 sealed interface BackupOutcome {
     /**
-     * 保存先の操作が失敗した。削除・全消去・初回の読み込みにも使う。
-     * @property reason 操作の失敗理由
+     * 記録の読み込みか保存が失敗した。削除・全消去・一覧を開いたときの読み込みに使う。
+     * @property reason 失敗の理由
      */
     data class Failed(
-        val reason: StorageFailure,
+        val reason: RecordsFailure,
     ) : BackupOutcome
 
     /**
@@ -60,8 +61,10 @@ sealed interface BackupOutcome {
      * 読み込んだ、または読めなかった。
      *
      * @property result 読み込みの結果
+     * @property accepted 今の学習と合わせた件数（消えたプロファイルのために受けなかった分を除く）
      */
     data class Imported(
         val result: BackupReadResult,
+        val accepted: Int = (result as? BackupReadResult.Success)?.records?.size ?: 0,
     ) : BackupOutcome
 }

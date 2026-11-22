@@ -14,7 +14,7 @@ import java.security.cert.CertificateException
 /**
  * 組の読み取りの段（architecture.md の「材料の欠け」）。[code] は R8 で変わらない固定の文字列で、表に保存する。
  */
-public enum class MaterialStage(
+internal enum class MaterialStage(
     /** 表 `material_issue` の `stage` の値。 */
     public val code: String,
 ) {
@@ -39,7 +39,7 @@ public enum class MaterialStage(
 }
 
 /** 欠けの理由の区分。保存せず、使うときに理由から [MaterialCauses.categoryOf] で引く。 */
-public enum class IssueCategory {
+internal enum class IssueCategory {
     /** 読み直せば直る見込みがある。通常の条件に加えて 1 回だけ読み直す。 */
     TRANSIENT,
 
@@ -63,7 +63,7 @@ public enum class IssueCategory {
  * @property firstFailedOn 続けて欠けている間の初めの日（UTC の `YYYY-MM-DD`）。表示と報告のためだけ
  * @property lastFailedOn 最後に欠けた日（同上）
  */
-public data class MaterialIssue(
+internal data class MaterialIssue(
     val key: PackageKey,
     val stage: MaterialStage,
     val cause: String,
@@ -119,7 +119,7 @@ internal class MaterialReadException(
 /**
  * 欠けの理由の作り方と区分の引き方（architecture.md の「失敗の分け方」）。書くときも読み戻したときも同じ関数で区分を引く。
  */
-public object MaterialCauses {
+internal object MaterialCauses {
     /** 一覧にあった入口が詳細にない。 */
     public const val VANISHED: String = "VANISHED"
 

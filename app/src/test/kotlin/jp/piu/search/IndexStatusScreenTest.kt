@@ -20,17 +20,18 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import jp.piu.search.IndexStatusFixtures.MIXED_INDEX
+import jp.piu.search.IndexStatusFixtures.MIXED_APPS
 import jp.piu.search.IndexStatusFixtures.MIXED_ISSUES
+import jp.piu.search.IndexStatusFixtures.NOT_FOUND
 import jp.piu.search.IndexStatusFixtures.PERSONAL
 import jp.piu.search.IndexStatusFixtures.WORK
-import jp.piu.search.IndexStatusFixtures.report
-import jp.piu.search.data.IndexSyncStatus
-import jp.piu.search.data.IssueCounts
-import jp.piu.search.data.ProfileReadStatus.COMPLETE
-import jp.piu.search.data.ProfileReadStatus.FAILED
-import jp.piu.search.data.ProfileReadStatus.UNAVAILABLE
-import jp.piu.search.data.SyncFailure
+import jp.piu.search.IndexStatusFixtures.issue
+import jp.piu.search.IndexStatusFixtures.snapshot
+import jp.piu.search.IndexStatusFixtures.writer
+import jp.piu.search.core.state.ListingStatus.COMPLETE
+import jp.piu.search.core.state.ListingStatus.FAILED
+import jp.piu.search.core.state.ListingStatus.UNAVAILABLE
+import jp.piu.search.core.state.Stage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -47,32 +48,46 @@ class IndexStatusScreenTest {
 
     @Test
     fun eachLastSyncIsDescribedAsDesigned() {
+        val personal = mapOf(PERSONAL to COMPLETE)
         val cases =
             listOf(
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE), failure = SyncFailure.SYNC) to "最後の更新: 更新できませんでした",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to FAILED), failure = SyncFailure.PROFILE) to
+                IndexStatus.of(
+                    snapshot(MIXED_APPS, listings = personal),
+                    writer(syncFailure = "java.lang.IllegalStateException"),
+                    PERSONAL,
+                ) to
+                    "最後の更新: 更新できませんでした",
+                IndexStatus.of(snapshot(MIXED_APPS, listings = mapOf(PERSONAL to COMPLETE, WORK to FAILED)), writer(), PERSONAL) to
                     "最後の更新: 一部を更新できませんでした",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, genreFailure = "java.lang.SecurityException")) to
+                IndexStatus.of(snapshot(MIXED_APPS, listings = personal), writer(genreFailure = "java.lang.SecurityException"), PERSONAL) to
                     "最後の更新: 一部を更新できませんでした",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE).copy(issueCounts = IssueCounts(deterministic = 1))) to
-                    "最後の更新: 更新できました（一部の情報を読めていません）",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to UNAVAILABLE)) to "最後の更新: 更新できました",
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE)) to "最後の更新: 更新できました",
-                IndexSyncStatus() to "最後の更新: まだ更新していません",
+                IndexStatus.of(
+                    snapshot(MIXED_APPS, listOf(issue("com.example.maps", Stage.LABEL, NOT_FOUND)), personal),
+                    writer(),
+                    PERSONAL,
+                ) to "最後の更新: 更新できました（一部の情報を読めていません）",
+                IndexStatus.of(snapshot(MIXED_APPS, listings = mapOf(PERSONAL to COMPLETE, WORK to UNAVAILABLE)), writer(), PERSONAL) to
+                    "最後の更新: 更新できました",
+                IndexStatus.of(snapshot(MIXED_APPS, listings = personal), writer(), PERSONAL) to "最後の更新: 更新できました",
+                IndexStatus.of(snapshot(MIXED_APPS, listings = personal), writer(synced = false), PERSONAL) to "最後の更新: まだ更新していません",
             )
         var status by mutableStateOf(IndexStatus())
         compose.setContent { PiuTheme { IndexStatusScreen(status, "2026/11/15 10:23", null, IndexStatusActions()) } }
-        for ((sync, text) in cases) {
-            compose.runOnIdle { status = IndexStatus.of(MIXED_INDEX, emptyList(), 1L, sync, PERSONAL) }
+        for ((next, text) in cases) {
+            compose.runOnIdle { status = next }
             compose.onNodeWithText(text).assertExists()
         }
     }
 
     @Test
     fun profilesAndGenresAreListed() {
-        val sync =
-            IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, WORK to UNAVAILABLE, genreFailure = "java.lang.SecurityException"))
-        show(IndexStatus.of(MIXED_INDEX, emptyList(), 1L, sync, PERSONAL))
+        show(
+            IndexStatus.of(
+                snapshot(MIXED_APPS, listings = mapOf(PERSONAL to COMPLETE, WORK to UNAVAILABLE)),
+                writer(genreFailure = "java.lang.SecurityException", lastSavedAt = 1L),
+                PERSONAL,
+            ),
+        )
         compose.onNodeWithText("個人用: 4 個のアプリ").assertExists()
         compose.onNodeWithText("仕事用: 1 個のアプリ").assertExists()
         compose.onNodeWithText("個人用: 読めました").assertExists()
@@ -85,13 +100,7 @@ class IndexStatusScreenTest {
     @Test
     fun zeroCountsAreStillShown() {
         show(
-            IndexStatus.of(
-                MIXED_INDEX,
-                emptyList(),
-                null,
-                IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE, archived = 2)),
-                PERSONAL,
-            ),
+            IndexStatus.of(snapshot(MIXED_APPS, listings = mapOf(PERSONAL to COMPLETE), archived = 2), writer(), PERSONAL),
             savedAt = null,
         )
         compose.onNodeWithText("Piu Search の不具合の疑い: なし").assertExists()
@@ -106,7 +115,7 @@ class IndexStatusScreenTest {
 
     @Test
     fun issueRowsAreOrderedAndWordedFromTheCauseAndRetryMark() {
-        show(IndexStatus.of(MIXED_INDEX, MIXED_ISSUES, 1L, IndexSyncStatus(lastResult = report(PERSONAL to COMPLETE)), PERSONAL))
+        show(IndexStatus.of(snapshot(MIXED_APPS, MIXED_ISSUES, mapOf(PERSONAL to COMPLETE)), writer(lastSavedAt = 1L), PERSONAL))
         compose.onNodeWithText("Piu Search の不具合の疑い: 1 件").assertExists()
         compose.onNodeWithText("一時的に読めないもの: 2 件（うち次の更新で読み直す 1 件）").assertExists()
         compose.onNodeWithText("読めないまま使っているもの: 1 件").assertExists()

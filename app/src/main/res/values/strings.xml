@@ -167,6 +167,7 @@
     <string name="search_record_failed">Could not save learning or launch history.</string>
     <string name="search_record_load_failed">Could not load learning or launch history.</string>
     <string name="open_record_failed">Could not save your last choice</string>
+    <string name="records_rebuilt">Your learning and launch records couldn\'t be read, so they were started over</string>
     <!-- 検索画面の索引の知らせ（ui.md の「索引の知らせ」）。行の末尾に「詳細」を付け、押すと「索引の状態」を開く -->
     <string name="index_notice_sync">Couldn\'t update the app list. Searching the previous one.</string>
     <string name="index_notice_no_index">Couldn\'t read the app list.</string>

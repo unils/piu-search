@@ -14,7 +14,6 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -29,10 +28,7 @@ class AllAppsInstrumentedTest {
     val compose = createAndroidComposeRule<SearchActivity>()
 
     private val device = DeviceShell()
-    private val learning =
-        InstrumentationRegistry
-            .getInstrumentation()
-            .targetContext.appContainer.learning
+    private val records = TestRecords()
 
     /**
      * 「zzzq」の学習を消す。すべてのアプリから開くと救済で「zzzq」→ 乗換案内テストを覚えるので、
@@ -42,13 +38,7 @@ class AllAppsInstrumentedTest {
     @After
     fun forgetTheQuery() {
         device.shell("am force-stop ${DeviceShell.TRANSIT}")
-        learning.requestLoad()
-        learning.awaitIdle()
-        learning.memory.records.keys
-            .filter { it.query.value == QUERY }
-            .forEach(learning::remove)
-        learning.awaitIdle()
-        learning.pendingNotices.forEach(learning::consumeNotice)
+        records.forget(QUERY)
     }
 
     @Test

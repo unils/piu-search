@@ -18,6 +18,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LearnedPair
+import jp.piu.search.core.state.RescueNotice
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -38,8 +39,11 @@ class AccessibilityNoticeTest {
             override suspend fun load(app: AppId): ImageBitmap? = null
         }
 
+    private var nextId = 1L
+
+    // 知らせは識別子で見分けるので、作るたびに別の識別子にする
     private fun notice(label: String) =
-        RescueNotice(LearnedPair(NormalizedText("おかね"), AppId("io.example.$label", "Main", 0)), label, null, 0L)
+        RescueNotice(nextId++, LearnedPair(NormalizedText("おかね"), AppId("io.example.$label", "Main", 0)), label, null, 0L)
 
     @Test
     fun noticeFollowsTheRecommendedTimeoutInsteadOfAFixedSixSeconds() {

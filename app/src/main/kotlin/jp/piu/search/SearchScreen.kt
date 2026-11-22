@@ -91,6 +91,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import jp.piu.search.core.search.AppId
+import jp.piu.search.core.state.RescueNotice
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -177,6 +178,8 @@ data class ProfileSwitch(
  * @param onIndexNotice 索引の知らせを押したとき（「索引の状態」を開く）
  * @param noticeBaseMillis 救済の知らせを出す時間の基準（ミリ秒）。ユーザー補助の「操作の時間」の設定があれば、それに合わせて延ばす
  * @param openRecordFailed 前にアプリを開いたときの、起動の記録か学習の保存の失敗を控えめに出す
+ * @param recordsRebuilt 記録の DB が壊れていたので新しく始めたことを、同じ場所に控えめに出す
+ * @param onRecordsRebuiltShown [recordsRebuilt] の知らせを出したとき（1 回だけ知らせるため、書き手の印を下ろす）
  * @param workPausedNotice 仕事用アプリが一時停止中である知らせを出す。既定は、切り替えで仕事用を選んでいて一時停止中のとき
  * @param onOpenSettings 設定のボタンを押したとき。null ならボタンを出さない。ボタンは検索語が空の間だけ、検索窓の中に小さく出す
  */
@@ -210,6 +213,8 @@ fun SearchScreen(
     indexNotice: IndexNotice? = null,
     onIndexNotice: () -> Unit = {},
     openRecordFailed: Boolean = false,
+    recordsRebuilt: Boolean = false,
+    onRecordsRebuiltShown: () -> Unit = {},
     noticeBaseMillis: Long = NOTICE_MILLIS,
 ) {
     val rows = RowHandlers(icons, onOpen, rowMenu, onRowAction, onScrolled, showReasons, searchBarOnTop)
@@ -230,6 +235,11 @@ fun SearchScreen(
                 val profile: @Composable () -> Unit = {
                     indexNotice?.let { IndexNoticeRow(it, onIndexNotice) }
                     if (openRecordFailed) QuietNotice(stringResource(R.string.open_record_failed))
+                    if (recordsRebuilt) {
+                        QuietNotice(stringResource(R.string.records_rebuilt))
+                        val shown by rememberUpdatedState(onRecordsRebuiltShown)
+                        LaunchedEffect(Unit) { shown() }
+                    }
                     if (searchBarOnTop) {
                         profileSwitch?.let { ProfileSwitchRow(it.selected, onSelectProfile) }
                         if (workPausedNotice) WorkPausedNotice()
@@ -343,7 +353,7 @@ private fun RescueNoticeEffect(
     val currentDone by rememberUpdatedState(onDone)
     val currentQuery by rememberUpdatedState(query)
     val currentMillis by rememberUpdatedState(millis)
-    LaunchedEffect(notice.undoKey) {
+    LaunchedEffect(notice.id) {
         if (currentQuery.isNotEmpty()) {
             currentDone(notice)
             return@LaunchedEffect

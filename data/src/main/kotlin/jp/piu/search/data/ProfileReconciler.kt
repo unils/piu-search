@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 保存した番号と UserManager の存在するユーザーを照合する。操作は共通の [DatabaseWriter] の仕事の中で呼ぶ。
  * [existingSerials] が null を返すか例外を投げた場合は、存在の判定ができないので何も消さない。
  */
-public class ProfileReconciler(
+internal class ProfileReconciler(
     private val store: () -> ProfileStorage,
     private val existingSerials: () -> Set<Long>?,
 ) {

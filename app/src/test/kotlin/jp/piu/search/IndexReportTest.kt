@@ -2,20 +2,18 @@
 
 package jp.piu.search
 
-import jp.piu.search.IndexStatusFixtures.MIXED_INDEX
+import jp.piu.search.IndexStatusFixtures.MIXED_APPS
 import jp.piu.search.IndexStatusFixtures.MIXED_ISSUES
 import jp.piu.search.IndexStatusFixtures.NOT_FOUND
 import jp.piu.search.IndexStatusFixtures.PERSONAL
 import jp.piu.search.IndexStatusFixtures.WORK
 import jp.piu.search.IndexStatusFixtures.issue
-import jp.piu.search.IndexStatusFixtures.report
-import jp.piu.search.core.search.SearchIndex
-import jp.piu.search.data.IndexSyncStatus
-import jp.piu.search.data.IssueCounts
-import jp.piu.search.data.MaterialStage
-import jp.piu.search.data.PackageKey
-import jp.piu.search.data.ProfileReadStatus
-import jp.piu.search.data.SyncFailure
+import jp.piu.search.IndexStatusFixtures.snapshot
+import jp.piu.search.IndexStatusFixtures.writer
+import jp.piu.search.core.state.IndexSnapshot
+import jp.piu.search.core.state.ListingStatus
+import jp.piu.search.core.state.PackageKey
+import jp.piu.search.core.state.Stage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -32,14 +30,13 @@ class IndexReportTest {
     fun wholeReportHasTheFixedFormat() {
         val status =
             IndexStatus.of(
-                MIXED_INDEX,
-                MIXED_ISSUES,
-                savedAt,
-                IndexSyncStatus(
-                    lastResult =
-                        report(PERSONAL to ProfileReadStatus.COMPLETE, WORK to ProfileReadStatus.UNAVAILABLE, archived = 3)
-                            .copy(issueCounts = IssueCounts(transient = 2, retryPending = 1, deterministic = 1, suspectedBug = 1)),
+                snapshot(
+                    MIXED_APPS,
+                    MIXED_ISSUES,
+                    mapOf(PERSONAL to ListingStatus.COMPLETE, WORK to ListingStatus.UNAVAILABLE),
+                    archived = 3,
                 ),
+                writer(lastSavedAt = savedAt),
                 PERSONAL,
             )
         val facts =
@@ -58,7 +55,7 @@ class IndexReportTest {
             locales: ja-JP,en-US
             index: personal=4 work=1 archived=3
             last saved: 2026-11-15
-            last sync: mode=CHANGES result=ISSUES
+            last sync: result=ISSUES
             profiles: personal=COMPLETE work=UNAVAILABLE
             genres: OK
             issues: transient=2 retry=1 deterministic=1 bug=1
@@ -77,13 +74,8 @@ class IndexReportTest {
     fun labelsTimesAndMessagesAreLeftOut() {
         val status =
             IndexStatus.of(
-                MIXED_INDEX,
-                MIXED_ISSUES,
-                savedAt,
-                IndexSyncStatus(
-                    lastResult =
-                        report(PERSONAL to ProfileReadStatus.COMPLETE),
-                ),
+                snapshot(MIXED_APPS, MIXED_ISSUES, mapOf(PERSONAL to ListingStatus.COMPLETE)),
+                writer(lastSavedAt = savedAt),
                 PERSONAL,
             )
         val text = IndexReport.text(status, device, emptyMap())
@@ -98,7 +90,7 @@ class IndexReportTest {
 
     @Test
     fun beforeAnySyncTheLinesSayNone() {
-        val text = IndexReport.text(IndexStatus.of(SearchIndex.EMPTY, emptyList(), null, IndexSyncStatus(), PERSONAL), device, emptyMap())
+        val text = IndexReport.text(IndexStatus.of(IndexSnapshot.EMPTY, writer(synced = false), PERSONAL), device, emptyMap())
         assertTrue(text, "index: personal=0 archived=?" in text)
         assertTrue(text, "last saved: none" in text)
         assertTrue(text, "last sync: none" in text)
@@ -109,29 +101,30 @@ class IndexReportTest {
 
     @Test
     fun failedSyncAndGenreFailureAreWritten() {
-        val previous = report(PERSONAL to ProfileReadStatus.FAILED, genreFailure = "java.lang.SecurityException")
         val text =
             IndexReport.text(
                 IndexStatus.of(
-                    MIXED_INDEX,
-                    emptyList(),
-                    savedAt,
-                    IndexSyncStatus(lastResult = previous, failure = SyncFailure.SYNC),
+                    snapshot(MIXED_APPS, listings = mapOf(PERSONAL to ListingStatus.FAILED)),
+                    writer(
+                        syncFailure = "java.lang.IllegalStateException",
+                        genreFailure = "java.lang.SecurityException",
+                        lastSavedAt = savedAt,
+                    ),
                     PERSONAL,
                 ),
                 device,
                 emptyMap(),
             )
-        assertTrue(text, "last sync: mode=CHANGES result=FAILED" in text)
+        assertTrue(text, "last sync: result=FAILED" in text)
         assertTrue(text, "profiles: personal=FAILED" in text)
         assertTrue(text, "genres: FAILED cause=java.lang.SecurityException" in text)
         val first =
             IndexReport.text(
-                IndexStatus.of(SearchIndex.EMPTY, emptyList(), null, IndexSyncStatus(failure = SyncFailure.SYNC), PERSONAL),
+                IndexStatus.of(IndexSnapshot.EMPTY, writer(syncFailure = "java.lang.IllegalStateException"), PERSONAL),
                 device,
                 emptyMap(),
             )
-        assertTrue(first, "last sync: mode=- result=FAILED" in first)
+        assertTrue(first, "last sync: result=FAILED" in first)
     }
 
     @Test
@@ -139,17 +132,17 @@ class IndexReportTest {
         // 不具合の疑いでない行は、フレームと input を持っていても書かない
         val issues =
             listOf(
-                issue("a", MaterialStage.LABEL, NOT_FOUND, frames = "x.y(SourceFile:1)", inputSummary = "label:len1:kana"),
+                issue("a", Stage.LABEL, NOT_FOUND, frames = "x.y(SourceFile:1)", inputSummary = "label:len1:kana"),
                 issue(
                     "b",
-                    MaterialStage.ENTRY,
+                    Stage.ENTRY,
                     "java.lang.IllegalStateException",
                     frames = "p.q(SourceFile:9)",
                     inputSummary = "label:len1:kana",
                     versionCode = 4,
                 ),
             )
-        val text = IndexReport.text(IndexStatus.of(SearchIndex.EMPTY, issues, null, IndexSyncStatus(), PERSONAL), device, emptyMap())
+        val text = IndexReport.text(IndexStatus.of(snapshot(issues = issues), writer(), PERSONAL), device, emptyMap())
         val lines = text.lines()
         val bug = lines.single { it.startsWith("- BUG ENTRY") }
         assertTrue(bug, " ver=4 " in bug)
@@ -162,8 +155,8 @@ class IndexReportTest {
 
     @Test
     fun moreThan200IssuesAreCut() {
-        val issues = (1..205).map { issue("com.example.p%03d".format(it), MaterialStage.LABEL, NOT_FOUND) }
-        val text = IndexReport.text(IndexStatus.of(SearchIndex.EMPTY, issues, null, IndexSyncStatus(), PERSONAL), device, emptyMap())
+        val issues = (1..205).map { issue("com.example.p%03d".format(it), Stage.LABEL, NOT_FOUND) }
+        val text = IndexReport.text(IndexStatus.of(snapshot(issues = issues), writer(), PERSONAL), device, emptyMap())
         assertEquals(200, text.lines().count { it.startsWith("- ") })
         assertTrue(text, text.endsWith("... 5 more"))
         assertTrue(text, "issues: transient=0 retry=0 deterministic=205 bug=0" in text)

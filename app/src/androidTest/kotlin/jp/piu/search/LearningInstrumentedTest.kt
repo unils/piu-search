@@ -19,7 +19,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -38,10 +37,7 @@ class LearningInstrumentedTest {
     val compose = createEmptyComposeRule()
 
     private val device = DeviceShell()
-    private val learning =
-        InstrumentationRegistry
-            .getInstrumentation()
-            .targetContext.appContainer.learning
+    private val records = TestRecords()
     private val transit = DeviceShell.label("乗換案内テスト", "Transit Test")
     private val learnedReason = DeviceShell.label("学習: $QUERY", "Learned: $QUERY")
 
@@ -49,14 +45,8 @@ class LearningInstrumentedTest {
     @After
     fun forgetTheQuery() {
         device.shell("am force-stop ${DeviceShell.TRANSIT}")
-        learning.requestLoad()
-        learning.awaitIdle()
         // 前のテストや手で試した記録（印を含む）を残さない
-        learning.memory.records.keys
-            .filter { it.query.value == QUERY }
-            .forEach(learning::remove)
-        learning.awaitIdle()
-        learning.pendingNotices.forEach(learning::consumeNotice)
+        records.forget(QUERY)
     }
 
     @Test
@@ -79,9 +69,11 @@ class LearningInstrumentedTest {
         ActivityScenario.launch(SearchActivity::class.java).use {
             compose.waitUntilAtLeastOneExists(hasText(undoLabel()), DeviceShell.TIMEOUT_MILLIS)
             compose.onNodeWithText(undoLabel()).performClick()
-            learning.awaitIdle()
+            records.settle()
             assertTrue(
-                learning.memory.records.keys
+                records
+                    .learned()
+                    .keys
                     .none { it.query.value == QUERY },
             )
 
@@ -102,10 +94,12 @@ class LearningInstrumentedTest {
             compose.onNodeWithTag(rowActionTag(RowAction.SUPPRESS)).performClick()
 
             compose.waitUntilAtLeastOneExists(hasTestTag(NO_MATCH_TAG), DeviceShell.TIMEOUT_MILLIS)
-            learning.awaitIdle()
+            records.settle()
             assertEquals(
                 listOf(true),
-                learning.memory.records.values
+                records
+                    .learned()
+                    .values
                     .filter { it.query.value == QUERY }
                     .map { it.suppressed },
             )
@@ -115,7 +109,7 @@ class LearningInstrumentedTest {
     @Test
     fun deletingFromTheLearnedListHidesTheAppForTheQuery() {
         learnByOpeningFromAllApps()
-        learning.pendingNotices.forEach(learning::consumeNotice)
+        records.consumeNotices()
         ActivityScenario.launch(SearchActivity::class.java).use {
             compose.onNodeWithTag(SEARCH_FIELD_TAG).performTextInput(QUERY)
             compose.waitUntilAtLeastOneExists(hasText(transit), DeviceShell.TIMEOUT_MILLIS)
@@ -128,9 +122,11 @@ class LearningInstrumentedTest {
             compose.onNodeWithTag(LEARNED_LIST_TAG).performScrollToNode(delete)
             compose.onNode(delete).performClick()
             compose.waitUntilDoesNotExist(delete, DeviceShell.TIMEOUT_MILLIS)
-            learning.awaitIdle()
+            records.settle()
             assertTrue(
-                learning.memory.records.keys
+                records
+                    .learned()
+                    .keys
                     .none { it.query.value == QUERY },
             )
 
@@ -153,9 +149,11 @@ class LearningInstrumentedTest {
             device.waitFor("テスト用のアプリが前面に出る") { device.resumedActivityLines().any { DeviceShell.TRANSIT in it } }
             device.waitFor("検索の画面が閉じる") { scenario.state == Lifecycle.State.DESTROYED }
         }
-        learning.awaitIdle()
+        records.settle()
         assertTrue(
-            learning.memory.records.keys
+            records
+                .learned()
+                .keys
                 .any { it.query.value == QUERY && it.app.packageName == DeviceShell.TRANSIT },
         )
     }
