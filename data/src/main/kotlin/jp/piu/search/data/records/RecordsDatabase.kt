@@ -146,9 +146,11 @@ internal class RecordsDatabase(
         // 「壊れて作り直した」の印のファイルの名前の後ろ（DB の名前に付ける）
         const val REBUILT_SUFFIX = ".rebuilt"
 
-        // 負（自分のユーザーが見つからない）もそのまま渡す。0.2.0 は主ユーザー（0）に倒したが、転送の付け替え先を誤るので、照合が保留する
-        private fun ownSerialOf(context: Context): Long =
-            context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
+        private fun ownSerialOf(context: Context): Long {
+            val serial = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
+            // 負は自分のユーザーが見つからない場合で、動いているプロセスでは起きないはず。全件を消すより、主ユーザー（0）として扱う（0.2.0 と同じ）
+            return if (serial >= 0) serial else 0
+        }
 
         private const val TAG = "PiuRecordsDb"
 

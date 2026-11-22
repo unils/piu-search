@@ -44,9 +44,8 @@ class RecordsMigrationTest {
         records.runMigrationsAndValidate(FILE, 7, true, Migration6To7).close()
         withRawDatabase(context, FILE) { db ->
             assertEquals(TOKEN, db.stringOf("SELECT token FROM installation WHERE id = 0"))
-            assertEquals(null, db.longOrNull("SELECT owner_serial FROM installation WHERE id = 0"))
         }
-        assertRecordsAreKeptAndTheOwnerIsFilled()
+        assertRecordsAreKept()
     }
 
     @Test
@@ -74,12 +73,11 @@ class RecordsMigrationTest {
             assertEquals(1L, db.count("SELECT COUNT(*) FROM search_key"))
             assertEquals(1L, db.count("SELECT COUNT(*) FROM meta"))
             assertEquals(1L, db.count("SELECT COUNT(*) FROM material_issue"))
-            assertEquals(0L, db.count("SELECT COUNT(*) FROM pragma_table_info('installation') WHERE name = 'owner_serial'"))
             assertEquals(2L, db.count("SELECT COUNT(*) FROM learned"))
             assertEquals(1L, db.count("SELECT COUNT(*) FROM launch_stat"))
         }
         // 次は製品と同じ開き方（版 6 までの移行の後ろに 6 → 7）で開く
-        assertRecordsAreKeptAndTheOwnerIsFilled()
+        assertRecordsAreKept()
         withRawDatabase(context, FILE) { db ->
             assertEquals(7L, db.count("PRAGMA user_version"))
             assertEquals(0L, db.count("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('app', 'search_key', 'meta', 'material_issue')"))
@@ -108,7 +106,7 @@ class RecordsMigrationTest {
     }
 
     // 同じ端末の更新: 印のファイルは 0.2.0 が書いたもので、DB の印と一致する。仕事用の記録も残す
-    private fun assertRecordsAreKeptAndTheOwnerIsFilled() {
+    private fun assertRecordsAreKept() {
         markWith(TOKEN)
         val db = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { ME })
         try {
@@ -123,7 +121,7 @@ class RecordsMigrationTest {
         } finally {
             db.close()
         }
-        withRawDatabase(context, FILE) { assertEquals(ME, it.longOrNull("SELECT owner_serial FROM installation WHERE id = 0")) }
+        withRawDatabase(context, FILE) { assertEquals(1L, it.count("SELECT COUNT(*) FROM installation WHERE token = '$TOKEN'")) }
     }
 
     private fun markWith(token: String) {
@@ -155,7 +153,7 @@ class RecordsMigrationTest {
     private companion object {
         const val FILE = "m802a-records-migration-test.db"
 
-        // 主ユーザー以外に入れた場合の自分の番号。所有者を 0 と取り違えても通らないよう、0 でない番号にする
+        // 主ユーザー以外に入れた場合の自分の番号。自分の番号の行を、0 の行と取り違えずに残すことも確かめる
         const val ME = 12L
         val MY_APP = AppId(OWN_APP.packageName, "Main", ME)
         const val TOKEN = "01234567-89ab-cdef-0123-456789abcdef"

@@ -3,8 +3,6 @@
 package jp.piu.search.data.records
 
 import android.content.Context
-import android.os.Process
-import android.os.UserManager
 import android.util.Log
 import jp.piu.search.core.state.ProfileCheck
 import jp.piu.search.data.ExistingProfiles
@@ -23,11 +21,11 @@ public class DeviceProfileProbe(
     context: Context,
 ) : ProfileProbe {
     private val existing = ExistingProfiles(context)
-    private val userManager = context.getSystemService(UserManager::class.java)
 
     override fun check(): ProfileCheck =
         try {
-            ProfileCheck.of(userManager.getSerialNumberForUser(Process.myUserHandle()), existing.serials())
+            // 自分を含まない・番号の取れない項目がある一覧は、ExistingProfiles が null にする（一部の一覧で存在するプロファイルの記録を消さないため）
+            existing.serials()?.let { ProfileCheck.Existing(it) } ?: ProfileCheck.Unknown
         } catch (e: RuntimeException) {
             // binder の失敗（DeadObjectException を原因に持つ RuntimeException など）。型を残し、確かめられなかった扱いにする
             Log.w(TAG, "プロファイルを問い合わせられない: ${e.javaClass.name}")

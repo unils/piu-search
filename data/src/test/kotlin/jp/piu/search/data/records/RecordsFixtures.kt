@@ -52,7 +52,7 @@ internal class FakeProbe(
 
     override fun check(): ProfileCheck {
         calls++
-        return ProfileCheck.of(OWN, serials)
+        return serials?.let { ProfileCheck.Existing(it) } ?: ProfileCheck.Unknown
     }
 }
 
@@ -144,13 +144,6 @@ internal fun <T> withRawDatabase(
         db.close()
     }
 }
-
-/** 1 行目の 1 列目。NULL なら null（getLong は NULL を 0 で返すので、所有者の書き忘れを 0 と取り違えないため）。 */
-internal fun SQLiteDatabase.longOrNull(sql: String): Long? =
-    rawQuery(sql, null).use {
-        check(it.moveToFirst()) { "行がない: $sql" }
-        if (it.isNull(0)) null else it.getLong(0)
-    }
 
 internal fun SQLiteDatabase.count(sql: String): Long = rawQuery(sql, null).use { if (it.moveToFirst()) it.getLong(0) else -1 }
 

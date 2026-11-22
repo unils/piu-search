@@ -176,16 +176,16 @@ class RecordsActorTest {
                 actor.state.value.records
                     ?.serials,
             )
-            assertEquals(setOf(WORK), actor.state.value.profiles.pendingPrune)
+            assertEquals(setOf(WORK), actor.state.value.pendingPrune)
             assertEquals(setOf(OWN, WORK), database.load().storedSerials)
 
             // 集合は変わらないまま。頼みのたびに試す（まだ失敗する間も、頼みそのものは書ける）
             assertTrue(actor.request(RecordsRequest.Suppress(pair("よみ", OWN_APP), at = 3000)) is RecordsResult.Success)
-            assertEquals(setOf(WORK), actor.state.value.profiles.pendingPrune)
+            assertEquals(setOf(WORK), actor.state.value.pendingPrune)
             trigger("DROP TRIGGER fail_prune")
             assertTrue(actor.request(RecordsRequest.Forget(0)) is RecordsResult.Success)
             assertTrue(
-                actor.state.value.profiles.pendingPrune
+                actor.state.value.pendingPrune
                     .isEmpty(),
             )
             assertEquals(setOf(OWN), database.load().storedSerials)
@@ -201,36 +201,13 @@ class RecordsActorTest {
             probe.serials = setOf(OWN)
             storage.failWrites = 1
             actor.refresh().await()
-            assertEquals(setOf(WORK), actor.state.value.profiles.pendingPrune)
+            assertEquals(setOf(WORK), actor.state.value.pendingPrune)
             actor.refresh().await()
             assertTrue(
-                actor.state.value.profiles.pendingPrune
+                actor.state.value.pendingPrune
                     .isEmpty(),
             )
             assertEquals(setOf(OWN), database.load().storedSerials)
-        }
-
-    @Test
-    fun aMarkerThatIsTemporarilyUnreadableFailsTheLoadUntilItCanBeRead() =
-        runTest {
-            database.write(seedWrite())
-            database.close()
-            opened.clear()
-            val marker = File(context.noBackupFilesDir, RecordsDatabase.MARKER_FILE)
-            val aside = File(context.noBackupFilesDir, "aside")
-            assertTrue(marker.renameTo(aside))
-            assertTrue(marker.mkdir())
-            val reopened = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { OWN }).also(opened::add)
-            val actor = actor(reopened)
-            val suppress = RecordsRequest.Suppress(pair("よみ", WORK_APP), at = 3000)
-            assertEquals(RecordsResult.Failure(RecordsFailure.NOT_LOADED), actor.request(suppress))
-            assertEquals(InstallationCheckPendingException::class.java.name, actor.state.value.loadFailure)
-
-            assertTrue(marker.delete())
-            assertTrue(aside.renameTo(marker))
-            assertTrue(actor.request(suppress) is RecordsResult.Success)
-            // 同じインストールなので、仕事用の記録も残る
-            assertEquals(setOf(OWN, WORK), reopened.load().storedSerials)
         }
 
     @Test
@@ -426,7 +403,7 @@ class RecordsActorTest {
                 actor.state.value.records
                     ?.serials,
             )
-            assertEquals(setOf(WORK), actor.state.value.profiles.pendingPrune)
+            assertEquals(setOf(WORK), actor.state.value.pendingPrune)
         }
     }
 
@@ -458,32 +435,6 @@ class RecordsActorTest {
                 setOf(OWN),
                 actor.state.value.records
                     ?.serials,
-            )
-            assertEquals(setOf(OWN), database.load().storedSerials)
-        }
-
-    @Test
-    fun profileChecksDuringLoadFailuresAreKept() =
-        runTest {
-            database.write(seedWrite())
-            val storage = FaultyStorage(database).apply { failLoads = 2 }
-            val actor = actor(storage)
-            // 1 回目: 両方あると確かめたが、読めない。2 回目: 仕事用が消えたと確かめたが、また読めない
-            runCurrent()
-            probe.serials = setOf(OWN)
-            actor.refresh().await()
-            assertTrue(actor.state.value.loadFailure != null)
-            // DB が戻り、今度は問い合わせが失敗する。確かめた削除は忘れない
-            probe.serials = null
-            actor.refresh().await()
-            assertEquals(
-                setOf(OWN),
-                actor.state.value.records
-                    ?.serials,
-            )
-            assertEquals(
-                RecordsResult.Success(),
-                actor.request(RecordsRequest.Open(LearningDecision(pair("おそい", WORK_APP), emptyList()), WORK_APP, at = 9)),
             )
             assertEquals(setOf(OWN), database.load().storedSerials)
         }

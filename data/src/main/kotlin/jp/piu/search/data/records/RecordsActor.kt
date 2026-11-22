@@ -34,7 +34,7 @@ import kotlin.coroutines.CoroutineContext
  *
  * 1 つの頼みの処理（[RecordsRules] と同じ順）:
  * 1. その場で OS にプロファイルを問い合わせ（[ProfileProbe]）、読めていなければ読み直す（最初の読み込みの前に転送の整理）。
- *    確かめた削除は、DB の読み書きの成否によらず覚え、書き込みの前に [state] に流す（削除は整理を待たずに画面に効かせる）
+ *    今ないと確かめた番号への書き込みは拒み、その番号の記録を整理の対象にして、書き込みの前に [state] に流す（削除は整理を待たずに画面に効かせる）
  * 2. 規則で変更を計算し、1 つのトランザクションで DB に書く
  * 3. 書けたときだけ写しを差し替えて流す（法則 6）。終わっていない整理（プロファイルの削除）を試し、流してから結果を返す
  *
@@ -186,7 +186,7 @@ public class RecordsActor internal constructor(
         // 読み込みに失敗していれば読み直す。また失敗したら、規則が計算も書き込みもせずに失敗を返す（空の写しから書かない）
         if (current.records == null) load(check)
         val change = RecordsRules.change(current, request, check)
-        // 確かめた削除を、書き込みを待たずに流す（base は頼みの前の記録に確認だけを当てたもので、書けなくてもここに戻る）
+        // 確かめた不在を、書き込みを待たずに流す（base は頼みの前の記録に確認だけを当てたもので、書けなくてもここに戻る）
         current = change.base
         publish()
         val written = written(change)
@@ -221,10 +221,9 @@ public class RecordsActor internal constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // 型を理由に残す。失敗を空の記録に置き換えない（空から保存すると、保存済みの記録を上書きするため）。
-                // 確かめたプロファイルは DB の成否と別に覚える（読めない間に確かめた削除を、復旧した後の問い合わせの失敗で忘れないため）
+                // 型を理由に残す。失敗を空の記録に置き換えない（空から保存すると、保存済みの記録を上書きするため）
                 Log.w(TAG, "記録を読めない: ${e.javaClass.name}")
-                RecordsRules.checked(RecordsRules.loadFailed(current, e.javaClass.name), check)
+                RecordsRules.loadFailed(current, e.javaClass.name)
             }
         noticeRebuilt()
     }

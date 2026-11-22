@@ -2,7 +2,6 @@
 
 package jp.piu.search.data.records
 
-import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -41,17 +40,11 @@ internal abstract class RecordsRoomDatabase : RoomDatabase() {
     }
 }
 
-/**
- * `installation` の行（版 7）。端末間の転送を見分ける印と、印を書いたときにこのアプリが動いていたユーザーの番号。
- *
- * [ownerSerial] は、番号の変わる転送（移行元で 10 の利用者が、移行先で 0 になる、など）で、移行元の自分の記録を今の番号に付け替えるために持つ。
- * 版 6 から移行した行と、0.2 の DB からの復元では null（どの番号が自分のものか分からない）。
- */
+/** `installation` の行。端末間の転送を見分ける印（版 6 と同じ形）。 */
 @Entity(tableName = "installation")
 internal data class RecordsInstallationRow(
     @PrimaryKey val id: Int = 0,
     val token: String,
-    @ColumnInfo(name = "owner_serial") val ownerSerial: Long?,
 )
 
 /** 記録の DB の読み書き。まとめた操作の区切り（トランザクション）は呼ぶ側（[RecordsDatabase]）が決める。 */
@@ -103,18 +96,6 @@ internal interface RecordsDao {
     @Query("DELETE FROM launch_stat WHERE profile_serial != :serial")
     fun deleteLaunchesExcept(serial: Long)
 
-    @Query("UPDATE learned SET profile_serial = :to WHERE profile_serial = :from")
-    fun moveLearned(
-        from: Long,
-        to: Long,
-    )
-
-    @Query("UPDATE launch_stat SET profile_serial = :to WHERE profile_serial = :from")
-    fun moveLaunches(
-        from: Long,
-        to: Long,
-    )
-
     @Query("SELECT * FROM installation WHERE id = 0")
     fun installation(): RecordsInstallationRow?
 
@@ -123,7 +104,7 @@ internal interface RecordsDao {
 }
 
 /**
- * 6 → 7: 索引の表（`search_key`・`app`・`meta`・`material_issue`）を落とし、インストールの印に `owner_serial` を足す。
+ * 6 → 7: 索引の表（`search_key`・`app`・`meta`・`material_issue`）を落とす。
  * 学習・起動の記録・印は残す。落とした索引は、索引の DB の最初の同期の全件の作り直しで戻る。
  *
  * Room は移行を 1 つのトランザクションで当てるので、途中で終了しても版 6 のまま残り、次に開くときにまた試す。
@@ -137,7 +118,6 @@ internal object Migration6To7 : Migration(6, 7) {
             "DROP TABLE IF EXISTS `app`",
             "DROP TABLE IF EXISTS `meta`",
             "DROP TABLE IF EXISTS `material_issue`",
-            "ALTER TABLE `installation` ADD COLUMN `owner_serial` INTEGER",
         )
 
     override fun migrate(db: SupportSQLiteDatabase) {

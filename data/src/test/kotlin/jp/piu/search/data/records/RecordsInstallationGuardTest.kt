@@ -66,7 +66,6 @@ class RecordsInstallationGuardTest {
             val stored = db.load()
             assertEquals(setOf(pair("よみ", OWN_APP), pair("よみ", WORK_APP)), stored.records.learned.records.keys)
             assertEquals(setOf(WORK_APP), stored.records.launches.records.keys)
-            withRawDatabase(context, LocalDatabase.FILE_NAME) { assertEquals(OWN, it.longOrNull("SELECT owner_serial FROM installation")) }
         } finally {
             context.deleteDatabase(LocalDatabase.FILE_NAME)
         }
@@ -86,64 +85,6 @@ class RecordsInstallationGuardTest {
         restored.write(RecordsWrite(launchPut = mapOf(WORK_APP to LaunchRecord(1, 5))))
         reopen()
         assertEquals(setOf(OWN, WORK), open().load().storedSerials)
-    }
-
-    @Test
-    fun aTransferThatChangesTheSerialMovesTheOwnRecordsToTheNewSerial() {
-        val source = AppId(OWN_APP.packageName, "Main", 10)
-        open(own = 10).write(
-            RecordsWrite(
-                // 移行元の 0 の行は、移行先の番号と同じでも別のプロファイルのもの。中身を変えて、付け替えた行と見分ける
-                learnedPut = listOf(record("よみ", source, count = 4), record("よみ", OWN_APP, count = 9), record("よみ", WORK_APP)),
-                launchPut = mapOf(source to LaunchRecord(4, 400), OWN_APP to LaunchRecord(9, 900)),
-            ),
-        )
-        reopen()
-        context.noBackupFilesDir.deleteRecursively()
-        // 移行元の 0 と 11 は、移行元の別のプロファイル。移行先の同じ番号と取り違えないよう捨てる
-        val stored = open(own = OWN).load()
-        assertEquals(
-            setOf(record("よみ", OWN_APP, count = 4)),
-            stored.records.learned.records.values
-                .toSet(),
-        )
-        assertEquals(mapOf(OWN_APP to LaunchRecord(4, 400)), stored.records.launches.records)
-    }
-
-    @Test
-    fun aTransferFrom020ThatChangesTheSerialCannotKeepTheOwnRecords() {
-        // 版 6 の DB には、移行元の自分の番号がない。番号が変わると、どの行が自分のものか分からないので、今の番号の行だけを残す
-        LocalDatabase.open(context, LocalDatabase.FILE_NAME, allowMainThread = true).use { it.launchStats.record(OWN_APP, 100) }
-        context.noBackupFilesDir.deleteRecursively()
-        val db = RecordsDatabase.open(context, LocalDatabase.FILE_NAME, allowMainThread = true, ownSerial = { 10 }).also(opened::add)
-        try {
-            assertTrue(db.load().storedSerials.isEmpty())
-        } finally {
-            context.deleteDatabase(LocalDatabase.FILE_NAME)
-        }
-    }
-
-    @Test
-    @Config(sdk = [28, 37])
-    fun aMarkerThatIsTemporarilyUnreadableHoldsTheCleanup() {
-        open().write(seedWrite())
-        reopen()
-        val token = marker.readText()
-        // 印のファイルの場所を、読めない物（ディレクトリ）に一時的に置き換える
-        val aside = File(context.noBackupFilesDir, "aside")
-        assertTrue(marker.renameTo(aside))
-        assertTrue(marker.mkdir())
-        val db = open()
-        assertThrows(InstallationCheckPendingException::class.java) { db.load() }
-        // 転送とみなして消さず、印も作り直さない
-        withRawDatabase(context, FILE) { assertEquals(2L, it.count("SELECT COUNT(DISTINCT profile_serial) FROM learned")) }
-        assertTrue(marker.isDirectory)
-
-        assertTrue(marker.delete())
-        assertTrue(aside.renameTo(marker))
-        // 同じ部品のまま、読めるようになった次の読み込みで照合し、同じインストールなので消さない
-        assertEquals(setOf(OWN, WORK), db.load().storedSerials)
-        assertEquals(token, marker.readText())
     }
 
     @Test
@@ -193,46 +134,6 @@ class RecordsInstallationGuardTest {
     }
 
     @Test
-    fun aMarkerThatCannotBeSavedFailsTheLoadInsteadOfCleaningUpWithAnUnsavedToken() {
-        open().write(seedWrite())
-        reopen()
-        val oldToken = withRawDatabase(context, FILE) { it.stringOf("SELECT token FROM installation") }
-        // 印がなく（DB だけが転送された）、印のファイルも書けない。印の置き場をファイルで塞ぐ
-        val dir = context.noBackupFilesDir
-        dir.deleteRecursively()
-        assertTrue(dir.createNewFile())
-        try {
-            repeat(2) {
-                val db = open()
-                assertThrows(InstallationCheckPendingException::class.java) { db.load() }
-                assertThrows(InstallationCheckPendingException::class.java) {
-                    db.write(
-                        RecordsWrite(
-                            launchPut =
-                                mapOf(WORK_APP to LaunchRecord(7, 7)),
-                        ),
-                    )
-                }
-                reopen()
-            }
-            // 保存していない乱数で整理も印の更新もしない（次の起動で、その間に受けた記録まで消さないため）
-            withRawDatabase(context, FILE) { raw ->
-                assertEquals(oldToken, raw.stringOf("SELECT token FROM installation"))
-                assertEquals(1L, raw.count("SELECT COUNT(*) FROM learned WHERE profile_serial = $WORK"))
-                assertEquals(1L, raw.count("SELECT COUNT(*) FROM launch_stat WHERE profile_serial = $WORK"))
-            }
-        } finally {
-            assertTrue(dir.delete())
-        }
-        // 印を保存できるようになったら、転送として 1 回だけ整理する。その後に受けた仕事用の記録は残る
-        val restored = open()
-        assertEquals(setOf(OWN), restored.load().storedSerials)
-        restored.write(RecordsWrite(launchPut = mapOf(WORK_APP to LaunchRecord(1, 5))))
-        reopen()
-        assertEquals(setOf(OWN, WORK), open().load().storedSerials)
-    }
-
-    @Test
     fun aFailedMarkerUpdateInTheDatabaseRollsBackTheCleanup() {
         open().write(seedWrite())
         reopen()
@@ -256,38 +157,35 @@ class RecordsInstallationGuardTest {
     }
 
     @Test
-    fun anUnknownOwnSerialHoldsTheTransferUntilItIsKnown() {
-        val source = AppId(OWN_APP.packageName, "Main", 10)
-        open(own = 10).write(RecordsWrite(learnedPut = listOf(record("よみ", source, count = 4), record("よみ", WORK_APP))))
+    @Config(sdk = [28, 37])
+    fun anUnreadableMarkerIsTreatedAsTheTransferLikeTheOldGuard() {
+        open().write(seedWrite())
         reopen()
-        context.noBackupFilesDir.deleteRecursively()
-        // 移行先で自分の番号が取れない（負の値）。付け替え先を決められないので、整理も印の更新もしない
-        var own = -1L
-        val db = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { own }).also(opened::add)
-        assertThrows(InstallationCheckPendingException::class.java) { db.load() }
-        withRawDatabase(context, FILE) { raw ->
-            assertEquals(2L, raw.count("SELECT COUNT(*) FROM learned"))
-            assertEquals(10L, raw.longOrNull("SELECT owner_serial FROM installation"))
-        }
-        own = OWN
-        assertEquals(
-            setOf(record("よみ", OWN_APP, count = 4)),
-            db
-                .load()
-                .records.learned.records.values
-                .toSet(),
-        )
-        withRawDatabase(context, FILE) { assertEquals(OWN, it.longOrNull("SELECT owner_serial FROM installation")) }
+        // 印の場所を読めない物（ディレクトリ）に置き換える。0.2.0 と同じく、新しい印を作って整理する
+        assertTrue(marker.delete())
+        assertTrue(marker.mkdir())
+        assertEquals(setOf(OWN), open().load().storedSerials)
+        assertTrue(marker.isFile)
     }
 
     @Test
-    fun anUnknownOwnSerialOnTheSameInstallationKeepsTheOwner() {
-        open(own = 10).write(seedWrite())
+    fun aMarkerThatCannotBeSavedCleansUpOnEveryOpenLikeTheOldGuard() {
+        open().write(seedWrite())
         reopen()
-        // 同じインストールなら整理は要らない。読めるが、分からない番号で所有者を上書きしない
-        val stored = open(own = -1).load()
-        assertEquals(setOf(OWN, WORK), stored.storedSerials)
-        withRawDatabase(context, FILE) { assertEquals(10L, it.longOrNull("SELECT owner_serial FROM installation")) }
+        // 印の置き場をファイルで塞ぐ。保存できない間は、開くたびに転送とみなして仕事用の記録を引き継がない（0.2.0 と同じ）
+        val dir = context.noBackupFilesDir
+        dir.deleteRecursively()
+        assertTrue(dir.createNewFile())
+        try {
+            repeat(2) {
+                val db = open()
+                assertEquals(setOf(OWN), db.load().storedSerials)
+                db.write(RecordsWrite(launchPut = mapOf(WORK_APP to LaunchRecord(1, 5))))
+                reopen()
+            }
+        } finally {
+            assertTrue(dir.delete())
+        }
     }
 
     private fun android.database.sqlite.SQLiteDatabase.stringOf(sql: String): String =

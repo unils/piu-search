@@ -72,56 +72,46 @@ public enum class ReadReason {
 }
 
 /**
- * 組を作り直す組 1 つの頼み（材料の読み取り）。頼んだ計画 1 つに結び付き、別の計画の頼みとは等しくならない。
- * 言語や環境の違う別の回の読み取りを、今の回の鍵で確定しないため。
+ * 組を作り直す組 1 つの頼み（材料の読み取り）。結果との照合は組で行う。
  *
  * @property key 組
  * @property reasons きっかけ
  * @property auxiliary 補助の材料（別の言語の名前・署名）を読むか。アーカイブ済みの組は APK がないので読まず、空で成功とする
  */
-public class MaterialJob internal constructor(
-    public val key: PackageKey,
-    public val reasons: Set<ReadReason>,
-    public val auxiliary: Boolean,
-    private val round: Any,
+@ConsistentCopyVisibility
+public data class MaterialJob internal constructor(
+    val key: PackageKey,
+    val reasons: Set<ReadReason>,
+    val auxiliary: Boolean,
 ) {
     /**
      * きっかけが再試行だけか。このときだけ再試行の枠を消費する（また一時的に失敗しても枠を立て直さない）。
      * 鍵の変化や知らせと重なった回は、その変化に対する 1 回目の試みなので、失敗すれば枠を立て直す。
      */
     public val retryOnly: Boolean get() = reasons == setOf(ReadReason.RETRY)
-
-    override fun equals(other: Any?): Boolean = other is MaterialJob && other.round === round && other.key == key
-
-    override fun hashCode(): Int = 31 * System.identityHashCode(round) + key.hashCode()
-
-    override fun toString(): String = "MaterialJob($key, $reasons, auxiliary=$auxiliary)"
 }
 
 /**
- * ジャンルの問い合わせの頼み。頼んだ計画 1 つに結び付く（等しさは同じものかどうか）。
+ * ジャンルの問い合わせの頼み。
  *
  * @property targets 問い合わせる入口（一覧を読めたプロファイルのすべての入口）
  */
-public class GenreRequest internal constructor(
-    public val targets: List<AppId>,
-) {
-    override fun toString(): String = "GenreRequest($targets)"
-}
+@ConsistentCopyVisibility
+public data class GenreRequest internal constructor(
+    val targets: List<AppId>,
+)
 
 /**
- * プロファイル 1 つの材料の読み取りの頼み。頼んだ計画 1 つに結び付く（等しさは同じものかどうか）。
- * 読めた結果も読めなかった結果も、この頼みを持って返す（別の計画の「読めなかった」を受けて、更新と削除を見送らないため）。
+ * プロファイル 1 つの材料の読み取りの頼み。読めた結果も読めなかった結果も、この頼みを持って返す。結果との照合はプロファイルの番号と組で行う。
  *
  * @property serial プロファイルのシリアル番号
  * @property jobs このプロファイルの組の頼み
  */
-public class ProfileReadRequest internal constructor(
-    public val serial: Long,
-    public val jobs: List<MaterialJob>,
-) {
-    override fun toString(): String = "ProfileReadRequest($serial, $jobs)"
-}
+@ConsistentCopyVisibility
+public data class ProfileReadRequest internal constructor(
+    val serial: Long,
+    val jobs: List<MaterialJob>,
+)
 
 /**
  * 同期 1 回の計画（[IndexRules.plan] の出力）。前の写し・観測・環境を中に束ね、[IndexRules.prepare] に渡し直す引数をなくす
@@ -233,7 +223,7 @@ public data class ProfileReads(
     val complete: Boolean get() = status == ListingStatus.COMPLETE
 }
 
-/** ジャンルの問い合わせの結果。「成功した空」と「失敗」を分け、どちらも計画の頼み（[SyncPlan.genres]）に結び付ける。 */
+/** ジャンルの問い合わせの結果。「成功した空」と「失敗」を分ける。 */
 public sealed interface GenreResult {
     /** 答えた頼み。 */
     public val request: GenreRequest
@@ -262,21 +252,14 @@ public sealed interface GenreResult {
 }
 
 /**
- * 生成器に頼む入口 1 つ。頼んだ同期 1 回（[IndexRules.prepare] の呼び出し 1 回）に結び付き、別の回の頼みとは等しくならない。
- * 入力が同じでも生成器の版やブランド表の違う回の結果を、今の回の結果として受けないため。
+ * 生成器に頼む入口 1 つ。結果との照合は入口で行う。
  *
  * @property entry 生成器の入力（ジャンルは入れない。ジャンルのキーは写しが別に足す）
  */
-public class KeyJob internal constructor(
-    public val entry: AppEntry,
-    private val round: Any,
-) {
-    override fun equals(other: Any?): Boolean = other is KeyJob && other.round === round && other.entry == entry
-
-    override fun hashCode(): Int = 31 * System.identityHashCode(round) + entry.hashCode()
-
-    override fun toString(): String = "KeyJob(${entry.id})"
-}
+@ConsistentCopyVisibility
+public data class KeyJob internal constructor(
+    val entry: AppEntry,
+)
 
 /** 入口 1 つのキーの生成の結果。 */
 public sealed interface KeyOutcome {

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 7,
-    "identityHash": "455ecaed33e01d50b6553062438d9bc4",
+    "identityHash": "8b82803786caef52d7bfae4390b5f845",
     "entities": [
       {
         "tableName": "learned",
@@ -113,7 +113,7 @@
       },
       {
         "tableName": "installation",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `token` TEXT NOT NULL, `owner_serial` INTEGER, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `token` TEXT NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -126,11 +126,6 @@
             "columnName": "token",
             "affinity": "TEXT",
             "notNull": true
-          },
-          {
-            "fieldPath": "ownerSerial",
-            "columnName": "owner_serial",
-            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -143,7 +138,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '455ecaed33e01d50b6553062438d9bc4')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8b82803786caef52d7bfae4390b5f845')"
     ]
   }
 }
