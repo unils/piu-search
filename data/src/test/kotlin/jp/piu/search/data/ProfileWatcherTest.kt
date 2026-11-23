@@ -8,6 +8,7 @@ import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -44,7 +45,8 @@ class ProfileWatcherTest {
         watcher.start()
         next = { WITH_WORK }
         val changes = CopyOnWriteArrayList<Unit>()
-        scope.launch { watcher.changes.collect { changes += it } }
+        // changes は再生しないので、放送の前に購読を始める（IO に送ると、購読より先に放送が届きうる）
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { watcher.changes.collect { changes += it } }
         send(Intent.ACTION_MANAGED_PROFILE_ADDED)
         runBlocking { withTimeout(TIMEOUT) { watcher.profiles.first { it == WITH_WORK } } }
         runBlocking { withTimeout(TIMEOUT) { while (changes.isEmpty()) kotlinx.coroutines.delay(10) } }
@@ -56,7 +58,8 @@ class ProfileWatcherTest {
     fun aFailedQueryKeepsThePreviousValueAndABroadcastWithTheSameValueIsStillAnnounced() {
         watcher.start()
         val changes = CopyOnWriteArrayList<Unit>()
-        scope.launch { watcher.changes.collect { changes += it } }
+        // changes は再生しないので、放送の前に購読を始める（IO に送ると、購読より先に放送が届きうる）
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { watcher.changes.collect { changes += it } }
         next = { throw IllegalStateException("binder") }
         send(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
         runBlocking { withTimeout(TIMEOUT) { while (changes.isEmpty()) kotlinx.coroutines.delay(10) } }
