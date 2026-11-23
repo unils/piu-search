@@ -17,8 +17,8 @@ import org.junit.runner.RunWith
  * - [startup]: 呼び出してから検索窓に焦点が来るまで。起動用のプロファイルにも入れ、R8 がこの流れのクラスを
  *   最初の DEX（classes.dex）にまとめる（DEX の並べ替え）
  * - [search]: 呼び出し → 検索窓に打つ → 結果が出る → 結果の行を押して開く。漢字の検索語も打ち、読みを付ける Kuromoji の経路も含める
- *   （索引の作り直しでも同じコードを使う）。開く段は、学習と起動の記録の保存を待ってから OS に起動を頼むので、
- *   押してから相手のアプリが開くまでの時間に効く。Baseline Profile にだけ入れる
+ *   （索引の作り直しでも同じコードを使う）。開く段では、学習と起動の記録の保存から OS への起動の要求までを採る
+ *   （1 回しか通らないので hot（H）にはならず、speed-profile の事前のコンパイルの対象になるとは限らない）。Baseline Profile にだけ入れる
  *
  * 結果が出るのを待つので、テスト用のアプリ（test-apps/）が要る（生成の前に入る）。
  * `./gradlew :app:generateBaselineProfile` で回す。結果は app の `src/release/generated/baselineProfiles/` に入り、
