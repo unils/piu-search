@@ -50,11 +50,11 @@ pull request で、次の 4 か所を一度に更新する。
 adb logcat -s PiuIndexSync:I
 ```
 
-logcat（タグ `PiuIndexSync`）に出る `SyncReport` が、2 回目以降の同期で次の条件を満たすことを確かめる（0.1.x では `rebuiltApps=0`・`failedPackages=0`・`failedProfiles=0`）。
+logcat（タグ `PiuIndexSync`）に出る同期の記録（`索引を同期した: read=… built=… removed=… failed=… millis=…`）が、2 回目以降の同期で次の条件を満たすことを確かめる。
 
-- `rebuiltApps=0`・`readPackages=0`（同じ状態で作り直しや読み直しが起きないこと）
-- `issueCounts` の `retryPending=0`・`suspectedBug=0`（再試行待ちと不具合の疑いの欠けが 0 であること）
-- `genreFailure=null`、かつ `profileResults` に `FAILED` がないこと
+- `read=0`・`built=0`（同じ状態で材料の読み直しやキーの作り直しが起きないこと）
+- `failed=false`
+- 設定の「索引の状態」で、最後の更新の結果が「更新できました」で、ジャンルの判定とプロファイルの一覧に失敗がないこと
 - 設定の「索引の状態」に予期しない欠けがないこと
 
 仕事用プロファイルを作れる端末では、仕事用プロファイルがある状態で確かめる。エミュレータの計器テストは自作のテスト用アプリとシステムイメージのアプリしか見ないため、実機にだけある APK（APEX の中のアプリなど）で同期が収束しない不具合はここで見つける。
