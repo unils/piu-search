@@ -73,8 +73,9 @@ class LearnedListActivity : ComponentActivity() {
                     onClearAll = model::clearAll,
                     onExport = ::chooseExportFile,
                     onImport = ::chooseImportFile,
-                    message = state.outcome?.let { messageOf(it.value) },
-                    onMessageShown = { state.outcome?.let(model::messageShown) },
+                    message = state.outcome?.let { ScreenMessage(it, messageOf(it.value)) },
+                    // 出し終えたのが今の結果のときだけ消費する（出している間に届いた新しい結果は残す）
+                    onMessageShown = { shown -> state.outcome?.takeIf { it === shown.key }?.let(model::messageShown) },
                 )
             }
         }

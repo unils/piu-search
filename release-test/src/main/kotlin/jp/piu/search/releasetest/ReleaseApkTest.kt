@@ -142,8 +142,13 @@ class ReleaseApkTest {
         checkNotNull(device.wait(Until.findObject(By.res(SETTINGS)), TIMEOUT_MILLIS)) { "設定が開かない" }
         waitFor("設定に「索引の状態」が出る") { scrolledTo(SETTINGS_INDEX_STATUS, SETTINGS) }
         checkNotNull(device.findObject(By.res(SETTINGS_INDEX_STATUS))).click()
-        waitFor("「索引の状態」が開く") { scrolledTo(INDEX_STATUS_REPORT, INDEX_STATUS) }
+        waitFor("「索引の状態」が開く") { device.findObject(By.res(INDEX_STATUS)) != null }
         waitFor("同期が済む", detail = { "同期の記録: ${syncLog()}" }) { syncLog().any { "索引を同期した" in it } }
+        // 記録が出ても、画面がまだ同期の結果を取り込んでいないことがある。報告用の文は押した時点の中身で作るので、画面の反映を待つ
+        val lastSync = label("最後の更新: ", "Last update: ")
+        val notYet = lastSync + label("まだ更新していません", "Not updated yet")
+        waitFor("画面に同期の結果が出る") { device.findObject(By.textStartsWith(lastSync))?.text?.let { it != notYet } == true }
+        waitFor("報告のボタンに届く") { scrolledTo(INDEX_STATUS_REPORT, INDEX_STATUS) }
         checkNotNull(device.findObject(By.res(INDEX_STATUS_REPORT))).click()
         val text = checkNotNull(device.wait(Until.findObject(By.res(INDEX_REPORT_TEXT)), TIMEOUT_MILLIS)) { "報告用の文が出ない" }.text
         val lines = text.lines()

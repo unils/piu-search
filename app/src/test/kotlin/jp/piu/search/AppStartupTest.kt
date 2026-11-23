@@ -15,6 +15,7 @@ import jp.piu.search.core.text.NormalizedText
 import jp.piu.search.data.index.IndexActor
 import jp.piu.search.data.records.RecordsActor
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -40,11 +41,15 @@ class AppStartupTest {
         stop(context.appContainer)
         val token = File(context.noBackupFilesDir, "installation-id").readText()
         context.deleteDatabase(RecordsActor.FILE_NAME)
+        // 前の部品が作った索引の DB で確かめないよう消しておく
+        context.deleteDatabase(IndexActor.FILE_NAME)
         createVersion6(token)
 
         val next = AppContainer(context)
         try {
             runBlocking { withTimeout(TIMEOUT_MILLIS) { next.records.refresh().await() } }
+            // 記録と索引の書き手は別のスレッドで読み込む。索引の読み戻しが終わるのを待つ
+            val index = runBlocking { withTimeout(TIMEOUT_MILLIS) { next.index.status.first { it.loaded } } }
             val records = checkNotNull(next.records.state.value.records)
             assertTrue(
                 records.learned.records
@@ -72,6 +77,7 @@ class AppStartupTest {
                 }
             }
             assertNull(records.learned.records[REMOVED])
+            assertNull(index.loadFailure)
             assertTrue(context.getDatabasePath(IndexActor.FILE_NAME).exists())
         } finally {
             stop(next)
