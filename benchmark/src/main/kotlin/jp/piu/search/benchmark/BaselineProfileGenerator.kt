@@ -16,8 +16,9 @@ import org.junit.runner.RunWith
  *
  * - [startup]: 呼び出してから検索窓に焦点が来るまで。起動用のプロファイルにも入れ、R8 がこの流れのクラスを
  *   最初の DEX（classes.dex）にまとめる（DEX の並べ替え）
- * - [search]: 呼び出し → 検索窓に打つ → 結果が出る。漢字の検索語も打ち、読みを付ける Kuromoji の経路も含める
- *   （索引の作り直しでも同じコードを使う）。Baseline Profile にだけ入れる
+ * - [search]: 呼び出し → 検索窓に打つ → 結果が出る → 結果の行を押して開く。漢字の検索語も打ち、読みを付ける Kuromoji の経路も含める
+ *   （索引の作り直しでも同じコードを使う）。開く段は、学習と起動の記録の保存を待ってから OS に起動を頼むので、
+ *   押してから相手のアプリが開くまでの時間に効く。Baseline Profile にだけ入れる
  *
  * 結果が出るのを待つので、テスト用のアプリ（test-apps/）が要る（生成の前に入る）。
  * `./gradlew :app:generateBaselineProfile` で回す。結果は app の `src/release/generated/baselineProfiles/` に入り、
@@ -59,6 +60,13 @@ class BaselineProfileGenerator {
                 }
                 check(shown) { "「$query」で ${expected.joinToString("・")} が出ない" }
             }
+            // 最後の検索語で出た乗換案内のテスト用アプリの行を押して開く
+            val row =
+                OPENED_LABELS.firstNotNullOfOrNull {
+                    device.findObject(By.textContains(it)) ?: device.findObject(By.descContains(it))
+                }
+            checkNotNull(row) { "${OPENED_LABELS.joinToString("・")} の行がない" }.click()
+            checkNotNull(device.wait(Until.findObject(By.pkg(OPENED)), TIMEOUT_MILLIS)) { "$OPENED が開かない" }
         }
 
     private companion object {
@@ -69,6 +77,10 @@ class BaselineProfileGenerator {
                 "やふー" to listOf("Yahoo!テスト"),
                 "乗り換え" to listOf("乗換案内テスト", "Transit Test"),
             )
+
+        /** 最後の検索語で出て、押して開くアプリと、その名前（日本語・英語）。 */
+        const val OPENED = "jp.piu.search.testapp.transit"
+        val OPENED_LABELS = listOf("乗換案内テスト", "Transit Test")
         const val POLL_MILLIS = 200L
         const val TIMEOUT_MILLIS = 60_000L
     }

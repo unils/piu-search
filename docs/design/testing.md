@@ -265,6 +265,7 @@ Baseline Profile の生成（`BaselineProfileGenerator`）のうち、呼び出�
 
 - 入口（アイコン・アシスタント・タイル）はどれも `SearchActivity` を開き、そこからの流れは同じなので、アイコンからの起動だけを通す。検索語を打った後の照合は入れない（公式の文書は、起動用の流れを `classes.dex` に収まる範囲に絞るよう勧める）
 - 起動の流れには、画面の表示の後に裏のスレッドで辞書を読み込む Kuromoji（`warmUp`）の分も入る。それでも起動用のクラスは `classes.dex` に収まった
+- 同じく裏で進む、記録と索引の読み込み（記録の書き手 `RecordsActor`・索引の書き手 `IndexActor`・`ProfileWatcher`・`core/state` の規則・保存した索引の復元）も起動の流れに入る。検索の流れ（`search`）は、結果の行を押して開くところまで通し、記録の保存から OS への起動の要求までを Baseline Profile に入れる
 - release の APK は、`classes.dex`（起動用。1.66 MB）と `classes2.dex`（残り。0.97 MB）の 2 つに分かれた。以前は `classes.dex` 1 つ（2.42 MB）。AAB の R8 の記録（`BUNDLE-METADATA/com.android.tools/r8.json`）で、`classes.dex` が `"startup": true` になることを確かめた
 
 2026-11-08 のエミュレータの値（中央値と四分位範囲、ms。前は Baseline Profile だけ、後は起動用のプロファイルと DEX の並べ替えを加えたもの。コンパイルの状態は `BaselineProfile`）:
