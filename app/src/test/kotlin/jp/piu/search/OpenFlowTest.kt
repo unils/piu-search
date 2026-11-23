@@ -163,10 +163,8 @@ class OpenFlowTest {
     }
 
     private fun choose(scenario: ActivityController<SearchActivity>) {
-        // 画面の行を押したときと同じ入口（閉じかけ・壊れかけの画面の確認を含む）
-        val activity = scenario.get()
-        if (activity.isFinishing || activity.isDestroyed) return
-        viewModel(activity).open(APP, screenOf(activity))
+        // 画面の行を押したときと同じ製品の入口（閉じかけ・壊れかけの画面の確認を含む）
+        scenario.get().openApp(APP)
         shadowOf(Looper.getMainLooper()).idle()
     }
 
@@ -175,12 +173,6 @@ class OpenFlowTest {
             .getDeclaredField("viewModel")
             .apply { isAccessible = true }
             .get(activity) as SearchViewModel
-
-    private fun screenOf(activity: SearchActivity): ScreenToken =
-        SearchActivity::class.java
-            .getDeclaredField("screen")
-            .apply { isAccessible = true }
-            .get(activity) as ScreenToken
 
     private fun sql(statement: String) {
         context.openOrCreateDatabase(RecordsActor.FILE_NAME, Context.MODE_PRIVATE, null).use { it.execSQL(statement) }

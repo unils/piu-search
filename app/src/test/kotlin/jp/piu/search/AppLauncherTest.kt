@@ -25,7 +25,11 @@ import org.robolectric.shadows.ShadowUserManager
 class AppLauncherTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val users = context.getSystemService(UserManager::class.java)
-    private val launcher = AppLauncher(context, ProfileUsers(context))
+    private val profileUsers = ProfileUsers(context)
+
+    // 番号から引ける識別子。テストで消して、保存を待つ間にプロファイルが消えた場面を作る
+    private val removed = HashSet<Long>()
+    private val launcher = AppLauncher(context) { serial -> if (serial in removed) null else profileUsers.userFor(serial) }
     private var launches = 0
 
     @Before
@@ -47,10 +51,12 @@ class AppLauncherTest {
 
     @Test
     fun theTargetIsLookedUpAgainRightBeforeLaunching() {
-        val gone = launcher.prepare(AppId("io.example.app", "Main", 99))
-        assertTrue(gone.recordsChoice)
-        // 番号から引けないプロファイル（消えた）には頼まない
-        assertFalse(gone.launch())
+        addWorkProfile(paused = false)
+        val prepared = launcher.prepare(AppId("io.example.app", "Main", WORK))
+        assertTrue(prepared.recordsChoice)
+        // 保存を待つ間にプロファイルが消えた。準備の時点の識別子では頼まない
+        removed += WORK
+        assertFalse(prepared.launch())
         assertEquals(0, launches)
     }
 

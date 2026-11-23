@@ -86,6 +86,8 @@ class ReleaseApkTest {
         searchField().text = "norikae"
         waitFor("「$transit」が出る") { hasLabel(transit) }
         waitFor("最初の同期が済む") { syncLog().any { BUILT.find(it) != null } }
+        // 同期の記録は保存の前に出る。止める前に、索引を保存できたことを待つ（保存の前に止めると、開き直しで全件を作り直すため）
+        waitFor("索引の保存が済む") { shell("logcat -d -s $SYNC_TAG:*").contains(SAVED) }
         findLabel(transit)!!.click()
         waitFor("テスト用のアプリが前に出る") { resumedActivityLines().any { TRANSIT in it } }
 
@@ -99,6 +101,8 @@ class ReleaseApkTest {
         val sync = syncLog()
         assertTrue("材料を読み直さない: $sync", sync.all { " read=0 " in it })
         assertTrue("キーを作り直さない: $sync", sync.all { " built=0 " in it })
+        // 読み戻した索引で出ていても、同期そのものが失敗していれば通さない
+        assertTrue("同期が失敗しない: $sync", sync.all { "failed=false" in it })
     }
 
     @Test
@@ -303,6 +307,7 @@ class ReleaseApkTest {
         const val JA_ONLY = "jp.piu.search.testapp.labeljaonly"
         const val SYNC_TAG = "PiuIndexSync"
         const val FAILED = "failed=true"
+        const val SAVED = "索引を保存した"
 
         // 索引の同期の記録の、キーを作った入口の数が 1 以上
         val BUILT = Regex(" built=[1-9]")

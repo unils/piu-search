@@ -882,6 +882,30 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun aShownNoticeIsConsumedWhenAnotherAppIsOpenedAndOnlyTheNewOneIsKept() =
+        test {
+            val search = SearchHarness(this, INDEX, history = LaunchHistory.EMPTY.recorded(MAPS, NOW))
+            val old = LearningDecision(null, listOf(LearnedPair(NormalizedText("ぴざ"), ROAD)))
+            search.records.commit(RecordsRequest.Open(old, ROAD, NOW))
+            search.settle()
+            val shown = search.state.notices.single()
+            // 今回の起動の保存で、新しい救済の知らせが 1 つ生じる
+            val fresh = LearningDecision(null, listOf(LearnedPair(NormalizedText("すし"), MAPS)))
+            search.records.reply = { CompletableDeferred(search.records.commit(RecordsRequest.Open(fresh, MAPS, NOW))) }
+
+            // 知らせを出している間に、打たずに最近使ったアプリから別のアプリを開き、画面が閉じる
+            assertTrue(search.content is SearchContent.Suggestions)
+            search.open(MAPS)
+            search.clear()
+            // 前の知らせは消費し、今回の起動の知らせだけを次の検索に残す
+            assertEquals(listOf(shown.id), search.records.consumed)
+            val kept =
+                search.records.state.value.notices
+                    .filter { it.id !in search.records.consumed }
+            assertEquals(fresh.rescues, kept.map { it.pair })
+        }
+
+    @Test
     fun returningToTheForegroundRefreshesRecordsForgetsOldLearningAndReportsALoadFailure() =
         test {
             val search = SearchHarness(this, INDEX)

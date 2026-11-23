@@ -389,6 +389,8 @@ public class IndexActor internal constructor(
         saved = snapshot
         awaitingSave.clear()
         statusFlow.value = statusFlow.value.copy(unsaved = false, lastSavedAt = now)
+        // 保存を観測できるようにする（release-test がプロセスを止める前に待つ）。件数も識別子も出さない
+        Log.i(SYNC_TAG, "索引を保存した")
     }
 
     private sealed class Message {

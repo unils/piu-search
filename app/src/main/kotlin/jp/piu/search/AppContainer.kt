@@ -102,7 +102,7 @@ class AppContainer(
     val users: ProfileUsers = ProfileUsers(appContext)
 
     /** 結果のアプリを開く部品。 */
-    val launcher: AppLauncher = AppLauncher(appContext, users)
+    val launcher: AppLauncher = AppLauncher(appContext, users::userFor)
 
     /** 結果の行のアイコン。読み込みは 1 本の裏のスレッドで行う。 */
     val icons: LauncherAppIcons =

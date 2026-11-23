@@ -339,6 +339,12 @@ class SearchViewModel(
         val decision = finishSession(request)
         val ticket = OpenTicket(screen)
         opening = ticket
+        // 今出している前の知らせは、この画面で出し終えたものとして消費する。保留に入ると画面から消え、閉じたときにも消費されないため。
+        // 今回の起動で生じる知らせだけを、次の検索に残す
+        state.value.notices.filter { it.id !in undoing }.forEach {
+            dismissed += it.id
+            records.consumeNotice(it.id)
+        }
         noticesDeferred = true
         publish()
         val prepared = deps.launcher.prepare(app)

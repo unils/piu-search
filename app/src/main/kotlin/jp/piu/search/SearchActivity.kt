@@ -16,6 +16,7 @@ import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import jp.piu.search.core.search.AppId
 import kotlinx.coroutines.launch
 
 /**
@@ -64,7 +65,7 @@ class SearchActivity : ComponentActivity() {
                     onQueryChange = viewModel::onQueryChange,
                     content = state.content,
                     icons = container.icons,
-                    onOpen = { if (accepting()) viewModel.open(it, screen) },
+                    onOpen = ::openApp,
                     onSearchAction = { if (accepting()) viewModel.openTopResult(screen) },
                     showingAllApps = state.showingAllApps,
                     onShowAllApps = viewModel::showAllApps,
@@ -109,6 +110,11 @@ class SearchActivity : ComponentActivity() {
         // 何も開かずに画面を離れた（アプリ情報を開いた・ホームに戻った）なら、打った文字の列を残さない
         viewModel.onScreenStopped(isChangingConfigurations)
         super.onStop()
+    }
+
+    /** 結果の行を押した。閉じかけ・壊れかけの画面では受けない（閉じる前の追加のタップで、記録と起動を重ねないため）。 */
+    internal fun openApp(app: AppId) {
+        if (accepting()) viewModel.open(app, screen)
     }
 
     private fun accepting(): Boolean = !isFinishing && !isDestroyed
