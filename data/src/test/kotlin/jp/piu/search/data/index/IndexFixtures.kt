@@ -72,6 +72,7 @@ internal class FakeReader : DeviceReader {
     val reads = ArrayList<PackageKey>()
     var observeCalls = 0
     var duringRead: () -> Unit = {}
+    var failObserve = false
 
     fun install(
         key: PackageKey,
@@ -86,6 +87,7 @@ internal class FakeReader : DeviceReader {
 
     override fun observe(known: Set<Long>): DeviceObservation {
         observeCalls++
+        if (failObserve) throw IllegalStateException("観測の失敗")
         return DeviceObservation(
             profiles.mapValues { (serial, apps) ->
                 val status = statuses[serial] ?: ListingStatus.COMPLETE

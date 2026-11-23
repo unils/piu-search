@@ -31,6 +31,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -47,7 +48,12 @@ import jp.piu.search.core.search.LearnedPair
 import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.search.SearchIndex
 import jp.piu.search.core.search.SearchKeyGenerator
+import jp.piu.search.core.state.RescueNotice
 import jp.piu.search.core.text.NormalizedText
+import jp.piu.search.data.Profiles
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -56,7 +62,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import java.util.concurrent.Executor
 
 // 検索の画面の主な状態のスクリーンショット（testing.md の 4）。正解の画像は src/test/screenshots にあり、check で比べる。
 // 見た目を変えたら ./gradlew :app:recordRoborazziDebug で撮り直し、差分を見てからコミットする。
@@ -102,7 +107,7 @@ class SearchScreenScreenshotTest {
             "profile_work_top",
             query = "きんたい",
             index = profileIndex,
-            work = WORK.copy(paused = true),
+            work = WORK.copy(workPaused = true),
             tab = ProfileTab.WORK,
             searchBarOnTop = true,
         )
@@ -268,7 +273,7 @@ class SearchScreenScreenshotTest {
 
     @Test
     fun workProfilePaused() {
-        capture("profile_work_paused", query = "きんたい", index = profileIndex, work = WORK.copy(paused = true), tab = ProfileTab.WORK)
+        capture("profile_work_paused", query = "きんたい", index = profileIndex, work = WORK.copy(workPaused = true), tab = ProfileTab.WORK)
     }
 
     @Test
@@ -328,7 +333,7 @@ class SearchScreenScreenshotTest {
         // 前に開いたときの救済の知らせ。検索窓の直上に［取り消す］つきで出す。
         // 知らせは数秒で下がるので、時計を止めて、出る動きの後で撮る
         compose.mainClock.autoAdvance = false
-        render(query = "", learning = LEARNING, notices = listOf(RescueNotice(DENSHA, "乗換案内", null, NOW)))
+        render(query = "", learning = LEARNING, notices = listOf(RescueNotice(1, DENSHA, "乗換案内", null, NOW)))
         compose.mainClock.advanceTimeBy(NOTICE_SETTLE_MILLIS)
         compose.onRoot().captureRoboImage("src/test/screenshots/rescue_notice.png")
     }
@@ -431,7 +436,7 @@ class SearchScreenScreenshotTest {
         query: String,
         history: LaunchHistory = HISTORY,
         index: SearchIndex = Companion.index,
-        work: WorkProfileState = WorkProfileState.NONE,
+        work: Profiles = NO_WORK,
         tab: ProfileTab = ProfileTab.PERSONAL,
         allApps: Boolean = false,
         onboarding: Boolean = false,
@@ -464,7 +469,7 @@ class SearchScreenScreenshotTest {
         query: String,
         history: LaunchHistory = HISTORY,
         index: SearchIndex = Companion.index,
-        work: WorkProfileState = WorkProfileState.NONE,
+        work: Profiles = NO_WORK,
         tab: ProfileTab = ProfileTab.PERSONAL,
         allApps: Boolean = false,
         menu: Boolean = false,
@@ -501,7 +506,7 @@ class SearchScreenScreenshotTest {
         query: String,
         history: LaunchHistory = HISTORY,
         index: SearchIndex = Companion.index,
-        work: WorkProfileState = WorkProfileState.NONE,
+        work: Profiles = NO_WORK,
         tab: ProfileTab = ProfileTab.PERSONAL,
         allApps: Boolean = false,
         menu: Boolean = false,
@@ -513,22 +518,22 @@ class SearchScreenScreenshotTest {
         showReasons: Boolean = true,
         indexNotice: IndexNotice? = null,
     ): @Composable () -> Unit {
-        val controller = SearchController(analyzer, direct, direct, index, history, clock = { NOW }, learning = learning)
-        controller.onWorkProfileChanged(work)
+        val controller = staticSearch(index, history, learning, work)
         controller.selectProfile(tab)
         controller.onQueryChange(query)
         controller.showAllApps(allApps)
+        val state = controller.uiState.value
         return {
             PiuTheme {
                 SearchScreen(
-                    query = controller.query,
+                    query = state.query,
                     onQueryChange = controller::onQueryChange,
-                    content = controller.content,
+                    content = state.content,
                     icons = FakeIcons,
                     onOpen = {},
                     onSearchAction = {},
-                    showingAllApps = controller.showingAllApps,
-                    profileSwitch = if (work.serials.isEmpty()) null else ProfileSwitch(controller.profileTab, work.paused),
+                    showingAllApps = state.showingAllApps,
+                    profileSwitch = state.profileSwitch,
                     autoFocus = false,
                     rowMenu = if (menu) controller::menuFor else { _ -> emptyList() },
                     onboarding = if (onboarding) OnboardingActions({}, if (tileRequest) ({}) else null, {}) else null,
@@ -564,7 +569,6 @@ class SearchScreenScreenshotTest {
         const val SETTLE_MILLIS = 5_000L
         const val NOTICE_SETTLE_MILLIS = 1_000L
         val MIN_TOUCH = 48.dp
-        val direct = Executor { it.run() }
         val analyzer by lazy { KuromojiReadingAnalyzer() }
 
         fun app(
@@ -575,7 +579,43 @@ class SearchScreenScreenshotTest {
         ) = AppEntry(AppId(pkg, "$pkg.Main", serial), label, genres = genres.map(::GenreId))
 
         const val WORK_SERIAL = 10L
-        val WORK = WorkProfileState(setOf(WORK_SERIAL), paused = false)
+        val WORK = Profiles(0, setOf(WORK_SERIAL), workPaused = false)
+        val NO_WORK = Profiles(0, emptySet(), workPaused = false)
+
+        /**
+         * 画面のスレッドの上で、読みと派生の索引をその場で作る [SearchViewModel]（スクリーンショットは描く前に中身を決めるため）。
+         * Robolectric のテストは画面のスレッドで動くので、画面のスレッドの Dispatcher（immediate）もその場で動く。
+         */
+        fun staticSearch(
+            index: SearchIndex,
+            history: LaunchHistory,
+            learning: LearnedMemory,
+            work: Profiles,
+        ): SearchViewModel {
+            val indexPort = FakeIndex().apply { searchIndex.value = index }
+            val records = FakeRecords().apply { set(learning, history) }
+            return SearchViewModel(
+                SearchDependencies(
+                    index = indexPort,
+                    records = records,
+                    profiles = MutableStateFlow(work),
+                    refreshProfiles = {},
+                    settings = MutableStateFlow(Settings(onboardingDismissed = true)),
+                    dismissOnboarding = {},
+                    openRecordFailed = MutableStateFlow(false),
+                    searchForeground = MutableStateFlow(false),
+                    launcher = FakeLauncher(),
+                    messages = FakeMessages(),
+                    analyzer = analyzer,
+                    appScope = CoroutineScope(Dispatchers.Unconfined),
+                    readingDispatcher = Dispatchers.Unconfined,
+                    derivedDispatcher = Dispatchers.Unconfined,
+                    clock = { NOW },
+                    timing = FakeTiming(),
+                ),
+                SavedStateHandle(),
+            )
+        }
 
         /** 個人用の APPS に、仕事用プロファイルの勤怠とメールを足したもの。 */
         val profileIndex: SearchIndex by lazy {

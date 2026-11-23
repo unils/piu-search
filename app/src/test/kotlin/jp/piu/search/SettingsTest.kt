@@ -5,6 +5,7 @@ package jp.piu.search
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Looper
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +17,11 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
+import jp.piu.search.core.search.LearningDecision
+import jp.piu.search.core.state.RecordsRequest
+import jp.piu.search.data.records.RecordsActor
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -24,9 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
+import org.robolectric.shadows.ShadowToast
 
 // 設定（M5-01）: 保存と読み直し、設定画面の操作、OS のアプリ情報からの入口、検索の画面への反映
 @RunWith(AndroidJUnit4::class)
@@ -111,7 +115,7 @@ class SettingsTest {
 
     @Test
     fun showingTheGuideAgainOpensTheSearchScreenWithIt() {
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SettingsActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_ONBOARDING_AGAIN_TAG).performScrollTo().performClick()
             assertFalse(SettingsStore(context).onboardingDismissed)
@@ -122,7 +126,7 @@ class SettingsTest {
 
     @Test
     fun searchScreenOpensSettingsFromTheGearAndRereadsThemOnReturn() {
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_BUTTON_TAG).performClick()
             scenario.onActivity { activity ->
@@ -132,7 +136,7 @@ class SettingsTest {
             val bottom = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top
 
             // 設定画面で上に変えて戻った（画面が裏に回って前に戻る）
-            SettingsStore(context).search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
+            context.appContainer.settings.search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
@@ -145,12 +149,12 @@ class SettingsTest {
     fun settingsAreRereadWhenTheSearchScreenResumesWithoutStopping() {
         // 設定画面を開いてすぐ戻ると、OS が検索の画面の onStop を出す前に戻ることがある（onPause → onResume だけ。
         // SettingsInstrumentedTest.choosingTopInSettingsMovesTheSearchBarUp が時々落ちた原因）
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
         ActivityScenario.launch(SearchActivity::class.java).use { scenario ->
             val bottom = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top
 
             scenario.moveToState(Lifecycle.State.STARTED)
-            SettingsStore(context).search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
+            context.appContainer.settings.search = SearchSettings(searchBarPosition = SearchBarPosition.TOP)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
             val top = compose.onNodeWithTag(SEARCH_FIELD_TAG).getBoundsInRoot().top
@@ -163,55 +167,54 @@ class SettingsTest {
     fun clearLaunchHistoryRequiresConfirmationAndClearsMemoryAndDatabase() {
         val container = context.appContainer
         val app = AppId("io.example.app", "Main", 0)
-        container.launchHistory.record(app, 100)
-        awaitHistory(container.launchHistory)
+        request(RecordsRequest.Open(LearningDecision(null, emptyList()), app, 100))
         ActivityScenario.launch(SettingsActivity::class.java).use { scenario ->
             compose.onNodeWithTag(SETTINGS_CLEAR_HISTORY_TAG).performScrollTo().performClick()
             compose.onNodeWithText(context.getString(R.string.learned_clear_cancel)).performClick()
-            assertTrue(
-                container.launchHistory.history.records
-                    .isNotEmpty(),
-            )
+            assertTrue(launches().isNotEmpty())
 
             compose.onNodeWithTag(SETTINGS_CLEAR_HISTORY_TAG).performScrollTo().performClick()
             scenario.recreate()
             compose.onNodeWithTag(SETTINGS_CLEAR_HISTORY_CONFIRM_TAG).performClick()
-            awaitHistory(container.launchHistory)
-            compose.waitUntil {
-                container.launchHistory.history.records
-                    .isEmpty()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                shadowOf(Looper.getMainLooper()).idle()
+                launches().isEmpty()
             }
-            assertTrue(
-                container.launchHistory.history.records
-                    .isEmpty(),
-            )
-            val checked = CountDownLatch(1)
-            val empty = AtomicBoolean(false)
-            container.learning.runAfterPending {
-                empty.set(
-                    container.database.launchStats
-                        .load()
-                        .records
-                        .isEmpty(),
-                )
-                checked.countDown()
+            // 書き手が書けた後にだけ写しが変わるので、DB の行も消えている
+            val rows =
+                context.openOrCreateDatabase(RecordsActor.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
+                    db.rawQuery("SELECT COUNT(*) FROM launch_stat", null).use {
+                        it.moveToFirst()
+                        it.getInt(0)
+                    }
+                }
+            assertEquals(0, rows)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                shadowOf(Looper.getMainLooper()).idle()
+                ShadowToast.getTextOfLatestToast() == context.getString(R.string.settings_history_cleared)
             }
-            assertTrue(checked.await(5, TimeUnit.SECONDS))
-            assertTrue(empty.get())
+            assertTrue(container.records.state.value.records != null)
         }
     }
 
-    private fun awaitHistory(history: LaunchHistoryRepository) {
-        history.requestLoad()
-        // 起動と学習は同じ記録のスレッドなので、先に積んだ起動の書き込みまで待つ。
-        val done = CountDownLatch(1)
-        context.appContainer.learning.runAfterPending { done.countDown() }
-        assertTrue(done.await(5, TimeUnit.SECONDS))
+    private fun launches() =
+        context.appContainer.records.state.value.records
+            ?.launches
+            ?.records
+            .orEmpty()
+
+    private fun request(request: RecordsRequest) {
+        runBlocking { withTimeout(TIMEOUT_MILLIS) { context.appContainer.records.request(request) } }
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun nextStarted(scenario: ActivityScenario<SettingsActivity>): Intent? {
         var started: Intent? = null
         scenario.onActivity { started = shadowOf(it).nextStartedActivity }
         return started
+    }
+
+    private companion object {
+        const val TIMEOUT_MILLIS = 10_000L
     }
 }

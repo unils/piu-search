@@ -43,7 +43,7 @@ class SettingsInstrumentedTest {
     fun startFromDefaults() {
         clearSettings()
         // 案内が検索窓の上の場所を取らないよう閉じておく
-        SettingsStore(context).dismissOnboarding()
+        context.appContainer.settings.dismissOnboarding()
     }
 
     @After
@@ -148,12 +148,12 @@ class SettingsInstrumentedTest {
         }
     }
 
+    // 画面は部品の設定の流れを読むので、ファイルを直に消さず、同じ部品から既定に戻す
     private fun clearSettings() {
-        context
-            .getSharedPreferences("settings", Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .commit()
+        context.appContainer.settings.apply {
+            search = SearchSettings()
+            showOnboardingAgain()
+        }
     }
 
     private fun resumed(): Collection<Activity> = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)

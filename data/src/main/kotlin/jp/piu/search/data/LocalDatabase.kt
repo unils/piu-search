@@ -15,7 +15,7 @@ import java.io.Closeable
  * Room の型を外に出さないよう、表ごとの読み書きの部品（[index] など）だけを見せる。
  * 読み書きはファイルに触れるので、画面のスレッドでは呼ばない（Room が例外を投げる）。
  */
-public class LocalDatabase internal constructor(
+internal class LocalDatabase internal constructor(
     internal val room: PiuRoomDatabase,
     indexVersion: Int = SearchIndexVersion.CURRENT,
 ) : Closeable {

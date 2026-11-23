@@ -10,7 +10,7 @@ import jp.piu.search.data.db.LaunchStatRow
 import jp.piu.search.data.db.PiuRoomDatabase
 
 /** 起動の記録の保存先。保存が失敗したときは例外を返し、変更を残さない。 */
-public interface LaunchStatStorage {
+internal interface LaunchStatStorage {
     /** 保存した起動の記録を読む。 */
     public fun load(): LaunchHistory
 
@@ -29,7 +29,7 @@ public interface LaunchStatStorage {
  *
  * 索引の表とは別に持ち、索引を作り直しても消さない（消えてよくない表。architecture.md の「データの保存」）。
  */
-public class LaunchStatStore internal constructor(
+internal class LaunchStatStore internal constructor(
     private val database: PiuRoomDatabase,
     private val dao: LaunchStatDao = database.launchStatDao(),
 ) : LaunchStatStorage {

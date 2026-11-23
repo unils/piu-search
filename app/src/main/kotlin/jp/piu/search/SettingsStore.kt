@@ -4,6 +4,10 @@ package jp.piu.search
 
 import android.content.Context
 import androidx.core.content.edit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /** 検索窓の位置（ui.md の「設定画面」）。 */
 enum class SearchBarPosition {
@@ -40,45 +44,70 @@ data class SearchSettings(
 )
 
 /**
- * 利用者の設定（SharedPreferences）。設定画面の項目と、初回の案内を閉じたか。
+ * 利用者の設定の全体。
+ *
+ * @property search 検索の画面の設定
+ * @property onboardingDismissed 初回の案内を閉じたか
+ */
+data class Settings(
+    val search: SearchSettings = SearchSettings(),
+    val onboardingDismissed: Boolean = false,
+)
+
+/**
+ * 利用者の設定（SharedPreferences）。設定画面の項目と、初回の案内を閉じたか。今の値は [settings] で流す。
  *
  * 索引の表（作り直せる写し）とは分け、アプリを消すかデータを消すまで残す。値が少なく小さいので、
- * 依存を足す DataStore ではなく SharedPreferences にした。画面の最初の描画の前に同期で読めるので、案内や検索窓の位置が一瞬違って見えることもない。
+ * 依存を足す DataStore ではなく SharedPreferences にした。作るときに同期で読むので、案内や検索窓の位置が最初の描画で一瞬違って見えることもない。
+ * 書き手はこの部品だけなので、書いたその場で流れも変える（`OnSharedPreferenceChangeListener` は使わない）。画面のスレッドから書く。
  * 列挙は名前で保存し、知らない名前（後の版で消した値など）は既定に戻す。
  */
 class SettingsStore(
     context: Context,
 ) {
     private val preferences = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    private val state = MutableStateFlow(read())
+
+    /** 今の設定。画面はこれを購読するので、設定画面から戻ったときに読み直さなくてよい。 */
+    val settings: StateFlow<Settings> = state.asStateFlow()
 
     /** 初回の案内を閉じたか。閉じたら、設定画面で戻すまで出さない（ui.md の「呼び出し」）。 */
-    val onboardingDismissed: Boolean get() = preferences.getBoolean(KEY_ONBOARDING_DISMISSED, false)
+    val onboardingDismissed: Boolean get() = state.value.onboardingDismissed
 
     /** 初回の案内を閉じたことを覚える。 */
     fun dismissOnboarding() {
         preferences.edit { putBoolean(KEY_ONBOARDING_DISMISSED, true) }
+        state.update { it.copy(onboardingDismissed = true) }
     }
 
     /** 次に検索の画面を開いたとき、初回の案内をもう一度出す（設定画面の「案内をもう一度見る」）。 */
     fun showOnboardingAgain() {
         preferences.edit { remove(KEY_ONBOARDING_DISMISSED) }
+        state.update { it.copy(onboardingDismissed = false) }
     }
 
     /** 検索の画面の設定。 */
     var search: SearchSettings
-        get() =
-            SearchSettings(
-                searchBarPosition = enumOf(KEY_SEARCH_BAR, SearchBarPosition.BOTTOM),
-                showReasons = preferences.getBoolean(KEY_SHOW_REASONS, true),
-                workProfileMode = enumOf(KEY_WORK_PROFILE, WorkProfileMode.SWITCH),
-            )
+        get() = state.value.search
         set(value) {
             preferences.edit {
                 putString(KEY_SEARCH_BAR, value.searchBarPosition.name)
                 putBoolean(KEY_SHOW_REASONS, value.showReasons)
                 putString(KEY_WORK_PROFILE, value.workProfileMode.name)
             }
+            state.update { it.copy(search = value) }
         }
+
+    private fun read(): Settings =
+        Settings(
+            search =
+                SearchSettings(
+                    searchBarPosition = enumOf(KEY_SEARCH_BAR, SearchBarPosition.BOTTOM),
+                    showReasons = preferences.getBoolean(KEY_SHOW_REASONS, true),
+                    workProfileMode = enumOf(KEY_WORK_PROFILE, WorkProfileMode.SWITCH),
+                ),
+            onboardingDismissed = preferences.getBoolean(KEY_ONBOARDING_DISMISSED, false),
+        )
 
     private inline fun <reified E : Enum<E>> enumOf(
         key: String,

@@ -13,7 +13,7 @@ import java.util.concurrent.FutureTask
  * 索引・学習・起動の記録に共通の書き手。保存前の確認と保存・メモリ反映を 1 つの仕事として並べる。
  * 索引の材料の読み取りとキーの生成は外で済ませ、[run] では保存の前提の確認と保存・反映だけを行う。
  */
-public class DatabaseWriter :
+internal class DatabaseWriter :
     Executor,
     Closeable {
     private val running = ThreadLocal<Boolean>()

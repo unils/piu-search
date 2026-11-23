@@ -440,6 +440,21 @@ class RecordsActorTest {
         }
 
     @Test
+    fun theProductWriterOpensTheRecordsFileOfTheEarlierVersion() {
+        assertEquals("piu.db", RecordsActor.FILE_NAME)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val actor = RecordsActor.open(context, scope, probe)
+            runBlocking { withTimeout(TIMEOUT) { actor.refresh().await() } }
+            assertTrue(context.getDatabasePath(RecordsActor.FILE_NAME).exists())
+        } finally {
+            scope.cancel()
+            runBlocking { withTimeout(TIMEOUT) { scope.coroutineContext[Job]!!.join() } }
+            context.deleteDatabase(RecordsActor.FILE_NAME)
+        }
+    }
+
+    @Test
     fun onlyOneWriterCanBeOpenedForTheSameDatabase() {
         val name = "m802a-records-single-writer.db"
         val first = CoroutineScope(SupervisorJob() + Dispatchers.IO)

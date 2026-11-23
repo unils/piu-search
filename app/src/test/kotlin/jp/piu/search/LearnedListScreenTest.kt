@@ -2,6 +2,9 @@
 
 package jp.piu.search
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -26,6 +29,7 @@ import jp.piu.search.core.search.SearchKey
 import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.text.NormalizedText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -143,10 +147,45 @@ class LearnedListScreenTest {
     }
 
     @Test
+    fun aLaterResultWithTheSameTextIsShownAgainAndNotConsumedByTheEarlierOne() {
+        compose.mainClock.autoAdvance = false
+        val first = ScreenMessage("a", SAME)
+        val second = ScreenMessage("b", SAME)
+        var message by mutableStateOf<ScreenMessage?>(first)
+        val shown = ArrayList<Any>()
+        compose.setContent {
+            PiuTheme {
+                LearnedListScreen(
+                    entries(),
+                    {},
+                    {},
+                    {},
+                    {},
+                    message = message,
+                    onMessageShown = { shown += it.key },
+                )
+            }
+        }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithText(SAME).assertExists()
+        // 前の結果を出している間に、同じ文面の別の結果が届いた
+        compose.runOnIdle { message = second }
+        // 描き直しで後の結果を受けてから、時間を進める
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeBy(SNACKBAR_MILLIS)
+        compose.waitForIdle()
+        // 後の結果も出し直して出し終える。前の結果の終わりに渡すのは前の結果で、後の結果を取り違えない
+        // （画面はこれを結果の箱の消費に渡すので、前の結果の終わりで後の結果は消えない。ResultBoxTest）
+        assertEquals("b", shown.last())
+        assertEquals(listOf<Any>("b"), shown.filter { it == "b" })
+        assertTrue(shown.all { it == "a" || it == "b" })
+    }
+
+    @Test
     fun screenshotOfTheImportResult() {
         compose.mainClock.autoAdvance = false
         compose.setContent {
-            PiuTheme { LearnedListScreen(entries(), {}, {}, {}, {}, message = "学習の書き出しのファイルではないか、壊れています。学習は変えていません") }
+            PiuTheme { LearnedListScreen(entries(), {}, {}, {}, {}, message = ScreenMessage(Any(), "学習の書き出しのファイルではないか、壊れています。学習は変えていません")) }
         }
         compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
         compose.onRoot().captureRoboImage("src/test/screenshots/learned_import_failed.png")
@@ -178,7 +217,7 @@ class LearnedListScreenTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             val message = pluralStringResource(R.plurals.learned_imported, imported, imported, skipped)
-            PiuTheme { LearnedListScreen(entries(), {}, {}, {}, {}, message = message) }
+            PiuTheme { LearnedListScreen(entries(), {}, {}, {}, {}, message = ScreenMessage(Any(), message)) }
         }
         compose.mainClock.advanceTimeBy(SETTLE_MILLIS)
         compose.onNodeWithText(expected).assertExists()
@@ -191,6 +230,9 @@ class LearnedListScreenTest {
     }
 
     private companion object {
+        const val SAME = "1 件を書き出しました"
+        const val SNACKBAR_MILLIS = 15_000L
+
         // 2026-10-29 12:00 （日本時間）
         const val NOW = 1_793_242_800_000L
         const val DAY = 86_400_000L

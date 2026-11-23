@@ -121,6 +121,17 @@ fun learnedEntries(
         }
 
 /**
+ * 画面の下に短く出す知らせ 1 つ。
+ *
+ * @property key 結果ごとの識別子。等しさはこれで決める（同じ文面の別の結果を取り違えないため）
+ * @property text 文
+ */
+class ScreenMessage(
+    val key: Any,
+    val text: String,
+)
+
+/**
  * 学習の一覧の画面: 組の一覧・個別の削除・全消去（確かめつき）・書き出し・読み込み。
  *
  * 操作のボタンは片手で届くよう下に置く（検索画面と同じ）。
@@ -130,7 +141,7 @@ fun learnedEntries(
  * @param onClearAll 全消去を確かめたとき
  * @param onExport 「書き出す」を押したとき
  * @param onImport 「読み込む」を押したとき
- * @param message 下に短く出す知らせ（書き出し・読み込みの結果）。出し終えたら [onMessageShown] を呼ぶ
+ * @param message 下に短く出す知らせ（書き出し・読み込みの結果）。出し終えたら、出し始めた知らせを [onMessageShown] に渡す
  */
 @Composable
 fun LearnedListScreen(
@@ -140,16 +151,16 @@ fun LearnedListScreen(
     onExport: () -> Unit,
     onImport: () -> Unit,
     modifier: Modifier = Modifier,
-    message: String? = null,
-    onMessageShown: () -> Unit = {},
+    message: ScreenMessage? = null,
+    onMessageShown: (ScreenMessage) -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val currentShown by rememberUpdatedState(onMessageShown)
-    LaunchedEffect(message) {
-        if (message != null) {
-            snackbar.showSnackbar(message)
-            currentShown()
-        }
+    // 文面でなく結果ごとの識別子で出し始める。同じ文面の別の結果が届いたら出し直し、前の結果の終わりで新しい結果を消費しない
+    LaunchedEffect(message?.key) {
+        val shown = message ?: return@LaunchedEffect
+        snackbar.showSnackbar(shown.text)
+        currentShown(shown)
     }
     // 向きを変えても確かめの窓を残す
     var confirmingClear by rememberSaveable { mutableStateOf(false) }

@@ -72,7 +72,8 @@ class ReleaseApkTest {
             waitFor("「$query」で「$expected」が出る", detail = { "同期の記録: ${syncLog()}" }) { hasLabel(expected) }
         }
         val sync = syncLog()
-        assertTrue("全件を作り直した記録: $sync", sync.any { "mode=FULL_REBUILD" in it })
+        // 新しく入れた直後の同期は、すべての組のキーを作る
+        assertTrue("キーを作った記録: $sync", sync.any { BUILT.find(it) != null })
         assertFalse("同期の失敗: $sync", sync.any { FAILED in it })
     }
 
@@ -84,20 +85,24 @@ class ReleaseApkTest {
         device.wait(Until.findObject(By.res(ONBOARDING_CLOSE)), TIMEOUT_MILLIS)?.click()
         searchField().text = "norikae"
         waitFor("「$transit」が出る") { hasLabel(transit) }
-        waitFor("全件の同期が済む") { syncLog().any { "mode=FULL_REBUILD" in it } }
+        waitFor("最初の同期が済む") { syncLog().any { BUILT.find(it) != null } }
+        // 同期の記録は保存の前に出る。止める前に、索引を保存できたことを待つ（保存の前に止めると、開き直しで全件を作り直すため）
+        waitFor("索引の保存が済む") { shell("logcat -d -s $SYNC_TAG:*").contains(SAVED) }
         findLabel(transit)!!.click()
         waitFor("テスト用のアプリが前に出る") { resumedActivityLines().any { TRANSIT in it } }
 
-        // プロセスを止めて開き直す。保存した索引を読み、変更の番号で差分だけを見る
+        // プロセスを止めて開き直す。保存した索引を読み戻し、同じ端末の状態なので材料もキーも作らない
         shell("am force-stop $APP")
         shell("logcat -c")
         openSearch()
         // 検索語が空の間は、最近使ったアプリを出す。起動の記録がデータベースから読めている
         waitFor("最近使ったアプリに「$transit」が出る") { hasLabel(transit) }
-        waitFor("差分の同期が済む") { syncLog().isNotEmpty() }
+        waitFor("開き直した後の同期が済む") { syncLog().isNotEmpty() }
         val sync = syncLog()
-        assertTrue("差分で同期した記録: $sync", sync.all { "mode=CHANGES" in it })
-        assertTrue("作り直したアプリがない: $sync", sync.all { "rebuiltApps=0" in it })
+        assertTrue("材料を読み直さない: $sync", sync.all { " read=0 " in it })
+        assertTrue("キーを作り直さない: $sync", sync.all { " built=0 " in it })
+        // 読み戻した索引で出ていても、同期そのものが失敗していれば通さない
+        assertTrue("同期が失敗しない: $sync", sync.all { "failed=false" in it })
     }
 
     @Test
@@ -137,16 +142,21 @@ class ReleaseApkTest {
         checkNotNull(device.wait(Until.findObject(By.res(SETTINGS)), TIMEOUT_MILLIS)) { "設定が開かない" }
         waitFor("設定に「索引の状態」が出る") { scrolledTo(SETTINGS_INDEX_STATUS, SETTINGS) }
         checkNotNull(device.findObject(By.res(SETTINGS_INDEX_STATUS))).click()
-        waitFor("「索引の状態」が開く") { scrolledTo(INDEX_STATUS_REPORT, INDEX_STATUS) }
+        waitFor("「索引の状態」が開く") { device.findObject(By.res(INDEX_STATUS)) != null }
         waitFor("同期が済む", detail = { "同期の記録: ${syncLog()}" }) { syncLog().any { "索引を同期した" in it } }
+        // 記録が出ても、画面がまだ同期の結果を取り込んでいないことがある。報告用の文は押した時点の中身で作るので、画面の反映を待つ
+        val lastSync = label("最後の更新: ", "Last update: ")
+        val notYet = lastSync + label("まだ更新していません", "Not updated yet")
+        waitFor("画面に同期の結果が出る") { device.findObject(By.textStartsWith(lastSync))?.text?.let { it != notYet } == true }
+        waitFor("報告のボタンに届く") { scrolledTo(INDEX_STATUS_REPORT, INDEX_STATUS) }
         checkNotNull(device.findObject(By.res(INDEX_STATUS_REPORT))).click()
         val text = checkNotNull(device.wait(Until.findObject(By.res(INDEX_REPORT_TEXT)), TIMEOUT_MILLIS)) { "報告用の文が出ない" }.text
         val lines = text.lines()
         assertEquals("Piu Search index status", lines.first())
-        // values-ja/ にだけ名前のあるテスト用のアプリは、英語の名前で Resources.NotFoundException になる（決定的な欠け）
-        val jaOnly = lines.singleOrNull { " $JA_ONLY " in it }
-        assertTrue("欠けの行: $text", jaOnly != null && jaOnly.startsWith("- DETERMINISTIC LABEL personal $JA_ONLY "))
-        assertTrue("理由が R8 で変わらない名前のまま: $jaOnly", "cause=android.content.res.Resources\$NotFoundException " in jaOnly!!)
+        assertTrue("同期の結果: $text", lines.any { it.startsWith("last sync: result=") })
+        // values-ja/ にだけ名前のあるテスト用のアプリは、英語の名前の資源がない（Resources.NotFoundException）。
+        // ないことが決まっているので欠けにしない（成功した空）
+        assertTrue("欠けの行: $text", lines.none { " $JA_ONLY " in it })
         // 理由は java.・android. の名前か固定の符号だけ
         val causes = lines.filter { it.startsWith("- ") }.map { it.substringAfter("cause=").substringBefore(' ') }
         assertTrue("理由: $causes", causes.all { it.startsWith("java.") || it.startsWith("android.") || it.matches(Regex("[A-Z_]+")) })
@@ -301,7 +311,11 @@ class ReleaseApkTest {
         const val INDEX_REPORT_TEXT = "index_report_text"
         const val JA_ONLY = "jp.piu.search.testapp.labeljaonly"
         const val SYNC_TAG = "PiuIndexSync"
-        const val FAILED = "索引の同期に失敗した"
+        const val FAILED = "failed=true"
+        const val SAVED = "索引を保存した"
+
+        // 索引の同期の記録の、キーを作った入口の数が 1 以上
+        val BUILT = Regex(" built=[1-9]")
 
         // 最初の同期は全件の作り直し（辞書の読み込みを含む）で、遅いエミュレータでは数秒かかる
         const val TIMEOUT_MILLIS = 60_000L

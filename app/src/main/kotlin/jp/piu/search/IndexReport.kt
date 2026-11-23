@@ -7,10 +7,10 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.res.Resources
 import android.os.Build
+import jp.piu.search.core.state.IssueCategory
+import jp.piu.search.core.state.PackageKey
+import jp.piu.search.core.state.Stage
 import jp.piu.search.data.AppSource
-import jp.piu.search.data.IssueCategory
-import jp.piu.search.data.MaterialStage
-import jp.piu.search.data.PackageKey
 import jp.piu.search.data.ProfileReadStatus
 import java.time.Instant
 import java.time.ZoneOffset
@@ -102,7 +102,7 @@ object IndexReport {
             appendLine("index: $apps archived=${status.archived ?: "?"}")
             appendLine("last saved: ${status.lastSavedAt?.let(::utcDate) ?: "none"}")
             val outcome = status.outcome
-            appendLine(if (outcome == null) "last sync: none" else "last sync: mode=${status.mode ?: "-"} result=$outcome")
+            appendLine(if (outcome == null) "last sync: none" else "last sync: result=$outcome")
             val profiles = status.profiles.joinToString(" ") { "${it.role.reportName}=${it.status}" }
             appendLine("profiles: ${profiles.ifEmpty { "none" }}")
             appendLine(
@@ -129,12 +129,12 @@ object IndexReport {
     ) {
         val issue = row.issue
         val category = issue.category
-        append("- ${categoryCode(category)} ${issue.stage.code} ${row.role.reportName} ${issue.key.packageName} cause=${issue.cause}")
+        append("- ${categoryCode(category)} ${issue.stage.name} ${row.role.reportName} ${issue.key.packageName} cause=${issue.cause}")
         if (category == IssueCategory.TRANSIENT) append(" retry=${flag(issue.retryOnce)}")
         append(" system=${flag(facts.system)} apex=${flag(facts.apex)} splits=${facts.splits ?: "?"} key=${flag(facts.key)}")
         val bug = category == IssueCategory.SUSPECTED_BUG
         // 失敗したときに保存した入力の要約を使う。今の索引の表示名は、旧索引の行を保った組では失敗したときの入力と違う
-        if (bug && issue.stage == MaterialStage.KEYS) issue.inputSummary?.let { append(" input=$it") }
+        if (bug && issue.stage == Stage.KEYS) issue.inputSummary?.let { append(" input=$it") }
         if (bug) append(" ver=${issue.versionCode}")
         appendLine(" since=${issue.firstFailedOn} last=${issue.lastFailedOn}")
         if (bug) {

@@ -191,12 +191,8 @@ class EntryPointsInstrumentedTest {
 
     @Test
     fun onboardingButtonOpensAssistantSettings() {
-        // 案内を閉じていない状態から始める
-        context
-            .getSharedPreferences("settings", Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .commit()
+        // 案内を閉じていない状態から始める。画面は部品の設定の流れを読むので、同じ部品から戻す
+        context.appContainer.settings.showOnboardingAgain()
         restore += { device.shell("input keyevent KEYCODE_HOME") }
         ActivityScenario.launch(SearchActivity::class.java)
 

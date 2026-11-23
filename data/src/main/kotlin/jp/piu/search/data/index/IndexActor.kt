@@ -42,6 +42,8 @@ import kotlin.coroutines.CoroutineContext
  * @property genreFailure 最後に終わった同期のジャンルの問い合わせの失敗の理由。成功なら null（既存のジャンルを保った）
  * @property unsaved 公開した写しを、まだ保存できていない（未保存の印）
  * @property lastSavedAt 最後に保存できた時刻（ミリ秒）。保存したことがなければ null
+ * @property lastSync このプロセスで最後に終わった同期（全体で失敗した回を含む）。まだなければ null。
+ *   保存した写しの一覧の状態は前のプロセスの結果を含むので、「このプロセスの同期の結果」を出すときはこれで見分ける
  */
 public data class IndexStatus(
     val loaded: Boolean = false,
@@ -51,6 +53,26 @@ public data class IndexStatus(
     val genreFailure: String? = null,
     val unsaved: Boolean = false,
     val lastSavedAt: Long? = null,
+    val lastSync: SyncSummary? = null,
+)
+
+/**
+ * 同期 1 回の要約。報告と計測に使い、判断には使わない。
+ *
+ * @property finishedAt 終わった時刻（ミリ秒）
+ * @property millis 観測の始めから写しの公開まで（ミリ秒）。保存は含まない
+ * @property materialsRead 材料を読んだ組の数
+ * @property keysBuilt キーを作った入口の数
+ * @property removed 写しから消した組の数
+ * @property failed 同期全体が失敗した（写しは前のまま）
+ */
+public data class SyncSummary(
+    val finishedAt: Long,
+    val millis: Long,
+    val materialsRead: Int,
+    val keysBuilt: Int,
+    val removed: Int,
+    val failed: Boolean,
 )
 
 /**
@@ -80,6 +102,7 @@ public class IndexActor internal constructor(
     private val appVersion: Int,
     context: CoroutineContext,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val monotonic: () -> Long = { System.nanoTime() / NANOS_PER_MILLI },
     onStopped: () -> Unit = {},
 ) {
     private val inbox = Channel<Message>(Channel.UNLIMITED) { it.cancel() }
@@ -254,22 +277,47 @@ public class IndexActor internal constructor(
     private fun sync() {
         statusFlow.value = statusFlow.value.copy(running = true)
         var failure: String? = null
+        val started = monotonic()
+        var counts = Counts(0, 0, 0)
+        var finished = false
         try {
-            syncOnce()
+            counts = syncOnce()
+            finished = true
         } catch (e: CancellationException) {
             throw e
         } catch (e: RuntimeException) {
             // 同期全体の失敗。写しと知らせは前のまま保ち、次の頼みでやり直す
             Log.w(TAG, "索引の同期に失敗した: ${MaterialCauses.causeOf(e)}")
             failure = MaterialCauses.causeOf(e)
+            finished = true
         } finally {
-            // 取り消しで抜けても「同期の途中」を残さない
-            statusFlow.value = statusFlow.value.copy(running = false, syncFailure = failure)
+            // 取り消しで抜けても「同期の途中」を残さない。取り消しの回は終わった同期に数えない
+            val summary =
+                if (finished) {
+                    SyncSummary(clock(), monotonic() - started, counts.read, counts.built, counts.removed, failure != null)
+                } else {
+                    statusFlow.value.lastSync
+                }
+            statusFlow.value = statusFlow.value.copy(running = false, syncFailure = failure, lastSync = summary)
+            // 識別子は出さず、件数と時間だけを残す（release-test と計測が読む）
+            if (finished && summary != null) {
+                Log.i(
+                    SYNC_TAG,
+                    "索引を同期した: read=${summary.materialsRead} built=${summary.keysBuilt} removed=${summary.removed} " +
+                        "failed=${summary.failed} millis=${summary.millis}",
+                )
+            }
         }
         save()
     }
 
-    private fun syncOnce() {
+    private class Counts(
+        val read: Int,
+        val built: Int,
+        val removed: Int,
+    )
+
+    private fun syncOnce(): Counts {
         val device = reader.environment()
         val env =
             Environment(
@@ -284,6 +332,7 @@ public class IndexActor internal constructor(
         val known = current.packages.keys.mapTo(HashSet()) { it.profileSerial } + current.listings.keys
         val observation = reader.observe(known)
         val notices = unapplied.values.toList()
+        val previous = current.packages.keys
         val plan = IndexRules.plan(current, observation, env, notices, userSerials(notices))
         val reads = plan.profileReads.values.map(reader::readMaterials)
         val prepared = IndexRules.prepare(plan, reads, utcDay(clock()))
@@ -296,6 +345,11 @@ public class IndexActor internal constructor(
         outcome.consumableNotices.forEach { seq -> unapplied.remove(seq)?.let { awaitingSave[seq] = it } }
         if (outcome.staleIcons.isNotEmpty()) staleFlow.tryEmit(outcome.staleIcons)
         if (current != saved) unsaved = true
+        return Counts(
+            plan.profileReads.values.sumOf { it.jobs.size },
+            prepared.jobs.size,
+            previous.count { it !in current.packages },
+        )
     }
 
     // 受けた時点で番号の分からなかった知らせの通知元を、今の番号に解決する。解決できなければ知らせは残る
@@ -335,6 +389,8 @@ public class IndexActor internal constructor(
         saved = snapshot
         awaitingSave.clear()
         statusFlow.value = statusFlow.value.copy(unsaved = false, lastSavedAt = now)
+        // 保存を観測できるようにする（release-test がプロセスを止める前に待つ）。件数も識別子も出さない
+        Log.i(SYNC_TAG, "索引を保存した")
     }
 
     private sealed class Message {
@@ -378,6 +434,10 @@ public class IndexActor internal constructor(
     /** 作り方。 */
     public companion object {
         private const val TAG = "PiuIndex"
+
+        // 0.2.0 の同期と同じタグ。release-test と計測が logcat で読む
+        private const val SYNC_TAG = "PiuIndexSync"
+        private const val NANOS_PER_MILLI = 1_000_000L
 
         /** 製品の索引の DB のファイルの名前。バックアップと端末間の転送から外す（app の backup の規則）。 */
         public const val FILE_NAME: String = "index.db"

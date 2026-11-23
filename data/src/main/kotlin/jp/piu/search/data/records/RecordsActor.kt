@@ -291,18 +291,29 @@ public class RecordsActor internal constructor(
         // DB のファイルの絶対パス → 動いている書き手
         private val writers = HashMap<String, RecordsActor>()
 
+        /** 製品の記録の DB のファイルの名前。0.2.0 の DB と同じファイルで、版 6 以前なら最初の読み込みで版 7 へ移行する。 */
+        public const val FILE_NAME: String = "piu.db"
+
         /**
-         * アプリの `databases` の下の記録の DB [name] を開き、その書き手を作る。版 6 以前の DB なら、最初の読み込みで版 7 へ移行する。
-         * 製品の `piu.db` への切り替えは別に行うので、名前は呼ぶ側が決める。
+         * アプリの `databases` の下の記録の DB（[FILE_NAME]）を開き、その書き手を作る。
+         * ファイルの名前は受けない（[IndexActor][jp.piu.search.data.index.IndexActor] と同じく、DB を取り違えて開かないため）。
          *
          * 同じ DB の書き手がまだ動いていれば [IllegalStateException] を投げる（同じ DB に 2 つの書き手を作らないため）。
-         * [scope] を取り消して書き手が止まると、DB を閉じ、同じ名前でまた作れるようになる。
+         * [scope] を取り消して書き手が止まると、DB を閉じ、また作れるようになる。
          *
          * @param scope 書き手の寿命。アプリの寿命の scope を渡す。取り消すと、始めていない頼みは取り消しになる
          * @param profiles プロファイルの存在の問い合わせ
          * @param dispatcher 書き手を動かす Dispatcher。保存先と問い合わせはここで呼ぶ（ファイルと binder に触れるので、画面のスレッドにしない）
          */
         public fun open(
+            context: Context,
+            scope: CoroutineScope,
+            profiles: ProfileProbe = DeviceProfileProbe(context),
+            dispatcher: CoroutineContext = Dispatchers.IO,
+        ): RecordsActor = open(context, FILE_NAME, scope, profiles, dispatcher)
+
+        /** 名前 [name] の記録の DB で [open] する。テストだけが、製品と別の名前で使う。 */
+        internal fun open(
             context: Context,
             name: String,
             scope: CoroutineScope,

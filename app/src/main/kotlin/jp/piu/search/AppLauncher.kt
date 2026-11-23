@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.LauncherApps
 import android.net.Uri
 import android.os.Process
+import android.os.UserHandle
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
@@ -33,22 +34,26 @@ class PreparedLaunch internal constructor(
  *
  * 仕事用プロファイルのアプリも同じ方法で開けるよう、`LauncherApps.startMainActivity` を使う。
  * 一時停止中の仕事用アプリは、OS が再開の確認を出してから開く（ui.md の「仕事用プロファイル」）。
+ *
+ * @param userFor シリアル番号からプロファイルの識別子を引く（[ProfileUsers.userFor]）。消えたプロファイルなら null
  */
 class AppLauncher(
     context: Context,
-    private val users: ProfileUsers,
-) {
+    private val userFor: (Long) -> UserHandle?,
+) : Launcher {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val userManager = context.getSystemService(UserManager::class.java)
 
     /**
-     * [app] を開く準備。保存を始める前に呼び、選んだプロファイルだけの一時停止を調べる。
+     * [app] を開く準備。保存を始める前に呼び、選んだプロファイルだけの一時停止を調べる（記録するかは準備の時点で決める）。
      * 再開の確認は取り消されても結果が返らないため、その要求は学習にも起動回数にも数えない（learning.md）。
+     * 起動先は OS に渡す直前に、固定したシリアル番号から引き直す（保存を待つ間にプロファイルが消えたら、開かずに失敗にする）。
      */
-    fun prepare(app: AppId): PreparedLaunch {
-        val user = users.userFor(app.profileSerial)
-        val paused = user != null && user != Process.myUserHandle() && userManager.isQuietModeEnabled(user)
+    override fun prepare(app: AppId): PreparedLaunch {
+        val prepared = userFor(app.profileSerial)
+        val paused = prepared != null && prepared != Process.myUserHandle() && userManager.isQuietModeEnabled(prepared)
         return PreparedLaunch(recordsChoice = !paused) {
+            val user = userFor(app.profileSerial)
             if (user == null) {
                 false
             } else {
@@ -78,7 +83,7 @@ class AppLauncher(
         app: AppId,
         from: Activity,
     ): Boolean {
-        val user = users.userFor(app.profileSerial) ?: return false
+        val user = userFor(app.profileSerial) ?: return false
         return try {
             if (user == Process.myUserHandle()) {
                 from.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.packageName, null)))

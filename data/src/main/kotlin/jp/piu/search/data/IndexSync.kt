@@ -34,13 +34,13 @@ import java.util.concurrent.Executors
 /**
  * 索引の受け取り手。索引を差し替えるたびに、保存後の共通の書き手から呼ばれる。
  */
-public fun interface IndexListener {
+internal fun interface IndexListener {
     /** 新しい索引 [index] に差し替えた。 */
     public fun onIndexChanged(index: SearchIndex)
 }
 
 /** 同期で取った方法（[SyncReport.mode]）。 */
-public enum class SyncMode {
+internal enum class SyncMode {
     /** 保存した索引がない・索引の版か端末の言語・OS のビルドが変わった。すべての入口を作り直した。 */
     FULL_REBUILD,
 
@@ -52,7 +52,7 @@ public enum class SyncMode {
 }
 
 /** 最後の同期の結果（architecture.md の「知らせ」）。上から最初に当てはまるもの。 */
-public enum class SyncOutcome {
+internal enum class SyncOutcome {
     /** 同期全体の失敗。何も更新できなかった。 */
     FAILED,
 
@@ -74,7 +74,7 @@ public enum class SyncOutcome {
  * @property deterministic 決定的
  * @property suspectedBug 不具合の疑い
  */
-public data class IssueCounts(
+internal data class IssueCounts(
     val transient: Int = 0,
     val retryPending: Int = 0,
     val deterministic: Int = 0,
@@ -114,7 +114,7 @@ public data class IssueCounts(
  * @property archivedPackages 同期の後の索引の、アーカイブ済みの組の数（保存した `archived` から数える）
  * @property failureCauses この同期で起きた失敗の理由ごとの件数（欠けの行を書いた段・プロファイル・ジャンル）
  */
-public data class SyncReport(
+internal data class SyncReport(
     val mode: SyncMode,
     val rebuiltApps: Int,
     val removedPackages: Int,
@@ -157,7 +157,7 @@ public data class SyncReport(
  * 読んだ組は成否によらず一覧の観測（入口の集合・アーカイブ済みか・鍵）と欠けの行を書き、鍵が変わるまで読み直さない
  * （architecture.md の「読み直しの規則」）。一覧にある入口は、詳細やキーの生成が失敗しても必ず索引に入れる。
  */
-public class IndexSync internal constructor(
+internal class IndexSync internal constructor(
     private val store: IndexStore,
     private val device: DeviceApps,
     generatorFactory: () -> SearchKeyGenerator,
@@ -916,7 +916,7 @@ internal const val MAX_SYNC_ATTEMPTS = 5
 internal class SyncNotSettledException : IllegalStateException("同期の前提が変わり続け、保存できなかった")
 
 /** 検索画面に知らせる同期の失敗（architecture.md の「知らせ」）。組の欠けとジャンルの失敗はここに入れない。 */
-public enum class SyncFailure {
+internal enum class SyncFailure {
     /** 最後に終わった同期で、あるプロファイルの一覧か詳細の問い合わせが例外になった。どれかは [SyncReport.failedProfiles]。 */
     PROFILE,
 
@@ -930,7 +930,7 @@ public enum class SyncFailure {
  * @property lastResult 最後に終わった同期。同期全体が失敗しても、その前の結果を保つ
  * @property failure 最後の失敗。次に終わった同期で、条件がなければ消える
  */
-public data class IndexSyncStatus(
+internal data class IndexSyncStatus(
     val running: Boolean = false,
     val lastResult: SyncReport? = null,
     val failure: SyncFailure? = null,

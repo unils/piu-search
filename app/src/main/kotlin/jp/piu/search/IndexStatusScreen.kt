@@ -37,10 +37,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import jp.piu.search.data.IssueCategory
-import jp.piu.search.data.MaterialStage
-import jp.piu.search.data.ProfileReadStatus
-import jp.piu.search.data.SyncOutcome
+import jp.piu.search.core.state.IssueCategory
+import jp.piu.search.core.state.ListingStatus
+import jp.piu.search.core.state.Stage
 
 /** テストから「索引の状態」の画面を探すための印。 */
 const val INDEX_STATUS_TAG = "index_status"
@@ -354,39 +353,39 @@ fun profileName(role: ProfileRole): String =
     }
 
 @StringRes
-private fun outcomeText(outcome: SyncOutcome?): Int =
+private fun outcomeText(outcome: LastSyncResult?): Int =
     when (outcome) {
-        SyncOutcome.OK -> R.string.index_status_outcome_ok
-        SyncOutcome.ISSUES -> R.string.index_status_outcome_issues
-        SyncOutcome.PARTIAL -> R.string.index_status_outcome_partial
-        SyncOutcome.FAILED -> R.string.index_status_outcome_failed
+        LastSyncResult.OK -> R.string.index_status_outcome_ok
+        LastSyncResult.ISSUES -> R.string.index_status_outcome_issues
+        LastSyncResult.PARTIAL -> R.string.index_status_outcome_partial
+        LastSyncResult.FAILED -> R.string.index_status_outcome_failed
         null -> R.string.index_status_not_yet
     }
 
 @StringRes
-private fun profileText(status: ProfileReadStatus): Int =
+private fun profileText(status: ListingStatus): Int =
     when (status) {
-        ProfileReadStatus.COMPLETE -> R.string.index_status_profile_complete
-        ProfileReadStatus.UNAVAILABLE -> R.string.index_status_profile_unavailable
-        ProfileReadStatus.FAILED -> R.string.index_status_profile_failed
+        ListingStatus.COMPLETE -> R.string.index_status_profile_complete
+        ListingStatus.UNAVAILABLE -> R.string.index_status_profile_unavailable
+        ListingStatus.FAILED -> R.string.index_status_profile_failed
     }
 
 @StringRes
-private fun stageText(stage: MaterialStage): Int =
+private fun stageText(stage: Stage): Int =
     when (stage) {
-        MaterialStage.ENTRY -> R.string.index_status_stage_entry
-        MaterialStage.LABEL -> R.string.index_status_stage_label
-        MaterialStage.SIGNER -> R.string.index_status_stage_signer
-        MaterialStage.KEYS -> R.string.index_status_stage_keys
+        Stage.ENTRY -> R.string.index_status_stage_entry
+        Stage.LABEL -> R.string.index_status_stage_label
+        Stage.SIGNER -> R.string.index_status_stage_signer
+        Stage.KEYS -> R.string.index_status_stage_keys
     }
 
 @StringRes
-private fun effectText(stage: MaterialStage): Int =
+private fun effectText(stage: Stage): Int =
     when (stage) {
-        MaterialStage.ENTRY -> R.string.index_status_effect_entry
-        MaterialStage.LABEL -> R.string.index_status_effect_label
-        MaterialStage.SIGNER -> R.string.index_status_effect_signer
-        MaterialStage.KEYS -> R.string.index_status_effect_keys
+        Stage.ENTRY -> R.string.index_status_effect_entry
+        Stage.LABEL -> R.string.index_status_effect_label
+        Stage.SIGNER -> R.string.index_status_effect_signer
+        Stage.KEYS -> R.string.index_status_effect_keys
     }
 
 /** 設定の「索引の状態」の 1 行の要約（例:「182 個のアプリ・問題なし」）。 */

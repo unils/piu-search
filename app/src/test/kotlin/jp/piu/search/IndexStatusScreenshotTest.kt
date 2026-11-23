@@ -11,15 +11,14 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
-import jp.piu.search.IndexStatusFixtures.MIXED_INDEX
+import jp.piu.search.IndexStatusFixtures.MIXED_APPS
 import jp.piu.search.IndexStatusFixtures.MIXED_ISSUES
 import jp.piu.search.IndexStatusFixtures.PERSONAL
 import jp.piu.search.IndexStatusFixtures.WORK
-import jp.piu.search.IndexStatusFixtures.report
-import jp.piu.search.data.IndexSyncStatus
-import jp.piu.search.data.IssueCounts
-import jp.piu.search.data.PackageKey
-import jp.piu.search.data.ProfileReadStatus
+import jp.piu.search.IndexStatusFixtures.snapshot
+import jp.piu.search.IndexStatusFixtures.writer
+import jp.piu.search.core.state.ListingStatus
+import jp.piu.search.core.state.PackageKey
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -144,23 +143,20 @@ class IndexStatusScreenshotTest {
 
         val OK: IndexStatus =
             IndexStatus.of(
-                MIXED_INDEX,
-                emptyList(),
-                SAVED_AT_MILLIS,
-                IndexSyncStatus(lastResult = report(PERSONAL to ProfileReadStatus.COMPLETE, WORK to ProfileReadStatus.COMPLETE)),
+                snapshot(MIXED_APPS, listings = mapOf(PERSONAL to ListingStatus.COMPLETE, WORK to ListingStatus.COMPLETE)),
+                writer(lastSavedAt = SAVED_AT_MILLIS),
                 PERSONAL,
             )
 
         val ISSUES: IndexStatus =
             IndexStatus.of(
-                MIXED_INDEX,
-                MIXED_ISSUES,
-                SAVED_AT_MILLIS,
-                IndexSyncStatus(
-                    lastResult =
-                        report(PERSONAL to ProfileReadStatus.COMPLETE, WORK to ProfileReadStatus.UNAVAILABLE, archived = 1)
-                            .copy(issueCounts = IssueCounts(transient = 2, retryPending = 1, deterministic = 1, suspectedBug = 1)),
+                snapshot(
+                    MIXED_APPS,
+                    MIXED_ISSUES,
+                    mapOf(PERSONAL to ListingStatus.COMPLETE, WORK to ListingStatus.UNAVAILABLE),
+                    archived = 1,
                 ),
+                writer(lastSavedAt = SAVED_AT_MILLIS),
                 PERSONAL,
             )
     }

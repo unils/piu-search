@@ -4,7 +4,6 @@ package jp.piu.search
 
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.content.pm.LauncherApps
 import android.graphics.Rect
 import android.os.Bundle
@@ -16,15 +15,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.IndexedApp
 import jp.piu.search.core.search.LearnedPair
-import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.search.SearchIndex
-import jp.piu.search.core.search.SearchKey
-import jp.piu.search.core.search.SearchKeyKind
 import jp.piu.search.core.text.NormalizedText
-import jp.piu.search.data.LocalDatabase
+import jp.piu.search.data.records.RecordsActor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -37,13 +32,11 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowLauncherApps
 import org.robolectric.shadows.ShadowToast
-import org.robolectric.shadows.ShadowUserManager
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
-// OS へ渡す瞬間と保存の待機を分け、画面の寿命が変わっても古い完了で閉じないことを確かめる。
+// 本物の画面・記録の書き手（piu.db）・OS への要求で、保存と起動の順序と、画面の寿命が変わっても古い完了で閉じないことを確かめる。
+// 判断の細部（呼び直し・連打・失敗・一時停止）は SearchViewModelTest が偽の部品で確かめる
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [28, 37], qualifiers = "ja-rJP", shadows = [OpenFlowTest.LauncherShadow::class])
+@Config(sdk = [28, 37], qualifiers = "ja-rJP", application = TestApplication::class, shadows = [OpenFlowTest.LauncherShadow::class])
 class OpenFlowTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val container get() = context.appContainer
@@ -52,8 +45,8 @@ class OpenFlowTest {
 
     @Before
     fun prepare() {
-        container.settings.dismissOnboarding()
         shadowOf(context.getSystemService(UserManager::class.java)).setSerialNumberForUser(android.os.Process.myUserHandle(), 0)
+        container.settings.dismissOnboarding()
         LauncherShadow.onLaunch = {
             launches++
             duringLaunch()
@@ -66,74 +59,37 @@ class OpenFlowTest {
         Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
             ready(scenario)
             duringLaunch = {
+                // 学習と起動の記録は、OS に頼む前に同じトランザクションで書けている
                 assertEquals(1, savedInt("launch_stat", "launch_count"))
                 assertEquals(1, savedInt("learned", "rescued"))
-                assertEquals(
-                    1,
-                    container.launchHistory.history.records
-                        .getValue(APP)
-                        .count,
-                )
-                assertTrue(
-                    container.learning.memory.records
-                        .getValue(PAIR)
-                        .rescued,
-                )
                 assertEquals(0, ShadowToast.shownToastCount())
             }
-            withSavingPaused {
+            TestHooks.pause {
                 choose(scenario)
                 assertEquals(0, launches)
-                assertEquals(0, ShadowToast.shownToastCount())
-                scenario.onActivity { assertFalse(it.isFinishing) }
+                scenario.get().let { assertFalse(it.isFinishing) }
             }
-            drain()
+            TestHooks.drain(container)
             assertEquals(1, launches)
             assertTrue(ShadowToast.getTextOfLatestToast().contains("「おかね」で アプリ を出すようにしました"))
-            scenario.onActivity { assertTrue(it.isFinishing) }
-            assertFalse(container.openRecordFailed)
+            assertTrue(scenario.get().isFinishing)
+            assertFalse(container.openRecordFailed.value)
         }
     }
 
     @Test
-    fun failedLearningSaveStillLaunchesWithoutALearnedToast() {
-        assertFailedSave("learned")
-    }
-
-    @Test
-    fun failedHistorySaveStillLaunchesWithoutALearnedToast() {
-        assertFailedSave("launch_stat")
-    }
-
-    @Test
-    fun newIntentWhileSavingKeepsTheNewSearchAndTheOriginalDecision() {
+    fun aFailedSaveWritesNeitherRecordAndStillLaunchesWithoutALearnedToast() {
         Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
             ready(scenario)
-            withSavingPaused {
-                choose(scenario)
-                scenario.onActivity {
-                    newIntent(it)
-                    controller(it).onQueryChange("あたらしい")
-                    controller(it).onIndexChanged(SearchIndex(listOf(IndexedApp(APP, "変わった名前", emptyList()))))
-                }
-            }
-            drain()
-            scenario.onActivity {
-                assertFalse(it.isFinishing)
-                assertEquals("あたらしい", controller(it).query)
-            }
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-            assertEquals(
-                "アプリ",
-                container.learning
-                    .pendingNotices
-                    .single()
-                    .label,
-            )
+            // 起動の記録の行を書くところで失敗させる。学習も同じトランザクションなので残らない（片方だけの保存がない）
+            sql("CREATE TRIGGER reject_launch BEFORE INSERT ON launch_stat BEGIN SELECT RAISE(ABORT, '保存できない'); END")
+            choose(scenario)
+            TestHooks.drain(container)
+            assertEquals(1, launches)
+            assertEquals(0, ShadowToast.shownToastCount())
+            assertTrue(container.openRecordFailed.value)
+            assertEquals(0, count("learned"))
+            assertTrue(scenario.get().isFinishing)
         }
     }
 
@@ -141,207 +97,25 @@ class OpenFlowTest {
     fun recreationWhileSavingDoesNotCloseTheRecreatedScreenOrLoseTheDecision() {
         Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
             ready(scenario)
-            withSavingPaused {
+            TestHooks.pause {
                 choose(scenario)
                 scenario.recreate()
             }
-            drain()
-            scenario.onActivity { assertFalse(it.isFinishing) }
+            TestHooks.drain(container)
+            assertFalse(scenario.get().isFinishing)
             assertEquals(1, launches)
             assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
+                container.records.state.value.records
+                    ?.learned
+                    ?.records
+                    ?.getValue(PAIR)
+                    ?.rescued == true,
             )
-        }
-    }
-
-    @Test
-    fun successfulLaunchAfterRecreationAllowsAnotherChoiceOnReturn() {
-        val other = AppId("io.example.other", "Main", 0)
-        val index = SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()), IndexedApp(other, "別のアプリ", emptyList())))
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario, index)
-            duringLaunch = { scenario.pause().stop() }
-            withSavingPaused {
-                choose(scenario)
-                scenario.recreate()
-            }
-            drain()
-            assertEquals(1, launches)
-            assertFalse(scenario.get().isFinishing)
-
-            scenario.start().resume().visible()
-            ready(scenario, index)
-            duringLaunch = {}
-            open(scenario.get(), controller(scenario.get()).openRequest(other))
-            drain()
-
-            assertEquals(2, launches)
-            assertEquals(
-                1,
-                container.launchHistory.history.records
-                    .getValue(other)
-                    .count,
-            )
-            assertTrue(scenario.get().isFinishing)
-        }
-    }
-
-    @Test
-    fun failedLaunchAfterRecreationRestartsTheVisibleSessionAndAllowsRetry() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            duringLaunch = { throw android.content.ActivityNotFoundException() }
-            withSavingPaused {
-                choose(scenario)
-                scenario.recreate()
-            }
-            drain()
-            assertEquals(1, launches)
-            assertFalse(scenario.get().isFinishing)
-            assertTrue(tracker(controller(scenario.get())).size > 0)
-
-            duringLaunch = {}
+            // 戻った画面で別のアプリも選べる
             choose(scenario)
-            drain()
+            TestHooks.drain(container)
             assertEquals(2, launches)
             assertTrue(scenario.get().isFinishing)
-        }
-    }
-
-    @Test
-    fun anotherTapOnTheFinishingScreenCannotRecordOrLaunchAgain() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            choose(scenario)
-            drain()
-            assertTrue(scenario.get().isFinishing)
-            choose(scenario)
-            drain()
-            assertEquals(1, launches)
-            assertEquals(
-                1,
-                container.launchHistory.history.records
-                    .getValue(APP)
-                    .count,
-            )
-        }
-    }
-
-    @Test
-    fun failedLaunchWhileStoppedDoesNotRestartInputOrReadingUntilReturning() {
-        val query = "送金"
-        val index = SearchIndex(listOf(IndexedApp(APP, "アプリ", listOf(SearchKey(NormalizedText(query), SearchKeyKind.NAME)))))
-        val readingStarted = CountDownLatch(1)
-        val releaseReading = CountDownLatch(1)
-        try {
-            Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-                ready(scenario, index)
-                container.queryExecutor.execute {
-                    readingStarted.countDown()
-                    check(releaseReading.await(10, TimeUnit.SECONDS))
-                }
-                check(readingStarted.await(10, TimeUnit.SECONDS))
-                container.analyzer.release()
-                controller(scenario.get()).onQueryChange(query)
-                assertEquals(APP, controller(scenario.get()).topResult)
-                duringLaunch = { throw android.content.ActivityNotFoundException() }
-                withSavingPaused {
-                    open(scenario.get(), controller(scenario.get()).openRequest(APP))
-                    scenario.pause().stop()
-                    assertEquals(0, tracker(controller(scenario.get())).size)
-                }
-                drain()
-                releaseReading.countDown()
-                container.queryExecutor.submit {}.get(10, TimeUnit.SECONDS)
-                shadowOf(Looper.getMainLooper()).idle()
-
-                assertEquals(1, launches)
-                assertFalse(scenario.get().isFinishing)
-                assertEquals(0 to false, tracker(controller(scenario.get())).size to container.analyzer.isLoaded)
-
-                scenario.start().resume().visible()
-                shadowOf(Looper.getMainLooper()).idle()
-                container.queryExecutor.submit {}.get(10, TimeUnit.SECONDS)
-                shadowOf(Looper.getMainLooper()).idle()
-                assertTrue(tracker(controller(scenario.get())).size > 0)
-                assertTrue(container.analyzer.isLoaded)
-            }
-        } finally {
-            releaseReading.countDown()
-        }
-    }
-
-    @Test
-    fun rotationKeepsTheQueryAndSessionAndRecordsTheEarlierFailedAttempt() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            val before = controller(scenario.get())
-            before.showAllApps(false)
-            before.onQueryChange("paypay")
-            scenario.recreate()
-            assertSame(before, controller(scenario.get()))
-            assertEquals("paypay", controller(scenario.get()).query)
-            open(scenario.get(), OpenRequest(APP, OpenRoute.SEARCH_RESULT, "paypay"))
-            drain()
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-        }
-    }
-
-    @Test
-    fun stoppingWhileSavingDoesNotLoseTheDecision() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            withSavingPaused {
-                choose(scenario)
-                scenario.pause().stop()
-            }
-            drain()
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-            assertEquals(1, launches)
-        }
-    }
-
-    @Test
-    fun newIntentDuringTheOsLaunchIsAlsoProtectedFromTheOldFinish() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            scenario.onActivity { activity ->
-                duringLaunch = {
-                    newIntent(activity)
-                    controller(activity).onQueryChange("べつ")
-                }
-            }
-            choose(scenario)
-            drain()
-            scenario.onActivity {
-                assertFalse(it.isFinishing)
-                assertEquals("べつ", controller(it).query)
-            }
-        }
-    }
-
-    @Test
-    fun recreationDuringTheOsLaunchKeepsTheRecreatedScreen() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            duringLaunch = { scenario.recreate() }
-            choose(scenario)
-            drain()
-            assertEquals(1, launches)
-            scenario.onActivity {
-                assertFalse(it.isFinishing)
-                assertEquals("おかね", controller(it).query)
-            }
         }
     }
 
@@ -351,314 +125,72 @@ class OpenFlowTest {
             ready(scenario)
             duringLaunch = { scenario.pause().stop() }
             choose(scenario)
-            drain()
+            TestHooks.drain(container)
             assertEquals(1, launches)
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-            scenario.onActivity { assertTrue(it.isFinishing) }
+            assertEquals(1, count("learned"))
+            assertTrue(scenario.get().isFinishing)
         }
     }
 
     @Test
-    fun repeatedTapsWhileSavingOnlyRecordAndLaunchOnce() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            withSavingPaused {
-                choose(scenario)
-                choose(scenario)
-            }
-            drain()
-            assertEquals(1, launches)
-            assertEquals(
-                1,
-                container.launchHistory.history.records
-                    .getValue(APP)
-                    .count,
-            )
-            assertEquals(
-                1,
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .count,
-            )
-        }
-    }
-
-    @Test
-    fun pausedWorkRequestDoesNotCountOrLearnEvenWhenOsReturnsNormally() {
-        pauseWorkProfile()
-        val work = APP.copy(profileSerial = 10)
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            choose(scenario, work)
-            drain()
-            assertEquals(1, launches)
-            assertTrue(
-                container.launchHistory.history.records
-                    .isEmpty(),
-            )
-            assertTrue(
-                container.learning.memory.records
-                    .isEmpty(),
-            )
-            assertEquals(0, ShadowToast.shownToastCount())
-        }
-    }
-
-    @Test
-    fun anotherPausedProfileDoesNotExcludeThePersonalChoice() {
-        pauseWorkProfile()
+    fun anotherTapOnTheFinishingScreenCannotRecordOrLaunchAgain() {
         Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
             ready(scenario)
             choose(scenario)
-            drain()
-            assertEquals(1, launches)
-            assertEquals(
-                1,
-                container.launchHistory.history.records
-                    .getValue(APP)
-                    .count,
-            )
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-        }
-    }
-
-    @Test
-    fun pausedWorkRequestDoesNotRefreshAnExistingLearnedKey() {
-        pauseWorkProfile()
-        val work = APP.copy(profileSerial = 10)
-        val learned = PAIR.copy(app = work)
-        container.learning.record(LearningDecision(null, listOf(learned)), System.currentTimeMillis() - 1_000) { "仕事用アプリ" }
-        container.learning.awaitIdle()
-        container.learning.pendingNotices.forEach(container.learning::consumeNotice)
-        val before = container.learning.memory.records
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            scenario.onActivity { activity ->
-                open(activity, OpenRequest(work, OpenRoute.SEARCH_RESULT, "おか", learnedPair = learned))
-            }
-            drain()
-            assertEquals(1, launches)
-            assertEquals(before, container.learning.memory.records)
-            assertTrue(
-                container.launchHistory.history.records
-                    .isEmpty(),
-            )
-            assertEquals(0, ShadowToast.shownToastCount())
-        }
-    }
-
-    @Test
-    fun activeWorkRequestRecordsTheChoiceBeforeLaunching() {
-        addWorkProfile()
-        val work = APP.copy(profileSerial = 10)
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            duringLaunch = {
-                assertEquals(
-                    1,
-                    container.launchHistory.history.records
-                        .getValue(work)
-                        .count,
-                )
-                assertEquals(
-                    1,
-                    container.learning.memory.records
-                        .getValue(PAIR.copy(app = work))
-                        .count,
-                )
-            }
-            choose(scenario, work, OpenRoute.SEARCH_RESULT)
-            drain()
-            assertEquals(1, launches)
-            scenario.onActivity { assertTrue(it.isFinishing) }
-        }
-    }
-
-    @Test
-    fun failedOsLaunchKeepsSavedChoicesWithoutALearnedToastAndAllowsRetry() {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            duringLaunch = { throw android.content.ActivityNotFoundException() }
+            TestHooks.drain(container)
+            assertTrue(scenario.get().isFinishing)
             choose(scenario)
-            drain()
-            scenario.onActivity { assertFalse(it.isFinishing) }
-            assertEquals(
-                1,
-                container.launchHistory.history.records
-                    .getValue(APP)
-                    .count,
-            )
-            assertTrue(
-                container.learning.memory.records
-                    .getValue(PAIR)
-                    .rescued,
-            )
-            assertEquals(context.getString(R.string.launch_failed, "アプリ"), ShadowToast.getTextOfLatestToast())
-            duringLaunch = {}
-            choose(scenario)
-            drain()
-            assertEquals(2, launches)
+            TestHooks.drain(container)
+            assertEquals(1, launches)
+            assertEquals(1, savedInt("launch_stat", "launch_count"))
         }
     }
 
-    private fun assertFailedSave(table: String) {
-        Robolectric.buildActivity(SearchActivity::class.java).setup().use { scenario ->
-            ready(scenario)
-            sql("CREATE TRIGGER r2_reject_insert BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, '保存できない'); END")
-            try {
-                choose(scenario)
-                drain()
-                assertEquals(1, launches)
-                assertEquals(0, ShadowToast.shownToastCount())
-                scenario.onActivity { assertTrue(it.isFinishing) }
-                // 画面は閉じるので、次に開いたときに控えめに知らせる印が残る
-                assertTrue(container.openRecordFailed)
-                if (table == "learned") {
-                    assertTrue(
-                        container.learning.memory.records
-                            .isEmpty(),
-                    )
-                    assertEquals(
-                        1,
-                        container.launchHistory.history.records
-                            .getValue(APP)
-                            .count,
-                    )
-                } else {
-                    assertTrue(
-                        container.launchHistory.history.records
-                            .isEmpty(),
-                    )
-                    assertTrue(
-                        container.learning.memory.records
-                            .getValue(PAIR)
-                            .rescued,
-                    )
-                    assertEquals(
-                        PAIR,
-                        container.learning
-                            .pendingNotices
-                            .single()
-                            .pair,
-                    )
-                }
-            } finally {
-                sql("DROP TRIGGER r2_reject_insert")
-            }
-        }
-    }
-
-    private fun ActivityController<SearchActivity>.onActivity(action: (SearchActivity) -> Unit) {
-        action(get())
-    }
-
-    private fun pauseWorkProfile() {
-        val work = addWorkProfile(paused = true)
-        assertTrue(context.getSystemService(UserManager::class.java).isQuietModeEnabled(work))
-    }
-
-    private fun addWorkProfile(paused: Boolean = false): UserHandle {
-        val users = context.getSystemService(UserManager::class.java)
-        val work = UserHandle.getUserHandleForUid(1_000_000)
-        // Robolectric 4.17 の再開・停止要求は API 29 以降だけなので、API 28 でも停止済みの条件を直接作る。
-        val quietFlag = if (paused) Class.forName("android.content.pm.UserInfo").getField("FLAG_QUIET_MODE").getInt(null) else 0
-        shadowOf(users).addProfile(0, 10, "仕事用", ShadowUserManager.FLAG_MANAGED_PROFILE or quietFlag)
-        shadowOf(users).setSerialNumberForUser(work, 10)
-        return work
-    }
-
-    private fun ready(
-        scenario: ActivityController<SearchActivity>,
-        index: SearchIndex = SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList()))),
-    ) {
-        container.learning.awaitIdle()
-        shadowOf(Looper.getMainLooper()).idle()
-        scenario.onActivity {
-            controller(it).onIndexChanged(index)
-        }
-        shadowOf(Looper.getMainLooper()).idle()
-        container.derivedIndexExecutor.submit {}.get(10, TimeUnit.SECONDS)
-        shadowOf(Looper.getMainLooper()).idle()
-        scenario.onActivity {
-            controller(it).onQueryChange("おかね")
-            controller(it).showAllApps(true)
+    private fun ready(scenario: ActivityController<SearchActivity>) {
+        TestHooks.drain(container)
+        TestHooks.index.searchIndex.value = SearchIndex(listOf(IndexedApp(APP, "アプリ", emptyList())))
+        val vm = viewModel(scenario.get())
+        vm.onQueryChange("おかね")
+        vm.showAllApps(true)
+        // 派生の索引は裏のスレッドで作り、画面のスレッドで当てる。行が出るまで待つ
+        val until = System.currentTimeMillis() + TIMEOUT_MILLIS
+        while ((vm.uiState.value.content as? SearchContent.AllApps)?.rows?.any { it.app == APP } != true) {
+            check(System.currentTimeMillis() < until) { "行が出ない" }
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(SPIN_MILLIS)
         }
         ShadowToast.reset()
     }
 
-    private fun choose(
-        scenario: ActivityController<SearchActivity>,
-        app: AppId = APP,
-        route: OpenRoute = OpenRoute.ALL_APPS,
-    ) {
-        scenario.onActivity { activity ->
-            open(activity, OpenRequest(app, route, "おかね"))
-        }
-    }
-
-    private fun open(
-        activity: SearchActivity,
-        request: OpenRequest,
-    ) {
-        SearchActivity::class.java
-            .getDeclaredMethod(
-                "open",
-                OpenRequest::class.java,
-            ).apply { isAccessible = true }
-            .invoke(activity, request)
-    }
-
-    private fun newIntent(activity: SearchActivity) {
-        SearchActivity::class.java
-            .getDeclaredMethod("onNewIntent", Intent::class.java)
-            .apply { isAccessible = true }
-            .invoke(activity, Intent(context, SearchActivity::class.java).setAction(Intent.ACTION_ASSIST))
-    }
-
-    private fun controller(activity: SearchActivity): SearchController =
-        SearchActivity::class.java
-            .getDeclaredField("controller")
-            .apply { isAccessible = true }
-            .get(activity) as SearchController
-
-    private fun tracker(controller: SearchController): SessionTracker =
-        SearchController::class.java
-            .getDeclaredField("tracker")
-            .apply { isAccessible = true }
-            .get(controller) as SessionTracker
-
-    private fun withSavingPaused(action: () -> Unit) {
-        val release = CountDownLatch(1)
-        container.learning.runAfterPending { check(release.await(10, TimeUnit.SECONDS)) }
-        try {
-            action()
-        } finally {
-            release.countDown()
-        }
-    }
-
-    private fun drain() {
-        container.learning.awaitIdle()
+    private fun choose(scenario: ActivityController<SearchActivity>) {
+        // 画面の行を押したときと同じ製品の入口（閉じかけ・壊れかけの画面の確認を含む）
+        scenario.get().openApp(APP)
         shadowOf(Looper.getMainLooper()).idle()
     }
 
+    private fun viewModel(activity: SearchActivity): SearchViewModel =
+        SearchActivity::class.java
+            .getDeclaredField("viewModel")
+            .apply { isAccessible = true }
+            .get(activity) as SearchViewModel
+
     private fun sql(statement: String) {
-        context.openOrCreateDatabase(LocalDatabase.FILE_NAME, Context.MODE_PRIVATE, null).use { it.execSQL(statement) }
+        context.openOrCreateDatabase(RecordsActor.FILE_NAME, Context.MODE_PRIVATE, null).use { it.execSQL(statement) }
     }
+
+    private fun count(table: String): Int =
+        context.openOrCreateDatabase(RecordsActor.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
+            db.rawQuery("SELECT COUNT(*) FROM $table", null).use { cursor ->
+                cursor.moveToFirst()
+                cursor.getInt(0)
+            }
+        }
 
     private fun savedInt(
         table: String,
         column: String,
     ): Int =
-        context.openOrCreateDatabase(LocalDatabase.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
+        context.openOrCreateDatabase(RecordsActor.FILE_NAME, Context.MODE_PRIVATE, null).use { db ->
             db.rawQuery("SELECT $column FROM $table", null).use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 cursor.getInt(0)
@@ -684,6 +216,8 @@ class OpenFlowTest {
     }
 
     private companion object {
+        const val TIMEOUT_MILLIS = 10_000L
+        const val SPIN_MILLIS = 10L
         val APP = AppId("io.example.app", "Main", 0)
         val PAIR = LearnedPair(NormalizedText("おかね"), APP)
     }

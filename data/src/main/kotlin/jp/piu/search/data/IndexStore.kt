@@ -23,7 +23,7 @@ import jp.piu.search.data.db.SearchKeyRow
  * @property archived 読んだときの一覧でアーカイブ済みだったか
  * @property rebuildPending 作り直しの印。プロファイルが読めるようになったら必ず読み直す
  */
-public data class StoredApp(
+internal data class StoredApp(
     val app: IndexedApp,
     val packageUpdatedAt: Long?,
     val apkFingerprint: String? = null,
@@ -41,7 +41,7 @@ public data class StoredApp(
  * @property locales 索引を作ったときの端末の言語（`LocaleList.toLanguageTags` の形）。変わっていれば全件を作り直す
  * @property appVersionCode 保存したときの Piu Search の `versionCode`。今の版と違えば、欠けの行のある組を読み直す。0.1.x の索引は null
  */
-public data class SyncState(
+internal data class SyncState(
     val changeSequence: Int?,
     val bootCount: Int?,
     val locales: String,
@@ -55,7 +55,7 @@ public data class SyncState(
  * @property profileSerial プロファイルのシリアル番号
  * @property packageName パッケージ名
  */
-public data class PackageKey(
+internal data class PackageKey(
     val profileSerial: Long,
     val packageName: String,
 )
@@ -68,7 +68,7 @@ public data class PackageKey(
  * @property issues 材料の欠けの行
  * @property lastSavedAt 最後に保存できた同期の時刻（ミリ秒）。表示と報告のためだけ
  */
-public data class StoredIndex(
+internal data class StoredIndex(
     val apps: List<StoredApp>,
     val state: SyncState?,
     val issues: List<MaterialIssue> = emptyList(),
@@ -112,7 +112,7 @@ internal class IndexChange(
  *
  * @property indexVersion 今の索引の版（`SearchIndexVersion.CURRENT`）。保存した索引の版と違えば、読むときに状態を消し、全入口に作り直しの印を立てる
  */
-public class IndexStore internal constructor(
+internal class IndexStore internal constructor(
     private val database: PiuRoomDatabase,
     private val indexVersion: Int,
 ) {

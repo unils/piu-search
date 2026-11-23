@@ -14,7 +14,7 @@ import jp.piu.search.data.db.PiuRoomDatabase
 import java.util.concurrent.Callable
 
 /** 学習の保存先。保存が失敗したときは例外を返し、変更を残さない。 */
-public interface LearnedStorage {
+internal interface LearnedStorage {
     /** 保存した学習を読む。 */
     public fun load(): LearnedMemory
 
@@ -35,7 +35,7 @@ public interface LearnedStorage {
  * 学習の判定と積み方は `core:search`（[LearnedMemory]）が受け持ち、通常の保存では変わった組だけを書き写す。
  * 打った文字の列（セッションの出来事）は受け取らない（learning.md の「保存と持ち出し」）。
  */
-public class LearnedStore internal constructor(
+internal class LearnedStore internal constructor(
     private val database: PiuRoomDatabase,
     private val dao: LearnedDao = database.learnedDao(),
 ) : LearnedStorage {

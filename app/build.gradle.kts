@@ -189,6 +189,8 @@ dependencies {
     // Compose のテストが推移的に引く Espresso 3.5 は、新しい SDK にない InputManager.getInstance() を呼んで落ちる
     testImplementation(libs.androidx.test.espresso.core)
     testImplementation(libs.roborazzi)
+    // ViewModel と記録の書き手の流れを、仮想の時計の Dispatcher で順に進めるため
+    testImplementation(libs.kotlinx.coroutines.test)
     // 計器テスト（エミュレータの上）。Robolectric のテストと同じ道具で書く
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)

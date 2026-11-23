@@ -3,26 +3,18 @@
 package jp.piu.search
 
 import android.content.ActivityNotFoundException
-import android.content.ContentResolver
-import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import jp.piu.search.core.search.LearnedMemory
-import jp.piu.search.core.search.SearchIndex
-import jp.piu.search.data.IndexListener
-import java.io.ByteArrayOutputStream
-import java.io.IOException
+import jp.piu.search.core.state.RecordsFailure
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -36,21 +28,13 @@ import java.util.Locale
  * 選んだファイルにだけ一時的に読み書きを許されるので、権限は要らない。
  */
 class LearnedListActivity : ComponentActivity() {
-    private var memory by mutableStateOf<LearnedMemory?>(null)
-    private var index by mutableStateOf(SearchIndex.EMPTY)
-
     private lateinit var model: LearnedListViewModel
 
-    private val uiExecutor by lazy { ContextCompat.getMainExecutor(this) }
-
-    private val learningListener = LearningListener { next -> uiExecutor.execute { memory = next } }
-    private val indexListener = IndexListener { next -> uiExecutor.execute { index = next } }
-
     private val exportLauncher =
-        registerForActivityResult(ActivityResultContracts.CreateDocument(JSON_MIME)) { uri -> uri?.let(::exportTo) }
+        registerForActivityResult(ActivityResultContracts.CreateDocument(JSON_MIME)) { uri -> uri?.let { model.export(it) } }
 
     private val importLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFrom) }
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { model.import(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -60,20 +44,38 @@ class LearnedListActivity : ComponentActivity() {
             ViewModelProvider(
                 this,
                 viewModelFactory {
-                    initializer { LearnedListViewModel(container.backupOutcome, ContextCompat.getMainExecutor(applicationContext)) }
+                    initializer {
+                        LearnedListViewModel(
+                            container.recordsPort,
+                            container.indexPort,
+                            container.profiles.profiles,
+                            container.backupOutcome,
+                            container.learningTransfer,
+                            container.appScope,
+                        )
+                    }
                 },
             )[LearnedListViewModel::class.java]
         val dateFormat = DateFormat.getDateInstance(DateFormat.MEDIUM)
         setContent {
             PiuTheme {
+                val state by model.state.collectAsState()
                 LearnedListScreen(
-                    entries = memory?.let { learnedEntries(it, index, container.users.ownSerial) { at -> dateFormat.format(Date(at)) } },
-                    onDelete = { container.learning.remove(it.pair, ::reportFailure) },
-                    onClearAll = { container.learning.clear(::reportFailure) },
+                    entries =
+                        state.learning?.let {
+                            learnedEntries(
+                                it,
+                                state.index,
+                                state.ownSerial,
+                            ) { at -> dateFormat.format(Date(at)) }
+                        },
+                    onDelete = { model.delete(it.pair) },
+                    onClearAll = model::clearAll,
                     onExport = ::chooseExportFile,
                     onImport = ::chooseImportFile,
-                    message = model.outcome?.let(::messageOf),
-                    onMessageShown = model::messageShown,
+                    message = state.outcome?.let { ScreenMessage(it, messageOf(it.value)) },
+                    // 出し終えたのが今の結果のときだけ消費する（出している間に届いた新しい結果は残す）
+                    onMessageShown = { shown -> state.outcome?.takeIf { it === shown.key }?.let(model::messageShown) },
                 )
             }
         }
@@ -81,25 +83,7 @@ class LearnedListActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val container = appContainer
-        container.learning.addListener(learningListener)
-        container.indexSync.addListener(indexListener)
-        // 索引は表示名を引くためだけに使う。設定画面から先に開いたとき（OS のアプリ情報から来たなど）のために、読み込みを頼む
-        container.indexSync.requestSync()
-        index = container.indexSync.index
-        container.learning.requestLoad { result ->
-            reportFailure(result)
-            if (result is StorageResult.Success) {
-                val loaded = container.learning.memory
-                uiExecutor.execute { memory = loaded }
-            }
-        }
-    }
-
-    override fun onStop() {
-        appContainer.learning.removeListener(learningListener)
-        appContainer.indexSync.removeListener(indexListener)
-        super.onStop()
+        model.onScreenStarted()
     }
 
     private fun chooseExportFile() {
@@ -122,44 +106,10 @@ class LearnedListActivity : ComponentActivity() {
         }
     }
 
-    private fun exportTo(uri: Uri) {
-        val container = appContainer
-        // 裏のスレッドで使うので、この画面ではなくアプリの ContentResolver を持たせる（作り直した後も古い画面を握らない）
-        val resolver = applicationContext.contentResolver
-        container.learning.export(
-            profiles = container.users.backupProfiles(),
-            now = System.currentTimeMillis(),
-            write = { text ->
-                // 既にあるファイルを選んだときに、前の中身の後ろが残らないよう切り詰める
-                val stream = resolver.openOutputStream(uri, "wt") ?: throw IOException("書き出し先を開けない")
-                stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
-            },
-            // 結果は預かりの箱に入れる。この画面（this）に直接渡すと、終わる前に向きを変えたとき、作り直した画面に届かない
-            onDone = { count -> container.backupOutcome.post(BackupOutcome.Exported(count)) },
-        )
-    }
-
-    private fun importFrom(uri: Uri) {
-        val container = appContainer
-        val resolver = applicationContext.contentResolver
-        container.learning.import(
-            profiles = container.users.backupProfiles(),
-            now = System.currentTimeMillis(),
-            read = { readText(resolver, uri) },
-            onDone = { result -> container.backupOutcome.post(BackupOutcome.Imported(result)) },
-        )
-    }
-
-    private fun reportFailure(result: StorageResult<Unit>) {
-        if (result is StorageResult.Failure) appContainer.backupOutcome.post(BackupOutcome.Failed(result.reason))
-    }
-
     private fun messageOf(outcome: BackupOutcome): String =
         when (outcome) {
             is BackupOutcome.Failed -> {
-                getString(
-                    if (outcome.reason.operation == StorageOperation.LOAD) R.string.learned_load_failed else R.string.learned_save_failed,
-                )
+                getString(if (outcome.reason == RecordsFailure.NOT_LOADED) R.string.learned_load_failed else R.string.learned_save_failed)
             }
 
             is BackupOutcome.Exported -> {
@@ -170,12 +120,7 @@ class LearnedListActivity : ComponentActivity() {
             is BackupOutcome.Imported -> {
                 when (val result = outcome.result) {
                     is BackupReadResult.Success -> {
-                        resources.getQuantityString(
-                            R.plurals.learned_imported,
-                            result.records.size,
-                            result.records.size,
-                            result.skippedCount,
-                        )
+                        resources.getQuantityString(R.plurals.learned_imported, outcome.accepted, outcome.accepted, result.skippedCount)
                     }
 
                     is BackupReadResult.Failure -> {
@@ -187,26 +132,6 @@ class LearnedListActivity : ComponentActivity() {
 
     private companion object {
         const val JSON_MIME = "application/json"
-        const val BUFFER_BYTES = 16 * 1024
-
-        /** [uri] を UTF-8 で読む。[LearningBackup.MAX_BYTES] を超えたら、そこで止めて null を返す（動画などを選んでもメモリを食わない）。 */
-        fun readText(
-            resolver: ContentResolver,
-            uri: Uri,
-        ): String? {
-            val stream = resolver.openInputStream(uri) ?: throw IOException("ファイルを開けない")
-            return stream.use { input ->
-                val out = ByteArrayOutputStream()
-                val buffer = ByteArray(BUFFER_BYTES)
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    out.write(buffer, 0, n)
-                    if (out.size() > LearningBackup.MAX_BYTES) return null
-                }
-                out.toString(Charsets.UTF_8.name())
-            }
-        }
 
         fun failureText(reason: BackupFailure): Int =
             when (reason) {
