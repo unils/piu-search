@@ -93,7 +93,7 @@ YomiLauncher は英単語の読みの辞書（約 6.7 万語）を持つが、�
 - ジャンルの語はローマ字の経路でも引ける（`chizu`・`tenki` → 地図・天気のジャンル）
 - 「`category=`」は `ApplicationInfo.category`、「`CATEGORY_APP_`」はメイン Activity のカテゴリ。
 - `<queries>` は `MAIN`＋`LAUNCHER` だけにする（M2-04）。入口のあるパッケージが見えれば、ジャンルの intent の問い合わせにも出るので、ジャンルごとの宣言は足さない。
-- 未確認: 日本のアプリ（Yahoo!マップ・ジョルダンなど）が `geo:` やカテゴリを実際に宣言しているか。実機で `adb shell cmd package query-activities -a android.intent.action.VIEW -d geo:0,0` を試せば確かめられる。実機の試験（M6）の項目に入れる。
+- 未確認: 日本のアプリ（Yahoo!マップ・ジョルダンなど）が `geo:` やカテゴリを実際に宣言しているか。実機で `adb shell cmd package query-activities -a android.intent.action.VIEW -d geo:0,0` を試せば確かめられる。
 - 天気・乗換・銀行のように、OS の情報に出ないジャンルは学習で埋める。
 
 問い合わせの条件の根拠（2026-11-14 確認）: AOSP android14-release の [CrossProfileIntentResolverEngine のブラウザ選択](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/CrossProfileIntentResolverEngine.java#L568)、[ComputerEngine のカメラ判定](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/ComputerEngine.java#L2248) 、[Intent のパッケージ・部品未指定の判定](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/content/Intent.java#L12240) と [MATCH_SYSTEM_ONLY の追加](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/pm/ComputerEngine.java#L2693)。
