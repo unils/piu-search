@@ -187,6 +187,50 @@ class DeviceAppsReaderTest {
         assertEquals("java.lang.IllegalStateException", (reader.genres(plan.genres) as GenreResult.Failed).cause)
     }
 
+    // UserManager で削除を確かめた後も LauncherApps の一覧が古いまま仕事用の入口を返す。写しから落とした組が、次の同期でも戻らず、材料も読まない
+    @Test
+    fun aProfileConfirmedAsRemovedIsNotRestoredByAStaleListing() =
+        runTest {
+            device.install(installed("io.example.transit", "乗換"), installed("io.example.transit", "乗換", profile = WORK))
+            val keys = FakeKeys()
+            val actor =
+                IndexActor(
+                    backgroundScope,
+                    IndexDatabase.open(context, null, allowMainThread = true),
+                    reader,
+                    keys,
+                    1,
+                    StandardTestDispatcher(testScheduler),
+                )
+            actor.requestSync().await()
+            assertEquals(
+                setOf(OWN, WORK),
+                actor.snapshot.value.packages.keys
+                    .mapTo(HashSet()) { it.profileSerial },
+            )
+
+            existing = setOf(OWN)
+            actor.requestSync().await()
+            assertEquals(
+                1,
+                actor.status.value.lastSync
+                    ?.removed,
+            )
+            repeat(2) {
+                device.reads.clear()
+                val built = keys.calls
+                actor.requestSync().await()
+                assertEquals(
+                    setOf(OWN),
+                    actor.snapshot.value.packages.keys
+                        .mapTo(HashSet()) { it.profileSerial },
+                )
+                assertTrue(WORK !in actor.snapshot.value.listings)
+                assertEquals(emptyList<Any>(), device.reads)
+                assertEquals(built, keys.calls)
+            }
+        }
+
     @Test
     fun onApi30TheLocalizedNameOfAWorkOnlyAppIsAnEmptySuccessAndTheIndexKeepsReadingsAndThePublisher() =
         runTest {

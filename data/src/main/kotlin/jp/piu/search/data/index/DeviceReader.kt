@@ -62,7 +62,7 @@ public interface DeviceReader {
     public fun environment(): DeviceEnvironment
 
     /**
-     * 一覧の観測。[known] は写しにあるプロファイルの番号で、そのうち存在しないと確かめられたものを
+     * 一覧の観測。[known] は写しにあるプロファイルの番号で、それと今回の一覧に現れた番号のうち、存在しないと確かめられたものを
      * [DeviceObservation.removedProfiles] に入れる（問い合わせが失敗したら空）。
      */
     public fun observe(known: Set<Long>): DeviceObservation
@@ -130,7 +130,8 @@ internal class DeviceAppsReader(
             }
         return DeviceObservation(
             listing.mapValues { (serial, read) -> listingOf(serial, read) },
-            if (existing == null) emptySet() else known - existing,
+            // 一覧に現れた番号も照らす。削除を確かめた後も LauncherApps の一覧が古いまま返すと、写しから落とした組が次の同期で戻るため
+            if (existing == null) emptySet() else (known + listing.keys) - existing,
         )
     }
 
