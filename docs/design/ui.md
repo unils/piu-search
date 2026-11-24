@@ -199,7 +199,7 @@ OS が起動を拒んだら「開けなかった」を出し、索引を同期�
 | 一時的 | 理由が一時的 | 一時的に読めないもの | Temporarily unreadable |
 | 決定的 | 理由が決定的 | 読めないまま使っているもの | Used without this information |
 
-一時的の行には、`retry_once` から引いた言葉を区分に続ける。立っていれば「次の更新で読み直します」（Will retry on the next update）、下りていれば「読み直しても読めませんでした」（Still unreadable after a retry）。
+一時的の行には、再試行の枠（最後の試みの `retry`）から引いた言葉を区分に続ける。立っていれば「次の更新で読み直します」（Will retry on the next update）、下りていれば「読み直しても読めませんでした」（Still unreadable after a retry）。
 
 | 段 | 日本語 | 英語 | 影響 |
 |---|---|---|---|
