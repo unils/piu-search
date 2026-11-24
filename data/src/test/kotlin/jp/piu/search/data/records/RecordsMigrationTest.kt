@@ -12,7 +12,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LaunchRecord
-import jp.piu.search.data.db.PiuRoomDatabase
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -21,13 +20,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-// 0.2.0 の版 6 の piu.db（PiuRoomDatabase の書き出したスキーマ 6.json で作る）を、記録の DB の版 7 に移行する
+// 0.2.0 以前の piu.db（版 1〜6。書き出したスキーマで作る）を、記録の DB の版 7 に移行する
 @RunWith(AndroidJUnit4::class)
 class RecordsMigrationTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @get:Rule
-    val old = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), PiuRoomDatabase::class.java)
+    val old = legacyMigrationHelper()
 
     @get:Rule
     val records = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), RecordsRoomDatabase::class.java)
@@ -84,24 +83,34 @@ class RecordsMigrationTest {
         }
     }
 
+    // 0.1.x の各版の DB を、1 段ずつ書き出したスキーマと比べながら版 6 まで進め、版 7 で開く。
+    // 印のない版（3 以前）は転送と区別できないので、仕事用の記録を捨てて自分の記録だけを残す（0.2.0 の初回の更新と同じ）
     @Test
-    fun version5IsMigratedThroughTheOldChain() {
-        old.createDatabase(FILE, 5).use { db ->
-            db.execSQL("INSERT INTO installation VALUES (0, '$TOKEN')")
-            db.execSQL("INSERT INTO learned VALUES ('よみ', '${OWN_APP.packageName}', 'Main', $ME, 1, 1000, 0, 0)")
-        }
-        markWith(TOKEN)
-        val db = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { ME })
-        try {
-            assertEquals(
-                setOf(record("よみ", MY_APP)),
-                db
-                    .load()
-                    .records.learned.records.values
-                    .toSet(),
-            )
-        } finally {
-            db.close()
+    fun everyOlderVersionIsMigratedStepByStepAndKeepsTheRecordsOfItsTables() {
+        for (start in 1..5) {
+            old.createDatabase(FILE, start).use { db -> insertOlderRows(db, start) }
+            for (target in start + 1..6) old.runMigrationsAndValidate(FILE, target, true, *LEGACY_MIGRATIONS).close()
+            records.runMigrationsAndValidate(FILE, 7, true, Migration6To7).close()
+            markWith(TOKEN)
+            val db = RecordsDatabase.open(context, FILE, allowMainThread = true, ownSerial = { ME })
+            try {
+                val stored = db.load().records
+                val marked = start >= 4
+                assertEquals(
+                    "版 $start の学習",
+                    if (start < 3) emptySet() else setOfNotNull(record("よみ", MY_APP), record("よみ", WORK_APP).takeIf { marked }),
+                    stored.learned.records.values
+                        .toSet(),
+                )
+                assertEquals(
+                    "版 $start の起動の記録",
+                    if (start < 2) emptySet() else setOfNotNull(MY_APP, WORK_APP.takeIf { marked }),
+                    stored.launches.records.keys,
+                )
+            } finally {
+                db.close()
+                context.deleteDatabase(FILE)
+            }
         }
     }
 
@@ -143,6 +152,28 @@ class RecordsMigrationTest {
         db.execSQL("INSERT INTO launch_stat VALUES ('${OWN_APP.packageName}', 'Main', $ME, 3, 2000)")
         db.execSQL("INSERT INTO learned VALUES ('よみ', '${OWN_APP.packageName}', 'Main', $ME, 2, 3000, 0, 0)")
         db.execSQL("INSERT INTO learned VALUES ('よみ', '${WORK_APP.packageName}', 'Main', $WORK, 1, 1000, 0, 0)")
+    }
+
+    // 版 [version] にある表にだけ行を入れる（launch_stat は 2、learned は 3、installation は 4 から）
+    private fun insertOlderRows(
+        db: SupportSQLiteDatabase,
+        version: Int,
+    ) {
+        db.execSQL(
+            "INSERT INTO app (id, package_name, activity_name, profile_serial, label, package_updated_at) " +
+                "VALUES (1, '${OWN_APP.packageName}', 'Main', $ME, '名前', 1000)",
+        )
+        db.execSQL("INSERT INTO search_key VALUES (1, 0, 'なまえ', 'READING', 'STRICT', '')")
+        db.execSQL("INSERT INTO meta (id, index_version, change_sequence, boot_count, locales) VALUES (0, 1, 1, 1, 'ja-JP')")
+        if (version >= 2) {
+            db.execSQL("INSERT INTO launch_stat VALUES ('${OWN_APP.packageName}', 'Main', $ME, 3, 2000)")
+            db.execSQL("INSERT INTO launch_stat VALUES ('${WORK_APP.packageName}', 'Main', $WORK, 1, 2000)")
+        }
+        if (version >= 3) {
+            db.execSQL("INSERT INTO learned VALUES ('よみ', '${OWN_APP.packageName}', 'Main', $ME, 1, 1000, 0, 0)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', '${WORK_APP.packageName}', 'Main', $WORK, 1, 1000, 0, 0)")
+        }
+        if (version >= 4) db.execSQL("INSERT INTO installation VALUES (0, '$TOKEN')")
     }
 
     private fun android.database.sqlite.SQLiteDatabase.stringOf(sql: String): String? =

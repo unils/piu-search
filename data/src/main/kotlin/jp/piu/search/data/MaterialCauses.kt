@@ -12,30 +12,20 @@ import java.io.IOException
 import java.security.cert.CertificateException
 
 /**
- * 組の読み取りの段（architecture.md の「材料の欠け」）。[code] は R8 で変わらない固定の文字列で、表に保存する。
+ * 組の読み取りの段（architecture.md の「材料の欠け」）。区分の引き方（[MaterialCauses.categoryOf]）が段で変わるので、読み手の側にも持つ。
  */
-internal enum class MaterialStage(
-    /** 表 `material_issue` の `stage` の値。 */
-    public val code: String,
-) {
-    /** 組全体の詳細（一覧の表示名・入口の変換・一覧との突き合わせ・読み取りの前後の鍵の比較）。 */
-    ENTRY("ENTRY"),
+internal enum class MaterialStage {
+    /** 組全体の詳細（一覧の表示名・入口の変換・一覧との突き合わせ）。 */
+    ENTRY,
 
     /** 別の言語の名前。 */
-    LABEL("LABEL"),
+    LABEL,
 
     /** 署名の DN。 */
-    SIGNER("SIGNER"),
+    SIGNER,
 
     /** 検索キーの生成（このアプリの処理）。 */
-    KEYS("KEYS"),
-    ;
-
-    /** 保存した値から引く。 */
-    public companion object {
-        /** [code] の段。知らない値は null。 */
-        public fun of(code: String): MaterialStage? = entries.firstOrNull { it.code == code }
-    }
+    KEYS,
 }
 
 /** 欠けの理由の区分。保存せず、使うときに理由から [MaterialCauses.categoryOf] で引く。 */
@@ -48,34 +38,6 @@ internal enum class IssueCategory {
 
     /** このアプリ側の例外か、型で決められない例外。 */
     SUSPECTED_BUG,
-}
-
-/**
- * 組と段 1 つの材料の欠け（表 `material_issue` の 1 行）。保存するのは事実だけで、区分は [category] で理由から引く。
- *
- * @property key プロファイルとパッケージの組
- * @property stage 欠けた段
- * @property cause 理由。`java.`・`android.` で始まる最寄りのクラス名か、[MaterialCauses] の固定の符号
- * @property frames 不具合の疑いの行だけ、例外の先頭 5 フレーム（1 行に 1 つ）。メッセージは入れない
- * @property inputSummary `KEYS` の不具合の疑いの行だけ、落ちた入力の種類・長さ・文字種（[InputSummary]）
- * @property versionCode この行を最後に書いた Piu Search の `versionCode`
- * @property retryOnce 次の同期で 1 回だけ読み直すか
- * @property firstFailedOn 続けて欠けている間の初めの日（UTC の `YYYY-MM-DD`）。表示と報告のためだけ
- * @property lastFailedOn 最後に欠けた日（同上）
- */
-internal data class MaterialIssue(
-    val key: PackageKey,
-    val stage: MaterialStage,
-    val cause: String,
-    val frames: String?,
-    val inputSummary: String?,
-    val versionCode: Int,
-    val retryOnce: Boolean,
-    val firstFailedOn: String,
-    val lastFailedOn: String,
-) {
-    /** 理由と段から引いた区分。 */
-    val category: IssueCategory get() = MaterialCauses.categoryOf(stage, cause)
 }
 
 /**

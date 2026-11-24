@@ -38,6 +38,7 @@ import jp.piu.search.data.MaterialStage
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -109,6 +110,56 @@ class DeviceAppsReaderTest {
         assertEquals(listOf("CN=Fine"), read.signerDns)
         assertEquals(read.before, read.after)
         assertEquals("apk:1000", read.before.apkKey)
+    }
+
+    // 一覧と詳細の食い違い（入口が詳細から消えた・一覧の表示名が取れない）は ENTRY の一時的な失敗。読む前後の鍵は、そのまま規則に渡す
+    // （前後の鍵の比較による CHANGED_DURING_READ は core:state の IndexRulesTest が確かめる）
+    @Test
+    fun entriesMissingFromTheDetailsAndListingLabelFailuresFailTheEntryStageAndTheKeysAreObservedAroundTheRead() {
+        val vanished = installed("io.example.gone", "消える")
+        val label = installed("io.example.label", "名前なし")
+        val moving = installed("io.example.moving", "動く")
+        device.install(vanished, label, moving)
+        device.vanished += vanished.entry.id
+        device.listingLabelFailures[label.entry.id] = IllegalStateException()
+        device.keysDuringRead = { key, phase ->
+            if (key.packageName == "io.example.moving" && phase == 1) {
+                jp.piu.search.data
+                    .ApkKeys(2_000, "apk:2000")
+            } else {
+                null
+            }
+        }
+        val reads = read()
+
+        val gone = reads.getValue("io.example.gone") as MaterialRead.Failed
+        assertEquals(Stage.ENTRY to MaterialCauses.VANISHED, gone.stage to gone.failure.cause)
+        assertEquals(IssueCategory.TRANSIENT, gone.failure.category)
+        val unnamed = reads.getValue("io.example.label") as MaterialRead.Failed
+        assertEquals(Stage.ENTRY to "java.lang.IllegalStateException", unnamed.stage to unnamed.failure.cause)
+        assertEquals(IssueCategory.SUSPECTED_BUG, unnamed.failure.category)
+        assertNotNull(unnamed.failure.frames)
+        val moved = reads.getValue("io.example.moving") as MaterialRead.Read
+        assertEquals("apk:1000", moved.before.apkKey)
+        assertEquals("apk:2000", moved.after.apkKey)
+        assertEquals(2_000L, moved.after.updatedAt)
+    }
+
+    // 一覧の問い合わせの失敗と、詳細を読んだ後の確かめ直しの失敗は、プロファイルの単位の失敗（組の結果なし）
+    @Test
+    fun aFailedListingOrRecheckIsAFailureOfTheWholeProfile() {
+        device.install(installed("io.example.maps", "地図"), installed("io.example.mail", "メール", profile = WORK))
+        device.failedProfiles += WORK
+        assertEquals(ListingStatus.FAILED, reader.observe(emptySet()).profiles[WORK]?.status)
+
+        device.failedProfiles.clear()
+        val plan = IndexRules.plan(IndexSnapshot.EMPTY, reader.observe(emptySet()), ENV)
+        device.failedDetailProfiles += WORK
+        val result = reader.readMaterials(plan.profileReads.getValue(WORK))
+        assertEquals(ListingStatus.FAILED, result.status)
+        assertEquals("java.lang.IllegalStateException", result.failure)
+        assertTrue(result.packages.isEmpty())
+        assertEquals(ListingStatus.COMPLETE, reader.readMaterials(plan.profileReads.getValue(OWN)).status)
     }
 
     @Test

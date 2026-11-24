@@ -464,7 +464,7 @@ public class IndexActor internal constructor(
             dispatcher: CoroutineContext = Dispatchers.IO,
         ): IndexActor = openNamed(context, FILE_NAME, scope, appVersion, analyzer, dispatcher)
 
-        /** 名前 [name] の索引の DB で [open] する。テストと debug 版の比べる道具だけが、製品と別の名前で使う。 */
+        /** 名前 [name] の索引の DB で [open] する。計器テストだけが、製品と別の名前で使う。 */
         internal fun openNamed(
             context: Context,
             name: String,

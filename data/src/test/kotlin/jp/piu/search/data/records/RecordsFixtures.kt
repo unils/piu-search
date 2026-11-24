@@ -5,6 +5,8 @@ package jp.piu.search.data.records
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteFullException
+import androidx.room.testing.MigrationTestHelper
+import androidx.test.platform.app.InstrumentationRegistry
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LaunchRecord
 import jp.piu.search.core.search.LearnedPair
@@ -163,3 +165,16 @@ internal fun rebuiltMark(
     context: Context,
     name: String,
 ): java.io.File = java.io.File(context.noBackupFilesDir, "$name.rebuilt")
+
+/**
+ * 0.2.0 以前の `piu.db`（版 1〜6）を、書き出したスキーマ（data/schemas/jp.piu.search.data.db.PiuRoomDatabase/）から作る道具。
+ *
+ * その版の DB のクラスはもうないので、スキーマのフォルダの名前で引く（クラスを受ける形は、クラスの名前からフォルダを決める）。
+ * 名前で引く形は自動の移行を扱えないので非推奨になっているが、版 6 までに自動の移行はない。
+ */
+@Suppress("DEPRECATION")
+internal fun legacyMigrationHelper(): MigrationTestHelper =
+    MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), "jp.piu.search.data.db.PiuRoomDatabase")
+
+/** 版 6 までの移行（[Migration6To7] の前まで）。古い版の DB を版 6 へ 1 段ずつ進めて、各段の表の形を書き出したスキーマと比べる。 */
+internal val LEGACY_MIGRATIONS = RecordsRoomDatabase.MIGRATIONS.filterNot { it === Migration6To7 }.toTypedArray()

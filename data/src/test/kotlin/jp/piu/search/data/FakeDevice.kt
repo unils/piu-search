@@ -43,7 +43,7 @@ internal data class InstalledApp(
 }
 
 /**
- * 偽の端末。パッケージの変更を番号つきで記録する（silently は番号に出ない変更）。
+ * 偽の端末。索引の読み手（`index.DeviceAppsReader`）のテストが、読み手の下に置く。
  *
  * 段の失敗は「読み切れたか」で渡さず、段ごとの例外か結果で渡す（[fail]・[vanished]・[listingLabelFailures]・[keysDuringRead]）。
  * 組み立てと分類は本物の [readPackage] と [MaterialCauses] を通す（testing.md の「分類」）。
@@ -51,30 +51,16 @@ internal data class InstalledApp(
  * 渡さなければ、入口の [AppEntry.localizedLabels]・[AppEntry.signerNames] と [fail] の例外をそのまま返す。
  */
 internal class FakeDevice : DeviceApps {
-    var bootCount: Int? = 1
-    var fingerprint = "test-build"
-
-    override fun buildFingerprint(): String = fingerprint
+    override fun buildFingerprint(): String = "test-build"
 
     /** 一覧の問い合わせが例外になるプロファイル。 */
     val failedProfiles = HashSet<Long>()
 
     /** 詳細を読んだ後の確かめ直しが例外になるプロファイル。 */
     val failedDetailProfiles = HashSet<Long>()
-    var genresCalls = 0
-    var stampCalls = 0
-    var locales = "ja-JP"
-    private var sequence = 0
-    private val changes = ArrayList<String>()
     private val apps = LinkedHashMap<AppId, InstalledApp>()
     private val profiles = linkedSetOf(PERSONAL, WORK)
     val unavailable = HashSet<Long>()
-    var failUserQuery = false
-    var beforeStamps: () -> Unit = {}
-    var beforeRead: () -> Unit = {}
-
-    /** 組の詳細の問い合わせの中で呼ぶ（読む前と読んだ後の鍵の観測の間）。 */
-    var duringRead: (PackageKey) -> Unit = {}
 
     /** 別の言語の名前の本物の読み手。入口の表示名の資源の id は [LABEL_RES]。 */
     var labelReader: LocalizedLabelReader? = null
@@ -110,61 +96,15 @@ internal class FakeDevice : DeviceApps {
         failures[app.key to stage] = failure
     }
 
-    fun existingProfiles(): Set<Long> {
-        check(!failUserQuery)
-        return profiles.toSet()
+    fun install(vararg installed: InstalledApp) {
+        for (app in installed) apps[app.entry.id] = app
     }
 
-    fun install(
-        vararg installed: InstalledApp,
-        silently: Boolean = false,
-    ) {
-        for (app in installed) {
-            apps[app.entry.id] = app
-            if (!silently && app.entry.id.profileSerial == PERSONAL) touch(app.entry.id.packageName)
-        }
-    }
+    override fun bootCount(): Int = 1
 
-    fun uninstall(
-        packageName: String,
-        profile: Long = PERSONAL,
-        silently: Boolean = false,
-    ) {
-        apps.keys.removeAll { it.packageName == packageName && it.profileSerial == profile }
-        if (!silently && profile == PERSONAL) touch(packageName)
-    }
-
-    fun touch(packageName: String) {
-        changes += packageName
-        sequence = changes.size
-    }
-
-    /** 再起動。変更の番号は 0 に戻る。 */
-    fun reboot() {
-        bootCount = bootCount!! + 1
-        changes.clear()
-        sequence = 0
-    }
-
-    fun removeProfile(serial: Long) {
-        profiles -= serial
-        apps.keys.removeAll { it.profileSerial == serial }
-    }
-
-    override fun bootCount(): Int? = bootCount
-
-    override fun locales(): String = locales
-
-    override fun changedPackages(sequence: Int): PackageChanges {
-        val from = sequence.coerceIn(0, changes.size)
-        return PackageChanges(this.sequence, changes.subList(from, changes.size).toSet())
-    }
+    override fun locales(): String = "ja-JP"
 
     override fun stampProfiles(withUpdateTime: Boolean): Map<Long, ProfileRead<ActivityStamp>> {
-        stampCalls++
-        val before = profiles - unavailable
-        beforeStamps()
-        val after = profiles - unavailable
         listed = apps.toMap()
         return profiles.associateWith { serial ->
             when {
@@ -172,7 +112,7 @@ internal class FakeDevice : DeviceApps {
                     ProfileRead(ProfileReadStatus.FAILED, failure = "android.os.DeadObjectException")
                 }
 
-                serial !in before || serial !in after -> {
+                serial in unavailable -> {
                     ProfileRead(ProfileReadStatus.UNAVAILABLE)
                 }
 
@@ -195,15 +135,8 @@ internal class FakeDevice : DeviceApps {
             isArchived = archived,
         )
 
-    override fun listedKeys(targets: Map<PackageKey, List<ActivityStamp>>): Map<PackageKey, ApkKeys> =
-        targets.keys.associateWith(::currentKeys)
-
-    override fun readPackages(
-        targets: Map<PackageKey, List<ActivityStamp>>,
-        listedKeys: Map<PackageKey, ApkKeys>,
-    ): Map<Long, ProfileRead<PackageRead>> {
-        beforeRead()
-        return targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
+    override fun readPackages(targets: Map<PackageKey, List<ActivityStamp>>): Map<Long, ProfileRead<PackageRead>> =
+        targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
             if (serial in unavailable) return@mapValues ProfileRead(ProfileReadStatus.UNAVAILABLE)
             val result =
                 packages.map { (key, stamps) ->
@@ -212,7 +145,6 @@ internal class FakeDevice : DeviceApps {
                     readPackage(
                         key = key,
                         listed = stamps,
-                        listedKeys = listedKeys.getValue(key),
                         labelOf = { id -> listingLabelFailures[id]?.let { throw it } ?: checkNotNull(listed[id]).entry.label },
                         observeKeys =
                             run {
@@ -220,7 +152,6 @@ internal class FakeDevice : DeviceApps {
                                 { observe(phase++) }
                             },
                         details = {
-                            duringRead(key)
                             failures[key to MaterialStage.ENTRY]?.let { throw it }
                             apps.values.filter { it.key == key && it.entry.id !in vanished }.map { it.activity() }
                         },
@@ -244,7 +175,6 @@ internal class FakeDevice : DeviceApps {
                 else -> ProfileRead(ProfileReadStatus.COMPLETE, result)
             }
         }
-    }
 
     private fun currentKeys(key: PackageKey): ApkKeys =
         apps.values.firstOrNull { it.key == key }?.let { ApkKeys(it.packageUpdatedAt, it.fingerprint) } ?: ApkKeys(null, null)
@@ -267,7 +197,6 @@ internal class FakeDevice : DeviceApps {
     }
 
     override fun genres(stamps: List<ActivityStamp>): Map<AppId, List<GenreId>> {
-        genresCalls++
         genreFailure?.let { throw it }
         return apps.values.associate { it.entry.id to it.entry.genres }
     }
