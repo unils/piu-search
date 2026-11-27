@@ -76,8 +76,8 @@ android {
         applicationId = "jp.piu.search"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 5
-        versionName = "0.2.0"
+        versionCode = 6
+        versionName = "0.3.0"
         // ソースの置き場（設定画面の「このアプリについて」）
         buildConfigField("String", "SOURCE_URL", "\"https://github.com/unils/piu-search\"")
 
