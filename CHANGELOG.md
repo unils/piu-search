@@ -8,6 +8,23 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-27
+
+### Added
+
+- 記録（学習と起動の記録）のデータベースが壊れていて新しく始めたときは、検索画面でそのことを 1 回だけ知らせる
+
+### Changed
+
+- 索引と記録の持ち方を作り直した。索引は `index.db`、記録は `piu.db` に分け、それぞれ 1 つの書き手だけが更新する。0.2.0 から更新すると、学習と起動の記録は残り、索引は最初の起動で作り直す
+- アプリを開いたときの学習と起動の記録を、1 つのトランザクションでまとめて保存する（片方だけが保存されることがなくなった）
+- アプリの情報の一部が読めないときは、そのアプリの前の情報を丸ごと保つ（前の情報がなければ、一覧の表示名で検索に出す）
+- 不具合の報告に使う文の `last sync` の行から、同期の方法（`mode=`）を外した
+
+### Fixed
+
+- ないことが決まっている情報（その言語の名前の資源がない・署名がない・Android 11 以下で仕事用プロファイルにしかないアプリの別の言語の名前）を、「索引の状態」に読めていない情報として出し続けていた。失敗でなく、空で読めたとして扱う
+
 ## [0.2.0] - 2026-11-16
 
 ### Added
@@ -52,7 +69,8 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 - 索引・学習の読み込みや保存に失敗したときの表示
 - Android 9（API 28）以上に対応。インターネットの権限を持たず、索引・学習・起動の記録・設定をクラウドへのバックアップから外す
 
-[Unreleased]: https://github.com/unils/piu-search/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/unils/piu-search/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/unils/piu-search/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/unils/piu-search/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/unils/piu-search/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/unils/piu-search/releases/tag/v0.1.0
