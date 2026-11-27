@@ -8,7 +8,7 @@ F-Droid に出す版ごとの短い説明は、別に `fastlane/metadata/android
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-28
+## [0.3.0] - 2026-11-27
 
 ### Added
 
