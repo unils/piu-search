@@ -24,7 +24,6 @@ import jp.piu.search.core.state.ProfileReads
 import jp.piu.search.core.state.Stage
 import jp.piu.search.data.ActivityStamp
 import jp.piu.search.data.AndroidDeviceApps
-import jp.piu.search.data.ApkKeys
 import jp.piu.search.data.DeviceApps
 import jp.piu.search.data.ExistingProfiles
 import jp.piu.search.data.MaterialCauses
@@ -63,7 +62,7 @@ public interface DeviceReader {
     public fun environment(): DeviceEnvironment
 
     /**
-     * 一覧の観測。[known] は写しにあるプロファイルの番号で、そのうち存在しないと確かめられたものを
+     * 一覧の観測。[known] は写しにあるプロファイルの番号で、それと今回の一覧に現れた番号のうち、存在しないと確かめられたものを
      * [DeviceObservation.removedProfiles] に入れる（問い合わせが失敗したら空）。
      */
     public fun observe(known: Set<Long>): DeviceObservation
@@ -97,8 +96,11 @@ internal class DeviceAppsReader(
     private val sdkInt: Int = Build.VERSION.SDK_INT,
     private val visibleToOwnProfile: (String) -> Boolean? = { null },
 ) : DeviceReader {
-    constructor(context: Context) : this(
-        AndroidDeviceApps(context.applicationContext),
+    constructor(context: Context) : this(context, null)
+
+    /** 再起動の回数を [bootCountOverride] に差し替えて作る。計器テストが、再起動の代わりに回数を変える。 */
+    constructor(context: Context, bootCountOverride: (() -> Int?)?) : this(
+        AndroidDeviceApps(context.applicationContext, bootCountOverride = bootCountOverride),
         ExistingProfiles(context)::serials,
         visibleToOwnProfile = { packageName -> visibleTo(context.packageManager, packageName) },
     )
@@ -128,7 +130,8 @@ internal class DeviceAppsReader(
             }
         return DeviceObservation(
             listing.mapValues { (serial, read) -> listingOf(serial, read) },
-            if (existing == null) emptySet() else known - existing,
+            // 一覧に現れた番号も照らす。削除を確かめた後も LauncherApps の一覧が古いまま返すと、写しから落とした組が次の同期で戻るため
+            if (existing == null) emptySet() else (known + listing.keys) - existing,
         )
     }
 
@@ -169,9 +172,7 @@ internal class DeviceAppsReader(
     override fun readMaterials(request: ProfileReadRequest): ProfileReads =
         try {
             val targets = request.jobs.associate { StoredKey(it.key.profileSerial, it.key.packageName) to stamps.getValue(it.key) }
-            // 一覧で時刻と指紋を引いたので、一覧の観測の鍵は一覧の値（0.2.0 の全件の見直しと同じ）
-            val listed = targets.mapValues { (_, entries) -> ApkKeys(entries.first().packageUpdatedAt, entries.first().apkFingerprint) }
-            val profile = apps.readPackages(targets, listed)[request.serial] ?: ProfileRead(ProfileReadStatus.UNAVAILABLE)
+            val profile = apps.readPackages(targets)[request.serial] ?: ProfileRead(ProfileReadStatus.UNAVAILABLE)
             if (profile.status == ProfileReadStatus.COMPLETE) {
                 val byKey = profile.items.associateBy { it.key }
                 ProfileReads(

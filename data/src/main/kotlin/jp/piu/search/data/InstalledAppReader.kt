@@ -7,42 +7,32 @@ import jp.piu.search.core.search.AppEntry
 import jp.piu.search.core.search.AppId
 
 /**
- * 組 1 つの詳細の読み取り結果（architecture.md の「材料の欠け」）。段ごとの結果と失敗、鍵の 3 つの観測を別々に持つ。
- * 成否の判断（`CHANGED_DURING_READ` を含む）と欠けの行の決定は [SyncPlanner] が行う。
+ * 組 1 つの詳細の読み取り結果（architecture.md の「材料の欠け」）。段ごとの結果と失敗、読む前後の鍵の観測を別々に持つ。
+ * 成否の判断（一覧の鍵との比較による `CHANGED_DURING_READ` を含む）は同期の規則（`IndexRules`）が行う。
  *
  * @property key プロファイルとパッケージの組
  * @property listed 一覧の入口（一覧の観測）
- * @property listedKeys 保存し、前後と比べる鍵（一覧の観測）。一覧で時刻を引いたなら一覧の値、引かなかったなら、対象を選んだ直後
- *   （ジャンルと詳細を読む前）に一覧の情報から時刻と指紋を一度に観測した値（[InstalledAppReader.listedKeys]）
  * @property before 詳細を読む前の鍵
  * @property after 詳細を読んだ後の鍵
  * @property labels 一覧の表示名。取得が例外になった入口は null
  * @property entryFailure `ENTRY` の段の最初の失敗（詳細の問い合わせ・表示名の取得の例外、`VANISHED`）。前後の鍵の比較は含まない
- * @property detailIds 詳細にあった入口。詳細の問い合わせが例外なら null
  * @property localized 入口ごとの別の言語の名前
  * @property labelFailure `LABEL` の段の最初の失敗
  * @property signers 署名の DN
  * @property signerFailure `SIGNER` の段の失敗
- * @property auxiliaryRead `LABEL`・`SIGNER` を読んだか。アーカイブ済みの組と、詳細を読めなかった組では読まない
  */
 internal class PackageRead(
     val key: PackageKey,
     val listed: List<ActivityStamp>,
-    val listedKeys: ApkKeys,
     val before: ApkKeys,
     val after: ApkKeys,
     val labels: Map<AppId, String?>,
     val entryFailure: ReadFailure?,
-    val detailIds: Set<AppId>?,
     val localized: Map<AppId, List<String>>,
     val labelFailure: ReadFailure?,
     val signers: List<String>,
     val signerFailure: ReadFailure?,
-    val auxiliaryRead: Boolean,
-) {
-    /** 一覧でアーカイブ済みだったか。 */
-    val archived: Boolean get() = listed.any { it.isArchived }
-}
+)
 
 /**
  * 組 1 つを段ごとに読む。各段の catch は段の境界で、元の例外を [ReadFailure] に包んで運ぶ（architecture.md の「失敗の分け方」）。
@@ -53,7 +43,6 @@ internal class PackageRead(
 internal fun readPackage(
     key: PackageKey,
     listed: List<ActivityStamp>,
-    listedKeys: ApkKeys,
     labelOf: (AppId) -> String,
     observeKeys: () -> ApkKeys,
     details: () -> List<LaunchableActivity>,
@@ -114,17 +103,14 @@ internal fun readPackage(
     return PackageRead(
         key = key,
         listed = listed,
-        listedKeys = listedKeys,
         before = before,
         after = after,
         labels = labels,
         entryFailure = entryFailure,
-        detailIds = activities?.keys,
         localized = localized,
         labelFailure = labelFailure,
         signers = signers,
         signerFailure = signerFailure,
-        auxiliaryRead = auxiliaryRead,
     )
 }
 
@@ -156,9 +142,8 @@ public class InstalledAppReader(
         val listing = source.listing(withUpdateTime = false)
         val stamps = listing.profiles.values.flatMap { it.items }
         val targets = stamps.groupBy { PackageKey(it.id.profileSerial, it.id.packageName) }
-        val keys = listedKeys(listing, targets)
         val genreMap = genres.resolveStamps(stamps)
-        return readPackages(listing, targets, keys).values.flatMap { profile ->
+        return readPackages(listing, targets).values.flatMap { profile ->
             profile.items.flatMap { read ->
                 read.listed.map {
                     AppEntry(
@@ -174,32 +159,13 @@ public class InstalledAppReader(
     }
 
     /**
-     * 一覧 [listing] の情報で、[targets] の組の鍵（時刻と指紋）を観測する。一覧で時刻を引かなかった差分の同期で、読む組の一覧の観測を
-     * 確定する（architecture.md の「鍵の比べ方」）。対象を選んだ直後、ジャンルと詳細を読む前に呼び、結果を保存まで保つ。
-     * 一覧にない組は返さない。
-     */
-    internal fun listedKeys(
-        listing: Listing,
-        targets: Map<PackageKey, List<ActivityStamp>>,
-    ): Map<PackageKey, ApkKeys> =
-        targets.entries
-            .mapNotNull { (key, listed) ->
-                val profile = listing.profile(key.profileSerial) ?: return@mapNotNull null
-                val info = listing.info(listed.first().id) ?: return@mapNotNull null
-                key to source.observeKeys(info, profile.isCurrent)
-            }.toMap()
-
-    /**
      * [targets] の組を、一覧 [listing] の情報で読む。対象はプロファイルとパッケージの組で、ほかのプロファイルの同じパッケージは読まない。
      *
      * 読み終えた後にプロファイルを確かめ直し、読めなくなっていたら結果を捨てる（読み取り中の一時停止を正常な空にしないため）。
-     *
-     * @param listedKeys 組ごとの一覧の観測の鍵。保存し、読む前と読んだ後の観測と比べる
      */
     internal fun readPackages(
         listing: Listing,
         targets: Map<PackageKey, List<ActivityStamp>>,
-        listedKeys: Map<PackageKey, ApkKeys>,
     ): Map<Long, ProfileRead<PackageRead>> =
         targets.entries.groupBy { it.key.profileSerial }.mapValues { (serial, packages) ->
             val profile = listing.profile(serial) ?: return@mapValues ProfileRead(ProfileReadStatus.UNAVAILABLE)
@@ -209,7 +175,6 @@ public class InstalledAppReader(
                     readPackage(
                         key = key,
                         listed = listed,
-                        listedKeys = listedKeys.getValue(key),
                         labelOf = { id -> checkNotNull(listing.info(id)).label.toString() },
                         observeKeys = { source.observeKeys(info, profile.isCurrent) },
                         details = { source.details(key.packageName, profile) },

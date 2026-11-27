@@ -12,16 +12,12 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
 import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
-import jp.piu.search.data.db.LaunchStatRow
-import jp.piu.search.data.db.LearnedRow
-import jp.piu.search.data.db.PiuRoomDatabase
 
 /**
  * 記録の DB（版 7）。学習・起動の記録・インストールの印だけを持ち、索引の表は持たない（索引は別の DB で、形が変われば捨てて作り直す）。
  *
- * 版 6 までの `piu.db`（[PiuRoomDatabase]）と同じファイルを開けるよう、版の数え方を引き継ぐ。`learned`・`launch_stat` の形は版 6 と同じなので、
- * 行の型（[LearnedRow]・[LaunchStatRow]）も同じものを使う。`fallbackToDestructiveMigration` は使わない: 利用者の記録まで消えるため。
+ * 版 6 までの `piu.db`（0.2.0 以前の、索引と記録の 1 つの DB）と同じファイルを開けるよう、版の数え方を引き継ぐ。
+ * `learned`・`launch_stat`・`installation` の形は版 6 と同じ。`fallbackToDestructiveMigration` は使わない: 利用者の記録まで消えるため。
  */
 @Database(
     entities = [LearnedRow::class, LaunchStatRow::class, RecordsInstallationRow::class],
@@ -36,7 +32,8 @@ internal abstract class RecordsRoomDatabase : RoomDatabase() {
         const val VERSION = 7
 
         /** 版の移行。0.1.x の DB からも開けるよう、版 6 までの移行を前に並べる（どれも SQL だけで、索引の表は 6 → 7 で落とす）。 */
-        val MIGRATIONS: Array<Migration> = PiuRoomDatabase.MIGRATIONS + Migration6To7
+        val MIGRATIONS: Array<Migration> =
+            arrayOf(Migration1To2, Migration2To3, Migration3To4, Migration4To5, Migration5To6, Migration6To7)
     }
 }
 
@@ -101,26 +98,4 @@ internal interface RecordsDao {
 
     @Upsert
     fun putInstallation(row: RecordsInstallationRow)
-}
-
-/**
- * 6 → 7: 索引の表（`search_key`・`app`・`meta`・`material_issue`）を落とす。
- * 学習・起動の記録・印は残す。落とした索引は、索引の DB の最初の同期の全件の作り直しで戻る。
- *
- * Room は移行を 1 つのトランザクションで当てるので、途中で終了しても版 6 のまま残り、次に開くときにまた試す。
- * `search_key` は `app` への外部キーを持つので先に落とす。
- */
-internal object Migration6To7 : Migration(6, 7) {
-    // 途中での終了のテストが、前の一部だけを当てられるよう、文の並びとして持つ
-    val statements: List<String> =
-        listOf(
-            "DROP TABLE IF EXISTS `search_key`",
-            "DROP TABLE IF EXISTS `app`",
-            "DROP TABLE IF EXISTS `meta`",
-            "DROP TABLE IF EXISTS `material_issue`",
-        )
-
-    override fun migrate(db: SupportSQLiteDatabase) {
-        statements.forEach(db::execSQL)
-    }
 }

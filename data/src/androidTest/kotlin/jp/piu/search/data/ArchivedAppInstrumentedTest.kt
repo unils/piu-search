@@ -15,9 +15,20 @@ import jp.piu.search.core.reading.NoReadingAnalyzer
 import jp.piu.search.core.search.BrandTable
 import jp.piu.search.core.search.LatinWordReader
 import jp.piu.search.core.search.SearchKeyGenerator
+import jp.piu.search.core.state.PackageKey
+import jp.piu.search.data.index.DeviceAppsReader
+import jp.piu.search.data.index.GeneratorKeyFactory
+import jp.piu.search.data.index.IndexActor
+import jp.piu.search.data.index.IndexDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -64,7 +75,7 @@ class ArchivedAppInstrumentedTest {
         val info = entry()
         Log.i(TAG, "アーカイブ済み: isArchived=${info.applicationInfo.isArchived} sourceDir=${info.applicationInfo.sourceDir}")
         assertTrue(info.applicationInfo.isArchived)
-        // 読み手（AppSource）を通しても、一覧の段でアーカイブ済みと分かる。APK がないので指紋はない（失敗ではない）
+        // 読み手（AppSource）を通しても、一覧の段でアーカイブ済みと分かる。APK がないので APK の鍵はない（失敗ではない）
         val stamp =
             AppSource(context)
                 .stampProfiles(withUpdateTime = true)
@@ -73,24 +84,32 @@ class ArchivedAppInstrumentedTest {
                 .single { it.id.packageName == GAME }
         assertTrue(stamp.isArchived)
         assertEquals(null, stamp.apkFingerprint)
-        // 補助の材料を読まないので、欠けにならない
-        val database = LocalDatabase.open(context, null)
+        // 索引の書き手を通すと: 補助の材料を読まずに空で成功するので欠けにならず、表示名で引ける
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val writer =
+            IndexActor.open(
+                context,
+                FILE,
+                scope,
+                1,
+                DeviceAppsReader(context),
+                GeneratorKeyFactory({}, { SearchKeyGenerator(NoReadingAnalyzer, LatinWordReader(BrandTable.parse(emptyList()))) }),
+                Dispatchers.IO,
+            ) { IndexDatabase.open(context, FILE) }
         try {
-            val sync =
-                IndexSync(
-                    database.index,
-                    AndroidDeviceApps(context),
-                    { SearchKeyGenerator(NoReadingAnalyzer, LatinWordReader(BrandTable.parse(emptyList()))) },
-                    NoReadingAnalyzer,
-                    null,
-                )
-            val report = sync.sync()
-            Log.i(TAG, "アーカイブ済みを含む同期: $report")
-            assertTrue(report.archivedPackages >= 1)
-            assertTrue(sync.materialIssues.none { it.key.packageName == GAME })
-            assertTrue(sync.index.labelOf(stamp.id) != null)
+            runBlocking { writer.requestSync().await() }
+            Log.i(TAG, "アーカイブ済みを含む同期: ${writer.status.value}")
+            val state = checkNotNull(writer.snapshot.value.packages[PackageKey(stamp.id.profileSerial, GAME)])
+            assertTrue(state.observed.archived)
+            assertNull(state.attempt.issue)
+            assertTrue(
+                writer.snapshot.value
+                    .toSearchIndex()
+                    .labelOf(stamp.id) != null,
+            )
         } finally {
-            database.close()
+            runBlocking { writer.job.cancelAndJoin() }
+            context.deleteDatabase(FILE)
         }
     }
 
@@ -109,5 +128,6 @@ class ArchivedAppInstrumentedTest {
         const val TAG = "ArchivedAppTest"
         const val GAME = "jp.piu.search.testapp.game"
         const val ORIGINAL_APK = "/data/local/tmp/piu-archive-game.apk"
+        const val FILE = "archived-app-instrumented.db"
     }
 }

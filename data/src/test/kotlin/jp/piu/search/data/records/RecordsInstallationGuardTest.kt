@@ -7,15 +7,13 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.piu.search.core.search.AppId
 import jp.piu.search.core.search.LaunchRecord
-import jp.piu.search.core.search.LearnedMemory
-import jp.piu.search.core.search.LearningDecision
 import jp.piu.search.core.state.RecordsWrite
-import jp.piu.search.data.LocalDatabase
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -27,6 +25,9 @@ class RecordsInstallationGuardTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val marker = File(context.noBackupFilesDir, RecordsDatabase.MARKER_FILE)
     private val opened = ArrayList<RecordsDatabase>()
+
+    @get:Rule
+    val legacy = legacyMigrationHelper()
 
     @After
     fun close() {
@@ -53,22 +54,19 @@ class RecordsInstallationGuardTest {
 
     @Test
     fun updatingFrom020OnTheSameDeviceKeepsWorkRecords() {
-        // 0.2.0 の LocalDatabase が piu.db と印のファイルを書く
-        LocalDatabase.open(context, LocalDatabase.FILE_NAME, allowMainThread = true).use { old ->
-            old.launchStats.record(WORK_APP, 100)
-            old.learned.save(
-                LearnedMemory.EMPTY,
-                LearnedMemory.EMPTY.recorded(LearningDecision(pair("よみ", OWN_APP), listOf(pair("よみ", WORK_APP))), 200),
-            )
+        // 0.2.0 が書いた piu.db（版 6）と印のファイル。0.2.0 の InstallationGuard は noBackupFilesDir の installation-id に
+        // UUID の文字列（UTF-8）を書き、同じ値を installation の表に入れた。名前と書式はここに固定する（変えると同じ端末の更新で仕事用の記録が消える）
+        val token = "01234567-89ab-cdef-0123-456789abcdef"
+        legacy.createDatabase(FILE, 6).use { db ->
+            db.execSQL("INSERT INTO installation VALUES (0, '$token')")
+            db.execSQL("INSERT INTO launch_stat VALUES ('${WORK_APP.packageName}', 'Main', $WORK, 1, 100)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', '${OWN_APP.packageName}', 'Main', $OWN, 1, 200, 0, 0)")
+            db.execSQL("INSERT INTO learned VALUES ('よみ', '${WORK_APP.packageName}', 'Main', $WORK, 1, 200, 1, 0)")
         }
-        val db = RecordsDatabase.open(context, LocalDatabase.FILE_NAME, allowMainThread = true, ownSerial = { OWN }).also(opened::add)
-        try {
-            val stored = db.load()
-            assertEquals(setOf(pair("よみ", OWN_APP), pair("よみ", WORK_APP)), stored.records.learned.records.keys)
-            assertEquals(setOf(WORK_APP), stored.records.launches.records.keys)
-        } finally {
-            context.deleteDatabase(LocalDatabase.FILE_NAME)
-        }
+        File(context.noBackupFilesDir, "installation-id").writeText(token, Charsets.UTF_8)
+        val stored = open().load()
+        assertEquals(setOf(pair("よみ", OWN_APP), pair("よみ", WORK_APP)), stored.records.learned.records.keys)
+        assertEquals(setOf(WORK_APP), stored.records.launches.records.keys)
     }
 
     @Test
@@ -96,6 +94,65 @@ class RecordsInstallationGuardTest {
         marker.writeText("")
         assertEquals(setOf(OWN), open().load().storedSerials)
         assertTrue(marker.readText().isNotEmpty())
+    }
+
+    // 途中までしか書かれていない印も、新しい印で整理する。直した印は保存され、その後に書いた仕事用の記録は次に開いても残る
+    @Test
+    @Config(sdk = [28, 37])
+    fun aMalformedMarkerIsReplacedAndTheNewMarkerKeepsLaterWorkRecords() {
+        open().write(seedWrite())
+        reopen()
+        val oldToken = marker.readText()
+        marker.writeText("01234567-89ab-")
+        val db = open()
+        assertEquals(setOf(OWN), db.load().storedSerials)
+        val token = marker.readText()
+        assertNotEquals(oldToken, token)
+        db.write(RecordsWrite(launchPut = mapOf(WORK_APP to LaunchRecord(1, 5))))
+        reopen()
+        assertEquals(setOf(OWN, WORK), open().load().storedSerials)
+        assertEquals(token, marker.readText())
+    }
+
+    // 印が一致する再オープンの照合は読み取りだけで終える（書き込みのロックを取らない）。WAL（先行書き込みのログ）では、
+    // 別の接続の書き込みの途中でも、照合が待たされない
+    @Test
+    fun theGuardOfTheSameInstallationDoesNotWaitForAnotherConnectionThatIsWriting() {
+        open().write(seedWrite())
+        reopen()
+        val room =
+            androidx.room.Room
+                .databaseBuilder(context, RecordsRoomDatabase::class.java, FILE)
+                .addMigrations(*RecordsRoomDatabase.MIGRATIONS)
+                .build()
+        val writer =
+            android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath(FILE).path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READWRITE or android.database.sqlite.SQLiteDatabase.ENABLE_WRITE_AHEAD_LOGGING,
+            )
+        val reader =
+            java.util.concurrent.Executors
+                .newSingleThreadExecutor()
+        try {
+            // Room の接続を先に開いておく（開くときの検査は照合の外）
+            reader.submit(java.util.concurrent.Callable { room.recordsDao().installation() }).get(10, java.util.concurrent.TimeUnit.SECONDS)
+            writer.beginTransactionNonExclusive()
+            try {
+                writer.execSQL("INSERT INTO launch_stat VALUES ('io.example.later', 'Main', $WORK, 1, 9)")
+                reader
+                    .submit(java.util.concurrent.Callable { RecordsInstallationGuard(InstallationMarker(marker)) { OWN }.run(room) })
+                    .get(10, java.util.concurrent.TimeUnit.SECONDS)
+            } finally {
+                writer.endTransaction()
+            }
+            assertEquals(1L, withRawDatabase(context, FILE) { it.count("SELECT COUNT(*) FROM launch_stat WHERE profile_serial = $WORK") })
+        } finally {
+            writer.close()
+            room.close()
+            reader.shutdownNow()
+            assertTrue(reader.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+        }
     }
 
     @Test

@@ -17,8 +17,6 @@ import jp.piu.search.core.search.LearningLimits
 import jp.piu.search.core.state.RecordsWrite
 import jp.piu.search.core.state.UserRecords
 import jp.piu.search.core.text.NormalizedText
-import jp.piu.search.data.db.LaunchStatRow
-import jp.piu.search.data.db.LearnedRow
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.Callable

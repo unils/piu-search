@@ -168,6 +168,8 @@ class MaterialReadTest {
         assertEquals(IssueCategory.DETERMINISTIC, MaterialCauses.categoryOf(MaterialCauses.ARCHIVE_UNREADABLE))
         // キーの生成は理由によらず不具合の疑い
         assertEquals(IssueCategory.SUSPECTED_BUG, MaterialCauses.categoryOf(MaterialStage.KEYS, IOException::class.java.name))
+        // 読み込めない名前（R8 で消えた・別の版のクラス）は不具合の疑い
+        assertEquals(IssueCategory.SUSPECTED_BUG, MaterialCauses.categoryOf("x.y.NotAClass"))
     }
 
     // このアプリ・ライブラリ・Kotlin の例外の理由は、java.・android. で始まる最寄りの親（R8 で名前が変わらない）
@@ -193,49 +195,6 @@ class MaterialReadTest {
         assertFalse(frames, "secret" in frames)
         assertNull(ReadFailure.of(IOException("/data/app/secret")).frames(MaterialStage.ENTRY))
         assertFalse(bug.cause.contains("secret"))
-    }
-
-    // 分類 → 保存 → 読み戻し → 分類で区分が変わらない
-    @Test
-    fun categorySurvivesStoringAndReloading() {
-        val database = LocalDatabase.open(context, null, allowMainThread = true)
-        try {
-            val key = PackageKey(0, "io.example.app")
-            val issues =
-                listOf(
-                    RuntimeException(DeadObjectException()) to MaterialStage.ENTRY,
-                    CertificateException() to MaterialStage.SIGNER,
-                    OwnFailure() to MaterialStage.LABEL,
-                ).map { (throwable, stage) ->
-                    val decision = SyncPlanner.issue(key, stage, ReadFailure.of(throwable), null, null, false, 3, "2026-11-15")
-                    (decision as IssueDecision.Put).issue
-                }
-            database.index.replaceAll(
-                listOf(
-                    StoredApp(
-                        jp.piu.search.core.search
-                            .IndexedApp(AppId(key.packageName, "Main", 0), "名前", emptyList()),
-                        1,
-                    ),
-                ),
-                SyncState(1, 1, "ja-JP"),
-            )
-            database.index.saveIfCurrent(
-                SyncState(1, 1, "ja-JP"),
-                IndexChange(false, emptyList(), putIssues = issues, state = SyncState(1, 1, "ja-JP"), savedAt = 9),
-            )
-            val reloaded = database.index.load().issues
-            assertEquals(issues.toSet(), reloaded.toSet())
-            assertEquals(
-                listOf(IssueCategory.TRANSIENT, IssueCategory.SUSPECTED_BUG, IssueCategory.DETERMINISTIC),
-                reloaded.sortedBy { it.stage.ordinal }.map { it.category },
-            )
-            assertEquals("android.os.DeadObjectException", reloaded.single { it.stage == MaterialStage.ENTRY }.cause)
-            assertEquals(3, reloaded.first().versionCode)
-            assertEquals(IssueCategory.SUSPECTED_BUG, MaterialCauses.categoryOf("x.y.NotAClass"))
-        } finally {
-            database.close()
-        }
     }
 
     @Test
