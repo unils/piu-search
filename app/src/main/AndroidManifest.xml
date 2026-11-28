@@ -89,6 +89,27 @@
             android:label="@string/licenses_title" />
 
         <!--
+            更新の知らせ（MY_PACKAGE_REPLACED）を受け、索引の同期を預ける。OS（system_server）からの放送は exported でなくても届く
+            （AOSP の ActivityManager.checkComponentPermission が、system と root の uid には exported を見ずに許す）。
+            ほかのアプリからは送らせない
+        -->
+        <receiver
+            android:name=".PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            更新の後の索引の同期。BIND_JOB_SERVICE はこのアプリの権限ではなく、結び付けられる相手を OS（JobScheduler）に限る印
+        -->
+        <service
+            android:name=".IndexRebuildJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!--
             クイック設定のタイル（ui.md の「呼び出し」）。BIND_QUICK_SETTINGS_TILE はこのアプリの権限ではなく、
             結び付けられる相手を OS（SystemUI）に限る印。TileService はこれと QS_TILE の intent-filter を求める
         -->

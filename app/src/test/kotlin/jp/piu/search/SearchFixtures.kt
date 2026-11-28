@@ -115,15 +115,16 @@ internal class FakeIndex : IndexPort {
     override val snapshot = MutableStateFlow(IndexSnapshot.EMPTY)
     override val status = MutableStateFlow(IndexWriterStatus(loaded = true))
     val foreground = ArrayList<Boolean>()
-    var syncs = 0
+
+    /** 頼まれた同期の返事。テストが終わらせるまで終わらない。 */
+    val syncReplies = ArrayList<CompletableDeferred<Unit>>()
+    val syncs: Int get() = syncReplies.size
 
     override fun setForeground(visible: Boolean) {
         foreground += visible
     }
 
-    override fun requestSync() {
-        syncs++
-    }
+    override fun requestSync(): Deferred<Unit> = CompletableDeferred<Unit>().also(syncReplies::add)
 }
 
 /** 偽の起動。 */
