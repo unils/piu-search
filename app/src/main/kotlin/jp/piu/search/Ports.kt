@@ -39,7 +39,7 @@ interface RecordsPort {
     fun acknowledgeRebuilt()
 }
 
-/** 画面が索引の書き手（`IndexActor`）に頼むこと。 */
+/** 画面と更新の後の仕事（[IndexRebuildJob]）が索引の書き手（`IndexActor`）に頼むこと。 */
 interface IndexPort {
     /** 照合に使う索引（写しから作ったもの）。写しが変わるたびに、アプリの寿命の側で 1 回だけ作る。 */
     val searchIndex: StateFlow<SearchIndex>
@@ -53,8 +53,8 @@ interface IndexPort {
     /** 検索画面が前面か。前面になれば同期し、裏では Callback を溜めるだけにする。 */
     fun setForeground(visible: Boolean)
 
-    /** 同期を頼む。 */
-    fun requestSync()
+    /** 同期を頼む。返す [Deferred] は、この頼みを含む同期の写しを公開し、保存を試した後に終わる。画面は待たない。 */
+    fun requestSync(): Deferred<Unit>
 }
 
 /** OS へアプリの起動を頼む。本物は [AppLauncher]。 */

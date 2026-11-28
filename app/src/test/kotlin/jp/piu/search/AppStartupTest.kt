@@ -84,6 +84,33 @@ class AppStartupTest {
         }
     }
 
+    // 更新の後の仕事のためにプロセスが起きたとき（画面を開かず、記録の頼みもない）も、部品を作った時点で記録の DB の移行が済む
+    @Test
+    fun creatingTheContainerAloneMigratesTheRecordsDatabase() {
+        shadowOf(context.getSystemService(UserManager::class.java)).setSerialNumberForUser(Process.myUserHandle(), 0)
+        stop(context.appContainer)
+        val token = File(context.noBackupFilesDir, "installation-id").readText()
+        context.deleteDatabase(RecordsActor.FILE_NAME)
+        context.deleteDatabase(IndexActor.FILE_NAME)
+        createVersion6(token)
+
+        val next = AppContainer(context)
+        try {
+            val state = runBlocking { withTimeout(TIMEOUT_MILLIS) { next.records.state.first { it.records != null } } }
+            assertEquals(
+                3,
+                checkNotNull(state.records)
+                    .launches.records
+                    .getValue(APP)
+                    .count,
+            )
+            val file = context.getDatabasePath(RecordsActor.FILE_NAME).path
+            SQLiteDatabase.openDatabase(file, null, SQLiteDatabase.OPEN_READONLY).use { assertEquals(7, it.version) }
+        } finally {
+            stop(next)
+        }
+    }
+
     // 書き手が止まり、DB を閉じるまで待つ。子の coroutine は画面のスレッドに戻って終わるので、画面のスレッドを回しながら待つ
     private fun stop(container: AppContainer) {
         container.cancel()

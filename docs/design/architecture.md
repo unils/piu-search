@@ -155,6 +155,17 @@ Gradle（Android の標準のビルドツール）のモジュール（ビルド
 
 検索開始時の記録の読み直しと学習の忘却は `SearchViewModel` が頼む。プロファイルの放送は `ProfileWatcher` が受ける。
 
+### このアプリを更新したとき
+
+キーの作り方（`SearchIndexVersion`）や索引の形が変わる版では、更新の後の最初の同期が全件の作り直しになる（0.2.0 から 0.3.0 への更新では実機で数秒かかり、その間は検索の結果が出なかった）。そこで、利用者が開く前に同期を始める。
+
+1. OS は更新を終えると、更新したアプリにだけ `ACTION_MY_PACKAGE_REPLACED` を送る。`PackageReplacedReceiver` がこれを受ける。受け手のためにプロセスが起きると `AppContainer` ができ、記録の書き手が読み込みと記録の DB の移行を、索引の書き手が `index.db` の読み戻しを始める
+2. 受け手は JobScheduler（OS が条件と資源を見て、預かった仕事をあとで動かす仕組み）に、決まった番号の仕事を 1 つ預けるだけにする。受け手の持ち時間（約 10 秒）の中で同期を終える保証はないため。同じ番号で預け直すと前の仕事を置き換えるので、待つ仕事は常に 1 つ。Android 12 以上では急ぎの仕事（expedited）にする。ふつうの仕事は、OS が資源の都合で後へずらしうるため。急ぎの枠を使い切って断られたら、ふつうの仕事で預け直す。Android 9 は条件のない仕事を作れないので、待ち時間 0 を条件にする
+3. `IndexRebuildJob` は索引の書き手に同期を頼み、その同期の写しを公開して保存を試したら `jobFinished` を呼ぶ（再試行は頼まない）。同期そのものは[同期の実行と保存](#同期の実行と保存)のとおりで、ログ `PiuIndexSync` に件数と時間が出る
+4. OS に止められたら（`onStopJob`）待つのをやめ、預け直さない。書き手の同期はそのまま続くことがある。終わらずにプロセスが終わっても、次に開いたときの同期が、最後に保存できた写しから鍵の違う組だけを読む（保存の前に終わったなら、作り直しは最初から）
+
+新しく入れたときは何もしない。この放送は来ず、入れたばかりのアプリは利用者が開くまで停止状態で、コードを動かせないため。画面が開いている間に仕事が動いても、書き手は続けて届いた頼みを 1 回の同期にまとめ、同期の途中に届いた頼みは続く 1 回にまとめるので、余分に読まない。WorkManager は使わない（JobScheduler で足り、依存を増やさない）。
+
 ### 何を読み直すか
 
 入口の列挙では、OS が合成した「アプリ情報」への入口を除く。AOSP の `LauncherAppsService.getHiddenAppActivityInfo` は対象パッケージに `android.app.AppDetailsActivity` を付けて返すため、クラス名の完全一致で見分ける。アプリを起動する入口ではないため索引に入れない。同じ末尾を持つ通常の Activity（`対象パッケージ.AppDetailsActivity` など）は除かない。
@@ -439,6 +450,8 @@ Room は 2.x（2.8.5）。3.0 は操作がすべて coroutine になり KMP 向�
 | 検索の Activity | `MAIN`＋`LAUNCHER`、`ACTION_ASSIST`＋`DEFAULT`、`exported` | デジタルアシスタントの候補になる条件（AOSP の `AssistantRoleBehavior`） |
 | `TileService` | クイック設定タイル。API 34 以上では `PendingIntent` で Activity を開く | 旧い方法は例外を投げる |
 | 履歴画面 | 検索の Activity を履歴画面に残さない（`excludeFromRecents`） | 検索の道具が履歴画面に並ぶと邪魔で、履歴画面でのアプリの切り替えの妨げになる |
+| 更新の知らせの受け手 | `ACTION_MY_PACKAGE_REPLACED` の受け手を `exported="false"` で置く | OS（system_server）が送る放送は、exported でない受け手にも届く。AOSP の `BroadcastSkipPolicy` は送り手の uid で `ActivityManager.checkComponentPermission` を引き、これは system と root の uid には exported を見ずに許す。ほかのアプリからは送らせない |
+| 更新の後の仕事 | `JobService` に `BIND_JOB_SERVICE` を付け、`exported="false"` | `BIND_JOB_SERVICE` はこのアプリの権限ではなく、結び付けられる相手を OS に限る印。仕事は永続にしない（再起動の後まで残すには `RECEIVE_BOOT_COMPLETED` の権限が要り、再起動の後は開いたときの同期で足りる） |
 
 ## 対応する端末
 

@@ -161,9 +161,7 @@ class AppContainer(
 
             override fun setForeground(visible: Boolean) = index.setForeground(visible)
 
-            override fun requestSync() {
-                index.requestSync()
-            }
+            override fun requestSync(): Deferred<Unit> = index.requestSync()
         }
 
     /** 学習の書き出しと読み込み。 */

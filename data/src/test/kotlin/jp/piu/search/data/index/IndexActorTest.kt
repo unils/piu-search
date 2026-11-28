@@ -11,6 +11,7 @@ import jp.piu.search.core.state.PackageKey
 import jp.piu.search.core.state.Stage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -457,6 +458,26 @@ class IndexActorTest {
             actor.setForeground(true)
             actor.requestSync().await()
             assertEquals(3, reader.observeCalls)
+        }
+
+    @Test
+    fun syncRequestsFromTheScreenAndTheUpdateJobDuringASyncAreMergedIntoOneMoreSync() =
+        runTest {
+            reader.install(MAPS, app("地図"))
+            val actor = actor(FaultyIndexStorage(database()))
+            // 前面への復帰で始めた同期の途中に、画面と更新の後の仕事の頼みが届く
+            val replies = ArrayList<Deferred<Unit>>()
+            reader.duringRead = {
+                if (replies.isEmpty()) {
+                    replies += actor.requestSync()
+                    replies += actor.requestSync()
+                }
+            }
+            actor.setForeground(true)
+            actor.requestSync().await()
+            replies.awaitAll()
+            assertEquals(2, reader.observeCalls)
+            assertTrue(replies.all { it.isCompleted && !it.isCancelled })
         }
 
     @Test
