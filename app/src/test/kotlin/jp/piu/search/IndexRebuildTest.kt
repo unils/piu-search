@@ -44,6 +44,17 @@ class IndexRebuildTest {
         }
     }
 
+    // 急ぎの枠を使い切って断られたら、同じ番号のふつうの仕事で預け直す（急ぎの仕事は Android 12 から）
+    @Test
+    @Config(sdk = [37])
+    fun aRefusedExpeditedJobIsScheduledAsARegularJob() {
+        shadowOf(scheduler).failExpeditedJob(true)
+        PackageReplacedReceiver().onReceive(context, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
+        val job = scheduler.allPendingJobs.single()
+        assertEquals(IndexRebuildJob.JOB_ID, job.id)
+        assertFalse(job.isExpedited)
+    }
+
     @Test
     fun anotherActionSchedulesNothing() {
         PackageReplacedReceiver().onReceive(context, Intent(Intent.ACTION_PACKAGE_REPLACED))
